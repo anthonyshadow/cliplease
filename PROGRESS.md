@@ -32,7 +32,7 @@
 -->
 
 ## Status
-Current prompt: P01 · Last verified: P00 · Blockers: none
+Current prompt: P02 · Last verified: P01 · Blockers: none
 Gates: A (P22) [ ] · R (P22h) [ ] · B (P25) [ ] · C (P27) [ ] · S12 Stripe renewal sign-off (P25d, not a gate) [ ]
 Later: P34 (USD) not run · P05b (teens) not scheduled
 
@@ -114,13 +114,84 @@ Later: P34 (USD) not run · P05b (teens) not scheduled
     - Non-interactive login shells resolve Homebrew Node 25.8.1 (`/opt/homebrew/bin/node`) before nvm.
     - The smoke's guard accepts Node 24.x at 24.21 or later only; Node 25 and Bun are rejected.
 
-### P01 — App constants, env guards, design tokens and static pages · [ ] to do
+### P01 — App constants, env guards, design tokens and static pages ✅ (2026-10-17)
 > 120 min · Depends on: P00 · Record: `APP_NAME = 'ClipLease'` (OQ-39 answer), how the secrets were set, landing copy; the legal placeholders (OQ-28 answer), Signal Green (OQ-31 answer); `ownerEmail()` and the two e2e admins in `.env.test`; `ENABLED_CURRENCIES=cad` and `enabledCurrencies()`; the Terms/Privacy owner-answer additions (18 or older, prices in the creator's currency)
 - Done:
+  - **Constants:** `src/lib/app-name.ts` holds `APP_NAME = 'ClipLease'` (OQ-39) and the seven legal constants (OQ-28 placeholders).
+  - **Enum tuples:** `src/lib/domain/values.ts` holds 47 tuples and 47 types, with no imports. It is 07 §2.1, with `LICENSE_REQUEST_STATUSES` / `PAYMENT_ACTIONS` replaced in place by their §9.2 values, plus the §7.2 additions, §8.2 `CURRENCIES`, the twelve §9.2 tuples and §10.2's `RENEWABLE_TERM_KEYS = EXCLUSIVE_TERM_KEYS`. It has a test, `values.test.ts`.
+  - **Env:** `src/server/env.ts` exports `parseEnv`, `env`, `APP_ENVS`, `isDevAppEnv`, `enabledCurrencies()`, `ownerEmail()`, `PAYMENTS_DRIVERS`, `STORAGE_DRIVERS` and `MOCK_SOCIAL_SCENARIOS`. It applies the 07 D51 guards and is tested in `env.test.ts`.
+  - **Env files:** `.env.example` is committed; `.env.local` and `.env.test` are gitignored.
+  - **Env loaders:** Vitest root `setupFiles: ["./tests/setup/load-env.ts"]`. `playwright.config.ts` passes `webServer.env` from `.env.test` (+ `.env.test.local`).
+  - **Tokens:** `src/app/globals.css` is 04 §3.1 verbatim. `src/app/fonts.ts` is Inter with `preload: false`. `layout.tsx` sets `metadataBase`, the title template and `viewport`. `icon.tsx` draws the white "C" on ink. `design-tokens.test.ts` is 04 §2.6 verbatim.
+  - **Token lint:** `scripts/lint-tokens.sh`, run as `bun run lint:tokens`.
+  - **Removed (create-next-app leftovers):** `public/*.svg`, `src/app/favicon.ico`, `src/app/page.tsx` and `src/lib/sanity.test.ts`. Geist went with the old layout.
+  - **Public pages:** `src/components/layout/wordmark.tsx`, `src/components/layout/landing-sign-in-link.tsx` (client), `src/app/(public)/layout.tsx` (sticky frosted header plus the one `<main>`) and `src/app/(public)/page.tsx`. The landing copy shipped as written.
+  - **Legal content:**
+    - `src/lib/legal/types.ts` is the structured legal text.
+    - `src/lib/legal/license-v1.ts` holds the summary, header rows, sections 1–22 and Schedule A, plus `fillLicenseV1` and the neutral values. It has a test, `license-v1.test.ts`.
+    - `src/components/layout/legal-page.tsx` is the page shell: notice, title, "Last updated", contents and sections.
+  - **Legal pages:** four routes under `src/app/(public)/legal/`. Terms, Privacy and Data deletion keep their text in a `content.ts` beside the page.
+  - **e2e:** `tests/e2e/smoke.spec.ts` covers `/` and the four legal routes, checking the draft notice, the date line, no raw tokens, no horizontal scroll and no console errors. It also checks `#payouts` and `#auto-renewal` on Terms.
 - Verified:
-- Decisions:
-- Open questions:
+  - **Checks:**
+    - `bun run typecheck` ✅
+    - `bun run lint` ✅ ("Checked 35 files … No fixes applied.")
+    - `bun run test` ✅ lists each file: values.test.ts (3), design-tokens.test.ts (139), license-v1.test.ts (12) and env.test.ts (67) = 221 passed. The Vitest reporter is `["default", { summary: false }]`, so file lines print.
+    - `bun run test:int` ✅ (no test files)
+    - `bun run lint:tokens` ✅ (prints nothing, exit 0). Adding `[color:#123456]` to wordmark.tsx printed that line with exit 1; after the revert, exit 0.
+  - **Build and e2e:**
+    - `bun run test:e2e` ✅: 12 passed (6 on chromium-desktop + 6 on webkit-iphone).
+    - `bun run build` with `.env.local` filled ✅. Routes `/`, `/icon` and the four `/legal/*` are static. The built `/` has exactly one `rel="icon"` (`/icon?…`, image/png) and no `favicon.ico`.
+  - **Env files:**
+    - `grep -cE '^(BETTER_AUTH_SECRET|TOKEN_ENCRYPTION_KEY|CRON_SECRET)=.{32,}$' .env.local` → 3; `TOKEN_ENCRYPTION_KEY` is 44-char base64.
+    - `git check-ignore .env.local .env.test .env.test.local` prints all three; `.env.example` is staged and `git ls-files --error-unmatch .env.example` lists it.
+    - `rg 'STRIPE_SECRET_KEY=|STRIPE_WEBHOOK_SECRET='` over .env.example and .env.test → nothing.
+  - **values.ts:**
+    - The renewal-tuples `rg -c` → 24.
+    - `"renewal_pending"` / `"renewal_checkout"` → two lines.
+    - `RENEWABLE_TERM_KEYS = EXCLUSIVE_TERM_KEYS` → one line.
+    - At runtime, values.ts equals docs/03 §2's merged block: 47/47 exports, no value differences.
+  - **License text:**
+    - `another term of the same length` → one match; `for another year` → nothing.
+    - The `#payouts` id and the D139 sentence → one line each in `terms/content.ts`.
+  - **globals.css:** the 04 §3.1 awk | diff prints nothing.
+  - **Literal and copy checks:**
+    - `rg -n 'ClipLease' src/app src/components src/lib/legal` → only the globals.css header comment.
+    - The guardian / 13 or older / age band / date of birth `rg` over Terms and Privacy → only the D93 Privacy sentence and the Stripe note next to it.
+    - The currency `rg` (cad / usd / canadian dollars / us dollars / dollar-and-digit) over the legal trees → nothing.
+  - **Source rules:**
+    - `grep -n 'server-only\|from "@/' src/server/env.ts` → nothing.
+    - `rg 'export function (isDevAppEnv|enabledCurrencies)'` → two lines.
+    - values.ts and app-name.ts import nothing.
+  - **Browser (`bun run dev`, in-app browser):**
+    - `/` at 375 × 812 and 1280 × 800, light and dark: "Your video." is ink and "Your price." is ink-2. No horizontal scroll (scrollWidth = clientWidth on all five pages at 375). No console errors.
+    - Header: `position: sticky`, `saturate(1.6) blur(20px)`, 48 px. `/legal/terms#payouts` lands 64 px from the top (`scroll-padding-top: 64px`).
+    - Keyboard on `/`: Tab order is wordmark → header Sign in → pill → License → Terms → Privacy, each with `solid 2px rgb(10, 108, 255)`.
+    - No raw `{token}` on any legal page. Reduced motion is the globals.css rule: nothing on these pages animates.
+- Decisions: see the Decisions table (2026-10-17, P01).
+  - **Owner answers:** Q1 (a), Q2 (a), Q3 (a).
+  - **Recorded answers, not asked:** OQ-39, OQ-28, OQ-31, OQ-29, OQ-21, OQ-02, OQ-37 and OQ-49.
+- Open questions: none.
 - Follow-ups for later prompts:
+  - **P02:**
+    - Replace the inline header, the pill, the footer links and the draft notice with `NavBar`, `Button` and `Banner`, and pass `LandingSignInLink` to the NavBar's right slot. Keep `prefetch={false}` on both `/sign-in` links until P04.
+    - 04 §5.3 gap: `viewport-fit=cover` comes with no left/right safe-area padding. Pad full-width `max-w-app` containers with `max(var(--gutter), env(safe-area-inset-left/right))` in P02's NavBar and container.
+  - **P03:**
+    - Re-check `values.ts` against 07 (never redeclare it). P03's Step 0 must count the §9.2 values too.
+    - The owner puts the real DB URLs in `.env.local` (dev, `cliplease_dev`) and `.env.test` (test, `cliplease_test`, 07 D103).
+    - List only `tests/setup/integration.ts` at project level: the root `load-env.ts` already runs for both projects.
+  - **Every later prompt that adds an env var:** add `KEY=` to `.env.test` (blank where unused), so `next build` / `next start` in e2e can't pick it up from `.env.local`. Never delete a blank line to make a grep pass.
+  - **Env tests:** P23 (R2), P24 (Stripe) and P27 (Google) extend the `deployed` baseline in `env.test.ts` with their credential rules.
+  - **CLI scripts:** every CLI or script that imports `env.ts` calls `loadEnvConfig` before its first static import of it (env validates at import).
+  - **P15:** render Schedule A from the licensing options.
+  - **P20:** fill the License v1 tokens per the header comment in `license-v1.ts`.
+  - **P26 / P27:** check `RESEND_API_KEY` with `grep -qE "^RESEND_API_KEY=.+" .env.test && echo SET || echo blank` (it must print `blank`). The blank line stays.
+  - **Before launch:** check the Instagram and TikTok in-app menu paths on `/legal/data-deletion` on a real device.
+  - **Moving or deleting a route:** run `rm -rf .next/dev` (or start `bun run dev` once) before `bun run typecheck`, because `next typegen` doesn't refresh `.next/dev/types`.
+  - **OQ-28 lawyer list (07 D129):**
+    - License v1: the Q3 (a) edits to §1, §3 and §7; §14.2 / §14.4 as changed below; "Prices exclude taxes" (OQ-36); the §15 cap; the §16 indemnity.
+    - Terms: the US-DMCA wording for a Canadian-first entity, and sections 13 and 14.
+    - Privacy: international transfers and regional rights.
 
 ### P02 — UI primitives and app shell · [ ] to do
 > 120 min · Depends on: P01 · Record: the usual bullets (P03's Step 0 also checks that P00 and P01 are ✅)
@@ -676,12 +747,31 @@ Every judgment call, newest last. Source: an OQ number, a 07 row (Dxx), "owner i
 | 2026-10-16 | P00 | Env probe (`CLIPLEASE_ENV_PROBE=loaded` in a scratch `.env.local`, plus a temporary `probe:env` script) printed `unset`; the script and the file were then removed. Caveat from the P00 audit: Bun 1.4.3's `bun run` doesn't forward `.env*` to scripts even without `env = false`, so the probe can't prove R3. `bun install` and `bun ci` still read `.env.local` themselves. | 07 D107 R3 (research §8 item 6) |
 | 2026-10-16 | P00 | Compat smoke: tsx runs `scripts/compat-smoke.tsx` as CommonJS (package.json has no `"type"`). A static import of `@react-pdf/renderer` fails with `ERR_PACKAGE_PATH_NOT_EXPORTED` (@react-pdf/hyphenate exports only `import`). So react-pdf is loaded with `await import()` inside `async main()`. No pin fallback was needed. JSX works as is (`"jsx": "react-jsx"`). The script also refuses to run unless the runtime is Node 24.x at 24.21 or later; Node 25 and Bun are rejected (R2, 07 D108). | agent (stated); 07 D58, D108 |
 | 2026-10-16 | P00 | Biome 2.5.15 lints SVG files. Rather than disable `noSvgWithoutTitle`, a `<title>` was added to the five create-next-app placeholder SVGs in `public/`. | agent (stated); P00 task 3 ("fix generated code") |
-| 2026-10-16 | P00 | README.md (create-next-app's default) now gives only `bun install` and `bun run dev` (R1, 07 D107) instead of the npm/yarn/pnpm/`bun dev` list, and the path `src/app/page.tsx`. P01 and later prompts rewrite the README. | agent (stated); 07 D107 |
+| 2026-10-16 | P00 | README.md (create-next-app's default) now gives only `bun install` and `bun run dev` (R1, 07 D107) instead of the npm/yarn/pnpm/`bun dev` list, and the path `src/app/page.tsx`. P01 updated its page path and font line; later prompts (P19 onward) add their own sections. | agent (stated); 07 D107 |
 | 2026-10-16 | P00 | `.gitignore` also ignores `.claude/settings.local.json`, so Biome, which honours `.gitignore`, never lints Claude Code's per-user permission file. The Playwright output folders were ignored before the first e2e run. | agent (stated) |
 | 2026-10-16 | P00 | AGENTS.md layout: the `Plan kit:` line first, then the kit file unchanged, then the Next-managed block byte for byte at the end, where `next dev` expects it. `next dev` left the file unchanged. `CLAUDE.md` is a symlink to AGENTS.md. | P00 task 7; agent (stated) |
 | 2026-10-16 | P00 | Prompt map: kept the template's section unchanged. It is 07 §3.2's table with the real file names (P10a–P10c, P14a/P14b, P16a/P16b, P19b–P19g, P25b–P25d, P28b, P34, P05b). P00 task 7's own table is older (bare P10, P14 and P16, eight prompts missing). Task 7 says to name the lettered parts, and the template does. | P00 task 7; 07 §3.2 |
 | 2026-10-16 | P00 | e2e: port 3100 against the production build (`bun run build && bun run start --port 3100`, `reuseExistingServer: false`). The iPhone project uses `devices["iPhone 17"]`, the current descriptor in Playwright 1.63.0. | agent (stated); P00 task 5, 02 §11.2 |
 | 2026-10-16 | P00 | P00 is marked ✅ before its three git criteria can be proven, because the commit has to come after PROGRESS.md is written: `git log` shows the P00 commit, the tree is clean, `origin/main` = `main`. Those checks run right after the commit and push, are reported in the P00 reply, and P01 Step 0 re-checks them. No commit hash goes into this file. | agent (stated) |
+| 2026-10-17 | P01 | Q1 (local secrets): (a). The owner ran a one-line command that writes `openssl rand -base64 32` values into `.env.local` without printing them. The agent only checked that the three are set and long enough. The `.env.test` test secrets were generated straight into that file, never printed. | owner in chat |
+| 2026-10-17 | P01 | Q2 (landing copy): (a), the 05 §4.7 proposed paragraph and three lines ship as written. | owner in chat |
+| 2026-10-17 | P01 | Q3 (License v1 contradicts the D113 exclusive section): (a), small DRAFT fixes taken from 01 §4.6. §3 grants "a non-exclusive (or, when the license summary says Exclusive, an exclusive), non-transferable, non-sublicensable license". §7 is retitled "Ownership and exclusivity", and the Licensor "may license it to others, except as section 21 ("Exclusive licenses") says". §1 adds "A renewal term takes effect on its start date; it needs no new approval." All three are on the OQ-28 lawyer list. | owner in chat |
+| 2026-10-17 | P01 | Recorded owner answers, not asked: OQ-39 (`APP_NAME = 'ClipLease'`), OQ-28 (the `[… TBD]` and `@example.com` legal placeholders with the DRAFT notice), OQ-31 (Signal Green, unused on these pages), OQ-29 (18 or older; Terms and Privacy D93 sentences), OQ-21 (`CURRENCIES`, `ENABLED_CURRENCIES=cad`), OQ-02 (`ADMIN_EMAILS` parsed owner first; `.env.test` has `e2e-admin@example.com,e2e-admin-2@example.com`), OQ-37 (Terms `#payouts`, D139 verbatim) and OQ-49 (`RENEWABLE_TERM_KEYS = EXCLUSIVE_TERM_KEYS`). | OQ-39, OQ-28, OQ-31, OQ-29, OQ-21, OQ-02, OQ-37, OQ-49 |
+| 2026-10-17 | P01 | `COPYRIGHT_EMAIL`, `COPYRIGHT_AGENT`, `GOVERNING_LAW` and `VENUE` are named after research/license.md §10 ("Legal config constants"). 02 §3 fixes only `LEGAL_ENTITY_NAME`, `SUPPORT_EMAIL` and `PRIVACY_EMAIL`. | P01 task 1 |
+| 2026-10-17 | P01 | `values.ts` is built from 07 §2.1, with §2.1's `LICENSE_REQUEST_STATUSES` and `PAYMENT_ACTIONS` replaced in place by the §9.2 versions. Appending them, as P01's literal wording says, would declare both twice. §9.2 supersedes §2. At runtime it equals docs/03 §2's merged block. Types follow 03 §4, plus `PaymentAction`, `VideoSource`, `Ownership` and `RevokedReason` (the names 02 imports), and one type for each remaining tuple. The §7.2 comment is reworded so that no `importing` value appears in src (07 D64). | 07 §9.2, §10.2 |
+| 2026-10-17 | P01 | `env.ts` has the following rules and checks:<br>- `APP_URL` / `BETTER_AUTH_URL` must be bare origins (no path, no trailing slash; 07 D102).<br>- `TOKEN_ENCRYPTION_KEY` must be exactly the 44-character base64 of 32 bytes.<br>- `PLATFORM_FEE_BPS` must be digits only, 0–5000.<br>- Comma lists are trimmed; empty items, duplicates and uppercase values are refused.<br>- `EMAIL_FROM` is `Name <address>` or a bare address.<br>- Required (02 §10 "Required in dev"): every Phase A var without a default. `fake` / `local` / `mock` are `.env.example` values, not Zod defaults.<br>- `enabledCurrencies()` / `ownerEmail()` read `env` by default and also accept a parsed env (for tests).<br>- The header comment avoids the literal text "server-only", because P03 and P04 grep for it. | 07 D51, D52, D88, D94, D95, D102; agent (stated) |
+| 2026-10-17 | P01 | Env loading. Vitest: the root `setupFiles` entry `tests/setup/load-env.ts` calls `loadEnvConfig(process.cwd())`; Vitest sets NODE_ENV=test, so @next/env loads `.env.test.local` > `.env.test` > `.env` and never `.env.local`. It throws unless APP_ENV is test, and both projects inherit it. Playwright: `.env.test` then `.env.test.local`, parsed with `node:util` `parseEnv`. Only `undefined` entries are dropped (to satisfy the type); blank values are kept. The result is passed as `webServer.env`, which Playwright merges over `process.env`. `.env.test` lists every key env.ts reads (blank where unused), because `next build` / `next start` fill keys still missing from `.env.local`. `.env.test` uses the `cliplease_test` DB placeholder (07 D103). | 07 D51, D103; agent (stated) |
+| 2026-10-17 | P01 | Biome overrides, each scoped to one file. `src/app/globals.css`: formatter off and `complexity.noImportantStyles` off, so the file stays byte-identical to 04 §3.1. The formatter would lowercase hex values and reflow the file; the rule flags the six reduced-motion `!important`s. `src/app/design-tokens.test.ts`: formatter off, plus `suspicious.noAssignInExpressions` and `style.useTemplate` off, so the 04 §2.6 test stays verbatim. Its `lin` helper uses `c /= 255`. `css.parser.tailwindDirectives` was already true from P00. | P01 task 5; agent (stated) |
+| 2026-10-17 | P01 | Allowed literal-color exceptions (04 §3.4): `themeColor` in `layout.tsx` (the 04 one), plus a fourth for `src/app/icon.tsx`. Its `#111111` / `#FFFFFF` carry `// design-ok: ImageResponse can't read CSS variables`, because Satori can't read CSS variables (04 §4.5). | P01 task 5 |
+| 2026-10-17 | P01 | Leftovers removed: Geist, `public/*.svg`, the default page, and also `src/app/favicon.ico`, because 04 §4.5 makes `icon.tsx` the only favicon. `/favicon.ico` now returns 404 by design. `rm -rf .next/dev` cleared the stale route types left by P00's dev run. | 04 §4.5; agent (stated) |
+| 2026-10-17 | P01 | Header "Sign in" (`LandingSignInLink`) is styled as an ink tertiary link, not `text-link`. 04 §2.2 / §2.4 allow no link-blue in a frosted bar, so 04 wins over 05 §4.7's blue-link notation (07 D01). Both `/sign-in` links use `prefetch={false}`, so no 404 prefetch logs a console error before P04. Header links are `h-11`, the pill is `inline-flex h-11`, and the footer links use `hit-44` (44 px targets). Contents links use `min-h-11`. Inline links in paragraphs rely on WCAG's inline exception. | 04 §2.2, §7, §9.2; 07 D01; agent (stated) |
+| 2026-10-17 | P01 | License v1 (`license-v1.ts`):<br>- **Doc-settled edits:** §14.2 "No refund." becomes a full refund (07 D86, OQ-13). §14.4 becomes "may revoke … No refund is due" rather than an automatic revoke (07 D46, OQ-38). The §4.2 header drops "(USD)" and the fixed "Non-exclusive" for `{rights_label}` and "Amounts in {currency_label}." (07 D98, D113). §11's research cross-reference is replaced by "When that statement says Verified, it confirms who controls the account that posted the Video, not who filmed it." (D43's explainer, conditional so a self-attested license stays true). Other research cross-references were reworded: §2 "options in the header" → "options shown on the license" (the neutral page has no header), §8 "where §2.4 requires it" → "where Schedule A (credit) requires it", and the §-references to sections → "section N".<br>- **Summary variants:** the summary also carries the D113 exclusive row ("You get · Exclusivity", `when: exclusive`, token `{exclusive_phrase}`) and the D142 "Renewal" row (`when: auto_renew`, tokens `{renewal_interval}`, `{renewal_total}`). The standard "Not included · Exclusivity" row is `when: standard`. The neutral page shows each conditional row with its qualifier.<br>- **`fillLicenseV1`:** reads own properties only, so `{constructor}` or `{__proto__}` throws instead of printing a prototype member.<br>- **Research notes moved to code:** the `[Lawyer]` / `[placeholder]` notes became `// LAWYER:` / `// ACCOUNTANT:` comments, and Schedule A's research citations, Q-refs and "(see Q4)" were dropped.<br>- **Credit:** follows 07 D43.<br>- **New sections:** D113 "Exclusive licenses" and D142 "Renewal" are sections 21–22 (anchors `#exclusive-licenses`, `#renewal`).<br>- **Token values:** templates never add "@" or quotes. `{creator_handle}` carries its "@" (like D43's verified username), and `{video_title}` / `{credit_line}` carry their quotes, so the neutral page reads naturally. `/legal/license/v1` uses `LICENSE_V1_NEUTRAL_VALUES`, and its title is "{APP_NAME} Video License v1".<br>- **Dates:** `LICENSE_V1_UPDATED_LABEL` is formatted in UTC ("15 Oct 2026") on all four pages. | 07 D43, D46, D86, D98, D113, D142; agent (stated) |
+| 2026-10-17 | P01 | Terms:<br>- **D93:** the sentences verbatim.<br>- **Owner-answer additions:** D74 (sell before payouts, approve needs payouts), D81 (auto-approve) and D86 (an admin revoke refunds in full and takes back the creator's share, except a reversed payment); prices, charges and payouts are in the creator's own payout currency with no conversion, and no currency is named.<br>- **Payouts (`#payouts`):** linked to the full Stripe Connected Account Agreement (`https://stripe.com/connect-account/legal/full`, Stripe's public page for the full agreement, chosen by the agent; research/stripe-owner-answers.md §2.2 only requires linking the full agreement; on the OQ-28 lawyer list), and accepting the Terms includes accepting it. The D139 paragraph is verbatim.<br>- **Auto-renewal (`#auto-renewal`):** the full 05 §4.8 row 6 / docs/08 list, not just P01's shorter list, because docs/08 wins on renewal rules. It includes the reservation after a declined or unanswered increase; no reservation when the buyer turned it off; decreases with notice; cancel with no penalty; the D134 sentence "We charge your card on the renewal date, before your current term ends (at most about a day before)."; and reminders.<br>- **Refunds:** built from 01 §4.6 and §9.4 without the "suspended while the dispute is open" line (07 D46, OQ-38). Sign-in is an emailed 6-digit code.<br>- **Lawyer items:** sections 13–14 are `[To be drafted with a lawyer.]` or the placeholders. | 07 D46, D74, D81, D86, D93, D94, D134, D137, D138, D139, D142; docs/08; agent (stated) |
+| 2026-10-17 | P01 | Privacy:<br>- **Content:** D93 sentence verbatim, plus one Stripe note (Stripe keeps the date of birth, identity and bank details). D84 time zone; D83 Instagram views only with permission; D67 pasted links stored, shown to buyers, never fetched; D87 retention sentence; D113 / D129 saved cards stored by Stripe (we keep brand, last 4 and expiry), buyer sign-in, and consent and renewal records kept.<br>- **Corrections to research/license.md §8.2:** video files are "never", because nothing is downloaded or imported (07 D64); tokens and posts follow 03 §9.1 timings; `{N} years` is replaced by D87.<br>- **Data deletion:** items 1–2, with "Meta then tells us" and the `{N}` years removed.<br>- **Omitted (not built in CORE):** Settings → Delete account (`[H8]`, replaced by email to `PRIVACY_EMAIL`, act within 7 days), the deletion status lookup and the Meta callbacks (Later). | 07 D64, D67, D83, D84, D87, D93, D113, D129; 03 §9.1 |
+| 2026-10-17 | P01 | Pre-commit review fixes to the legal copy, each matched to its source:<br>- **Terms, eligibility:** buyers must be 18 or older too (01 J7.5 checkout line; license.md §8.1 item 2).<br>- **Terms, creator rules:** the attestation quote ends where 01 J5.13 ends.<br>- **Terms, auto-renewal:** it can also turn back on by accepting a late increase (07 D138). The creator can change the renewal price during the license but not during a reservation, and with auto-renewal off the new price is what a manual renewal costs (07 D119, D122; docs/08 §2, §5).<br>- **Terms, copyright:** the copyright email is inline in a sentence (WCAG inline exception, not a standalone 20 px link).<br>- **Privacy and data deletion, disconnect:** the platform id is kept for reconnect, and posts used for videos keep their id and link (03 §9.1, §9.3; 07 D72).<br>- **Privacy, verify page:** lists every public field from research/license.md §6.3, and says prices, emails and payment details are never shown.<br>- **Privacy, retention:** says what else is kept (non-license requests, postings, audit and payment events), account data while the account exists and email logs for 1 year (07 D87; 03 §9.1).<br>- **Data deletion, keep-list:** adds postings and the reserved handle (03 §9.4). | 01 J5.13, J7.5; 03 §9.1, §9.3, §9.4; 07 D72, D87, D119, D122, D138; docs/08 |
+| 2026-10-17 | P01 | `env.ts` hardening (pre-commit review): the origin refine runs only when `URL.canParse` succeeds. Before, an unparseable `APP_URL` threw a raw TypeError carrying the value and naming no key. Postgres URLs must now have `//` and a host. `env.test.ts` adds those cases, plus a check that the thrown error is a plain Error with no `input` and no value in its message. | P01 task 3; agent (stated) |
+| 2026-10-17 | P01 | The legal page shell lives in `src/components/layout/legal-page.tsx`, an existing 07 D07 folder (layout covers page chrome), not a new `components/legal/` folder. P02 swaps its inline notice for `Banner`. | 07 D07; agent (stated) |
+| 2026-10-17 | P01 | Vitest root `reporters: [["default", { summary: false }]]`, so a plain `bun run test` lists each test file (P02 Step 0 checks that it lists env.test.ts and design-tokens.test.ts). README updated: the landing path is `src/app/(public)/page.tsx` and the font is Inter. | P02 Step 0; agent (stated) |
 
 ## Owner answers (07 §4.1)
 

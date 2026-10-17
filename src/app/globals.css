@@ -1,26 +1,363 @@
+/* src/app/globals.css — ClipLease design tokens v1. Source: docs/04-design-system.md.
+ * Tailwind CSS 4.3.3. Components use the utilities below only: never hard-code colors, sizes, radii, shadows.
+ * Do not import tw-animate-css and do not add @custom-variant dark. Never use the dark: variant. */
 @import "tailwindcss";
 
+/* ── 1. Raw tokens · light (default) ─────────────────────────────────────────── */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  color-scheme: light;
+  --canvas: #FFFFFF;
+  --canvas-alt: #F5F5F5;
+  --surface: #FFFFFF;
+  --surface-raised: #FFFFFF;
+  --fill: #EBEBEB;
+  --ink: #111111;
+  --ink-2: #616161;
+  --ink-3: #858585;
+  --hairline: #E5E5E5;
+  --hairline-strong: #8C8C8C;
+  --action: #111111;
+  --action-hover: #333333;
+  --action-pressed: #000000;
+  --action-ink: #FFFFFF;
+  --link: #0060DF;
+  --focus: #0A6CFF;
+  --awaiting: #F5A524;
+  --awaiting-text: #8F5600;
+  --awaiting-tint: #FFF4DE;
+  --cleared: #1BCB80;
+  --cleared-ink: #111111;
+  --cleared-text: #00754A;
+  --cleared-tint: #E2F8EC;
+  --danger: #D93025;
+  --danger-ink: #FFFFFF;
+  --danger-text: #C5221F;
+  --danger-tint: #FDECEA;
+  --bar: rgb(255 255 255 / 0.88);
+  --scrim: rgb(0 0 0 / 0.40);
+  --elevation-overlay: 0 1px 2px rgb(0 0 0 / 0.06), 0 12px 32px rgb(0 0 0 / 0.12);
+
+  /* type sizes that change at lg (mobile values here) */
+  --fs-display: 2.5rem;
+  --lh-display: 2.75rem;
+  --fs-title-1: 1.75rem;
+  --lh-title-1: 2.125rem;
+  --fs-title-2: 1.375rem;
+  --lh-title-2: 1.75rem;
+
+  /* layout */
+  --gutter: 1rem;
+  --nav-h: 3rem;
+  --tabbar-h: 3.5rem;
+  --pricebar-h: 5.75rem;
+
+  /* motion */
+  --dur-press: 100ms;
+  --dur-1: 200ms;
+  --dur-2: 250ms;
+  --dur-3: 350ms;
+
+  /* SF on Apple devices, Inter (next/font, --font-inter) everywhere else. No system-ui ahead of Inter. */
+  --font-stack: -apple-system, BlinkMacSystemFont, var(--font-inter), "Helvetica Neue", Arial, sans-serif;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+@media (min-width: 48rem) {
+  :root { --gutter: 1.5rem; }
 }
-
-@media (prefers-color-scheme: dark) {
+@media (min-width: 64rem) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --gutter: 2rem;
+    --fs-display: 3.5rem;
+    --lh-display: 3.75rem;
+    --fs-title-1: 2.5rem;
+    --lh-title-1: 2.75rem;
+    --fs-title-2: 1.5rem;
+    --lh-title-2: 1.875rem;
+    --pricebar-h: 3.5rem;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* ── 2. Raw tokens · dark, from the OS preference unless the page forces light ── */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --canvas: #000000;
+    --canvas-alt: #0A0A0A;
+    --surface: #161616;
+    --surface-raised: #1F1F1F;
+    --fill: #262626;
+    --ink: #F5F5F5;
+    --ink-2: #A1A1A1;
+    --ink-3: #737373;
+    --hairline: #2A2A2A;
+    --hairline-strong: #757575;
+    --action: #F5F5F5;
+    --action-hover: #E0E0E0;
+    --action-pressed: #D4D4D4;
+    --action-ink: #0A0A0A;
+    --link: #5CA8FF;
+    --focus: #4D9AFF;
+    --awaiting: #F5A524;
+    --awaiting-text: #FFC163;
+    --awaiting-tint: #2B1F08;
+    --cleared: #1BCB80;
+    --cleared-ink: #0A0A0A;
+    --cleared-text: #4ADE9B;
+    --cleared-tint: #0B2A1C;
+    --danger: #D93025;
+    --danger-ink: #FFFFFF;
+    --danger-text: #FF7B72;
+    --danger-tint: #2D1212;
+    --bar: rgb(18 18 18 / 0.86);
+    --scrim: rgb(0 0 0 / 0.60);
+    --elevation-overlay: 0 0 0 1px rgb(255 255 255 / 0.08), 0 16px 40px rgb(0 0 0 / 0.60);
+  }
+}
+
+/* ── 3. Raw tokens · dark, forced. MUST stay identical to block 2 (unit-tested). ── */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --canvas: #000000;
+  --canvas-alt: #0A0A0A;
+  --surface: #161616;
+  --surface-raised: #1F1F1F;
+  --fill: #262626;
+  --ink: #F5F5F5;
+  --ink-2: #A1A1A1;
+  --ink-3: #737373;
+  --hairline: #2A2A2A;
+  --hairline-strong: #757575;
+  --action: #F5F5F5;
+  --action-hover: #E0E0E0;
+  --action-pressed: #D4D4D4;
+  --action-ink: #0A0A0A;
+  --link: #5CA8FF;
+  --focus: #4D9AFF;
+  --awaiting: #F5A524;
+  --awaiting-text: #FFC163;
+  --awaiting-tint: #2B1F08;
+  --cleared: #1BCB80;
+  --cleared-ink: #0A0A0A;
+  --cleared-text: #4ADE9B;
+  --cleared-tint: #0B2A1C;
+  --danger: #D93025;
+  --danger-ink: #FFFFFF;
+  --danger-text: #FF7B72;
+  --danger-tint: #2D1212;
+  --bar: rgb(18 18 18 / 0.86);
+  --scrim: rgb(0 0 0 / 0.60);
+  --elevation-overlay: 0 0 0 1px rgb(255 255 255 / 0.08), 0 16px 40px rgb(0 0 0 / 0.60);
+}
+
+/* ── 4. Tailwind theme · resets and static values ───────────────────────────── */
+@theme {
+  --color-*: initial;        /* no Tailwind palette: tokens only (AGENTS.md §5) */
+  --radius-*: initial;
+  --shadow-*: initial;
+  --text-*: initial;
+  --font-weight-*: initial;
+  --tracking-*: initial;
+
+  --radius-xs: 6px;          /* checkbox */
+  --radius-sm: 8px;          /* inbox thumbnails, avatar squares */
+  --radius-md: 12px;         /* option tiles, fields, wells, banners, copy field */
+  --radius-lg: 18px;         /* cards, license card, sheets, dialogs, dropzone */
+                             /* pills: built-in rounded-full */
+
+  --font-weight-normal: 400;
+  --font-weight-semibold: 600;
+  --tracking-code: 0.04em;   /* license codes */
+
+  --aspect-post: 9 / 16;     /* Library tile well, video card well */
+
+  --container-reading: 40rem;  /* 640: /r, /l, /verify, /sign-in, /onboarding */
+  --container-license: 66rem;  /* 1056: license page from lg */
+  --container-app: 75rem;      /* 1200: dashboard, admin */
+
+  --ease-standard: cubic-bezier(0.25, 0.1, 0.25, 1);  /* color, opacity */
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);         /* things entering or moving */
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);              /* things leaving */
+  --ease-sheet: cubic-bezier(0.32, 0.72, 0, 1);       /* bottom sheet (our own curve, not an Apple value) */
+
+  --animate-fade-in: fade-in 200ms cubic-bezier(0.25, 0.1, 0.25, 1) both;
+  --animate-fade-out: fade-out 200ms cubic-bezier(0.4, 0, 1, 1) both;
+  --animate-sheet-in: sheet-in 350ms cubic-bezier(0.32, 0.72, 0, 1) both;
+  --animate-sheet-out: sheet-out 200ms cubic-bezier(0.4, 0, 1, 1) both;
+  --animate-dialog-in: dialog-in 250ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  --animate-toast-in: rise-in 250ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  --animate-seal-in: seal-in 250ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  --animate-check-draw: check-draw 350ms cubic-bezier(0.2, 0.8, 0.2, 1) 150ms both;
+  --animate-rise-in: rise-in 250ms cubic-bezier(0.2, 0.8, 0.2, 1) 200ms both;
+  --animate-fade-in-late: fade-in 250ms cubic-bezier(0.25, 0.1, 0.25, 1) 300ms both;
+
+  @keyframes fade-in { from { opacity: 0; } }
+  @keyframes fade-out { to { opacity: 0; } }
+  @keyframes sheet-in { from { transform: translateY(100%); } }
+  @keyframes sheet-out { to { transform: translateY(100%); } }
+  @keyframes dialog-in { from { opacity: 0; transform: scale(0.98); } }
+  @keyframes seal-in { from { opacity: 0; transform: scale(0.85); } }
+  @keyframes check-draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+  @keyframes rise-in { from { opacity: 0; transform: translateY(8px); } }
+}
+
+/* ── 5. Tailwind theme · token mappings (inline: utilities read the live custom property) ── */
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-canvas-alt: var(--canvas-alt);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-fill: var(--fill);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-hairline: var(--hairline);
+  --color-hairline-strong: var(--hairline-strong);
+  --color-action: var(--action);
+  --color-action-hover: var(--action-hover);
+  --color-action-pressed: var(--action-pressed);
+  --color-action-ink: var(--action-ink);
+  --color-link: var(--link);
+  --color-focus: var(--focus);
+  --color-awaiting: var(--awaiting);
+  --color-awaiting-text: var(--awaiting-text);
+  --color-awaiting-tint: var(--awaiting-tint);
+  --color-cleared: var(--cleared);
+  --color-cleared-ink: var(--cleared-ink);
+  --color-cleared-text: var(--cleared-text);
+  --color-cleared-tint: var(--cleared-tint);
+  --color-danger: var(--danger);
+  --color-danger-ink: var(--danger-ink);
+  --color-danger-text: var(--danger-text);
+  --color-danger-tint: var(--danger-tint);
+  --color-scrim: var(--scrim);
+
+  --font-sans: var(--font-stack);
+
+  --text-display: var(--fs-display);
+  --text-display--line-height: var(--lh-display);
+  --text-display--letter-spacing: -0.022em;
+  --text-display--font-weight: 600;
+  --text-title-1: var(--fs-title-1);
+  --text-title-1--line-height: var(--lh-title-1);
+  --text-title-1--letter-spacing: -0.018em;
+  --text-title-1--font-weight: 600;
+  --text-title-2: var(--fs-title-2);
+  --text-title-2--line-height: var(--lh-title-2);
+  --text-title-2--letter-spacing: -0.012em;
+  --text-title-2--font-weight: 600;
+  --text-body: 1.0625rem;
+  --text-body--line-height: 1.5625rem;
+  --text-body--letter-spacing: -0.012em;
+  --text-callout: 0.9375rem;
+  --text-callout--line-height: 1.25rem;
+  --text-callout--letter-spacing: -0.006em;
+  --text-footnote: 0.8125rem;
+  --text-footnote--line-height: 1.125rem;
+  --text-footnote--letter-spacing: -0.002em;
+  --text-caption: 0.75rem;
+  --text-caption--line-height: 1rem;
+  --text-caption--letter-spacing: 0.01em;
+  --text-caption--font-weight: 600;
+
+  --shadow-overlay: var(--elevation-overlay);
+}
+
+/* ── 6. Custom utilities ─────────────────────────────────────────────────────── */
+@utility frosted {
+  background-color: var(--bar);
+  -webkit-backdrop-filter: saturate(160%) blur(20px);   /* Safari < 18 needs the prefix */
+  backdrop-filter: saturate(160%) blur(20px);
+}
+@utility hit-44 {                                         /* ≥ 44 × 44 touch target around a smaller control */
+  position: relative;
+  &::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+    transform: translate(-50%, -50%);
+  }
+}
+@utility scrollbar-none {
+  scrollbar-width: none;
+  &::-webkit-scrollbar { display: none; }
+}
+@utility safe-area-bar {                                  /* bottom bars and sheets */
+  padding-bottom: calc(0.625rem + env(safe-area-inset-bottom));
+}
+
+/* ── 7. Unlayered rules: they beat utilities on purpose ──────────────────────── */
+/* Focus ring: one recipe, cannot be removed by a stray outline-none. */
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+[data-focus="inset"]:focus-visible { outline-offset: -2px; }
+[data-focus-within]:has(:focus-visible) {              /* option tiles: ring on the label, not the hidden radio */
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* Frosted bar fallbacks */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .frosted { background-color: var(--canvas); }
+}
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  .frosted { background-color: var(--canvas); -webkit-backdrop-filter: none; backdrop-filter: none; }
+}
+@media (forced-colors: active) {
+  .frosted { background-color: Canvas; -webkit-backdrop-filter: none; backdrop-filter: none; }
+}
+
+/* Sticky bars must never hide the focused element (WCAG 2.2 SC 2.4.11) and toasts sit above them. */
+:root:has([data-tabbar]) {
+  scroll-padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 1rem);
+  --toast-offset: var(--tabbar-h);
+}
+:root:has([data-pricebar]) {
+  scroll-padding-bottom: calc(var(--pricebar-h) + env(safe-area-inset-bottom) + 1rem);
+  --toast-offset: var(--pricebar-h);
+}
+@media (min-width: 64rem) {
+  :root:has([data-tabbar]) { scroll-padding-bottom: 1rem; --toast-offset: 0px; }
+  :root:has([data-pricebar]) {
+    scroll-padding-top: calc(var(--nav-h) + var(--pricebar-h) + 1rem);
+    scroll-padding-bottom: 1rem;
+    --toast-offset: 0px;
+  }
+}
+
+/* Reduced motion: everything lands in its final state. Spinners stop (labels say "…ing"). */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 1ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    transition-delay: 0ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ── 8. Base ─────────────────────────────────────────────────────────────────── */
+@layer base {
+  html {
+    background-color: var(--canvas);
+    color: var(--ink);
+    font-family: var(--font-stack);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+    scroll-padding-top: calc(var(--nav-h) + 1rem);
+  }
+  body {
+    min-height: 100dvh;
+    font-size: 1.0625rem;
+    line-height: 1.5625rem;
+    letter-spacing: -0.012em;
+  }
 }

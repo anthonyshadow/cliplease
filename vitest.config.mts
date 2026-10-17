@@ -13,6 +13,8 @@ export default defineConfig({
     },
   },
   test: {
+    setupFiles: ["./tests/setup/load-env.ts"],
+    reporters: [["default", { summary: false }]],
     projects: [
       {
         extends: true,
