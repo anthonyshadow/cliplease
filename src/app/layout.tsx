@@ -22,7 +22,8 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className={inter.variable}>
-      <body>
+      {/* Below lg, a page with a TabBar keeps its last content clear of the fixed bar (04 §9.30). */}
+      <body className="max-lg:has-[[data-tabbar]]:pb-[calc(var(--tabbar-h)+env(safe-area-inset-bottom))]">
         <Providers>
           {children}
           <Toaster />

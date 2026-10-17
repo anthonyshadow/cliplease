@@ -3,11 +3,19 @@
 import { Avatar as AvatarPrimitive } from "radix-ui";
 import { cn } from "@/lib/utils";
 
+// Splits by what a reader sees as one character, so an emoji, a flag or an accented letter stays whole.
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   const letters =
     parts.length > 1 ? [parts[0], parts[parts.length - 1]] : parts;
-  return letters.map((part) => part.charAt(0).toUpperCase()).join("");
+  return letters
+    .map((part) => {
+      const [first] = graphemes.segment(part);
+      return first ? first.segment.toUpperCase() : "";
+    })
+    .join("");
 }
 
 /** Round avatar with an initials fallback on `fill`. Size with a `size-*` class (default 40 px). */

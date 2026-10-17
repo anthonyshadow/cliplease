@@ -35,16 +35,23 @@ export function CopyLinkField({
   className?: string;
 }) {
   const canShare = useCanShare();
-  // "copied" for 2 s after a copy; "manual" when there is no clipboard and the text is selected instead.
-  const [status, setStatus] = useState<"idle" | "copied" | "manual">("idle");
-  const copied = status === "copied";
+  // "copied" for 2 s after a copy; "manual" when there is no clipboard and the text is selected instead. `id`
+  // changes on every press, so a second copy restarts the 2 s and is announced again.
+  const [status, setStatus] = useState<{
+    kind: "idle" | "copied" | "manual";
+    id: number;
+  }>({ kind: "idle", id: 0 });
+  const copied = status.kind === "copied";
   const textRef = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
-    if (!copied) return;
-    const timer = setTimeout(() => setStatus("idle"), 2000);
+    if (status.kind !== "copied") return;
+    const timer = setTimeout(
+      () => setStatus((s) => ({ kind: "idle", id: s.id })),
+      2000,
+    );
     return () => clearTimeout(timer);
-  }, [copied]);
+  }, [status]);
 
   const selectText = () => {
     const node = textRef.current;
@@ -59,10 +66,10 @@ export function CopyLinkField({
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(url);
-      setStatus("copied");
+      setStatus((s) => ({ kind: "copied", id: s.id + 1 }));
     } catch {
       selectText();
-      setStatus("manual");
+      setStatus((s) => ({ kind: "manual", id: s.id + 1 }));
     }
   };
 
@@ -96,9 +103,12 @@ export function CopyLinkField({
           </button>
         ) : null}
       </div>
+      {/* Keyed by the press, so a repeated message is announced again. "Link copied" is for screen readers only. */}
       <p aria-live="polite" className="text-footnote text-ink-2">
-        {status === "manual" ? "Press and hold to copy" : ""}
-        <span className="sr-only">{copied ? "Link copied" : ""}</span>
+        <span key={status.id} className={cn(copied && "sr-only")}>
+          {copied ? "Link copied" : null}
+          {status.kind === "manual" ? "Press and hold to copy" : null}
+        </span>
       </p>
     </div>
   );

@@ -11,8 +11,13 @@
     "format": "biome format --write .",
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run --project unit",
-    "test:int": "vitest run --project integration --passWithNoTests",
+    "test:int": "vitest run --project integration",
     "test:e2e": "playwright test",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:check": "drizzle-kit check",
+    "db:studio": "drizzle-kit studio",
+    "auth:schema": "bunx auth@1.7.7 generate --config src/server/auth/auth.ts --output src/db/schema/auth.ts --adapter drizzle --dialect postgresql --yes",
     "smoke:compat": "tsx scripts/compat-smoke.tsx"
   },
   "dependencies": {

@@ -11,7 +11,8 @@ export function Stepper({
   current,
   className,
 }: {
-  steps: readonly string[];
+  /** At least one step. */
+  steps: readonly [string, ...string[]];
   current: number;
   className?: string;
 }) {

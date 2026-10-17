@@ -4,6 +4,8 @@ import {
   type Currency,
   EXCLUSIVE_TERM_KEYS,
   type ExclusiveTermKey,
+  LICENSE_REQUEST_STATUSES,
+  PAYMENT_ACTIONS,
   RENEWABLE_TERM_KEYS,
   type RenewableTermKey,
   TERM_KEYS,
@@ -18,6 +20,18 @@ describe("values.ts tuples", () => {
     for (const key of EXCLUSIVE_TERM_KEYS) expect(TERM_KEYS).toContain(key);
     expectTypeOf<RenewableTermKey>().toEqualTypeOf<"d30" | "m6" | "y1">();
     expectTypeOf<ExclusiveTermKey>().toEqualTypeOf<RenewableTermKey>();
+  });
+
+  it("ends the request statuses and payment actions with the renewal values, which ship in 0000 (07 D116)", () => {
+    expect(LICENSE_REQUEST_STATUSES.slice(-3)).toEqual([
+      "renewal_pending",
+      "renewal_canceled",
+      "renewal_failed",
+    ]);
+    expect(PAYMENT_ACTIONS.slice(-2)).toEqual([
+      "renewal_charge",
+      "renewal_checkout",
+    ]);
   });
 
   it("lists CAD and USD (07 §8.2, D94)", () => {

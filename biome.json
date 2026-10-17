@@ -6,7 +6,8 @@
     "useIgnoreFile": true
   },
   "files": {
-    "ignoreUnknown": true
+    "ignoreUnknown": true,
+    "includes": ["**", "!drizzle"]
   },
   "formatter": {
     "enabled": true,
@@ -61,6 +62,19 @@
           },
           "style": {
             "useTemplate": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/db/schema/auth.ts"],
+      "formatter": {
+        "enabled": false
+      },
+      "assist": {
+        "actions": {
+          "source": {
+            "organizeImports": "off"
           }
         }
       }

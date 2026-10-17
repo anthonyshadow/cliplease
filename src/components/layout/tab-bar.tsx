@@ -30,7 +30,7 @@ const TABS: readonly { key: CreatorNavKey; icon: LucideIcon }[] = [
 ];
 
 // 56 px (--tabbar-h) plus the safe area, border and safe-area-bar padding included, so the bar is exactly the space
-// the root scroll padding and the toast offset reserve for it (04 §5.3, §9.30).
+// the root scroll padding, the toast offset and the body padding reserve for it (04 §5.3, §9.30).
 const BAR_HEIGHT = "h-[calc(var(--tabbar-h)+env(safe-area-inset-bottom))]";
 const TAB =
   "relative flex h-full flex-1 flex-col items-center justify-center gap-0.5 text-caption";
@@ -79,8 +79,8 @@ function useKeepFocusAboveBar(bar: RefObject<HTMLElement | null>) {
 }
 
 /**
- * 04 §9.30: the creator's bottom bar below lg. `data-tabbar` sets the toast offset and scroll padding. Render it
- * after the page content: it brings its own spacer.
+ * 04 §9.30: the creator's bottom bar below lg. `data-tabbar` sets the toast offset and scroll padding, and the root
+ * layout's <body> reserves the bar's height below the page while one is mounted.
  */
 export function TabBar({
   current,
@@ -98,59 +98,55 @@ export function TabBar({
   const active = current ?? currentNavKey(pathname);
   const moreActive = MORE_SHEET_KEYS.some((key) => key === active);
   return (
-    <>
-      {/* In-flow spacer: the page's last content scrolls clear of the fixed bar without knowing its height. */}
-      <div aria-hidden className={cn(BAR_HEIGHT, "lg:hidden")} />
-      <nav
-        ref={barRef}
-        data-tabbar
-        className={cn(
-          "fixed inset-x-0 bottom-0 z-40 border-t border-hairline frosted safe-area-bar lg:hidden",
-          BAR_HEIGHT,
-        )}
-      >
-        <ul className="mx-auto flex h-full max-w-app">
-          {TABS.map(({ key, icon: Icon }) => {
-            const isCurrent = key === active;
-            return (
-              <li key={key} className="flex flex-1">
-                <Link
-                  href={CREATOR_NAV[key].href}
-                  prefetch={SHELL_PREFETCH}
-                  aria-current={isCurrent ? "page" : undefined}
-                  className={cn(TAB, isCurrent ? "text-ink" : "text-ink-2")}
-                >
-                  {isCurrent ? <CurrentBar /> : null}
-                  <span className="relative">
-                    <Icon aria-hidden size={24} strokeWidth={1.5} />
-                    {key === "inbox" && inboxCount ? (
-                      <span className="absolute -top-1.5 left-4">
-                        <CountPill count={inboxCount} />
-                      </span>
-                    ) : null}
-                  </span>
-                  {CREATOR_NAV[key].label}
-                </Link>
-              </li>
-            );
-          })}
-          <li className="flex flex-1">
-            <MoreSheet
-              signOut={signOut}
-              trigger={
-                <button
-                  type="button"
-                  className={cn(TAB, moreActive ? "text-ink" : "text-ink-2")}
-                >
-                  {moreActive ? <CurrentBar /> : null}
-                  <Ellipsis aria-hidden size={24} strokeWidth={1.5} />
-                  More
-                </button>
-              }
-            />
-          </li>
-        </ul>
-      </nav>
-    </>
+    <nav
+      ref={barRef}
+      data-tabbar
+      className={cn(
+        "fixed inset-x-0 bottom-0 z-40 border-t border-hairline frosted safe-area-bar lg:hidden",
+        BAR_HEIGHT,
+      )}
+    >
+      <ul className="mx-auto flex h-full max-w-app">
+        {TABS.map(({ key, icon: Icon }) => {
+          const isCurrent = key === active;
+          return (
+            <li key={key} className="flex flex-1">
+              <Link
+                href={CREATOR_NAV[key].href}
+                prefetch={SHELL_PREFETCH}
+                aria-current={isCurrent ? "page" : undefined}
+                className={cn(TAB, isCurrent ? "text-ink" : "text-ink-2")}
+              >
+                {isCurrent ? <CurrentBar /> : null}
+                <span className="relative">
+                  <Icon aria-hidden size={24} strokeWidth={1.5} />
+                  {key === "inbox" && inboxCount ? (
+                    <span className="absolute -top-1.5 left-4">
+                      <CountPill count={inboxCount} />
+                    </span>
+                  ) : null}
+                </span>
+                {CREATOR_NAV[key].label}
+              </Link>
+            </li>
+          );
+        })}
+        <li className="flex flex-1">
+          <MoreSheet
+            signOut={signOut}
+            trigger={
+              <button
+                type="button"
+                className={cn(TAB, moreActive ? "text-ink" : "text-ink-2")}
+              >
+                {moreActive ? <CurrentBar /> : null}
+                <Ellipsis aria-hidden size={24} strokeWidth={1.5} />
+                More
+              </button>
+            }
+          />
+        </li>
+      </ul>
+    </nav>
   );
 }

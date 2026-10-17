@@ -96,13 +96,6 @@ export function Button({
     buttonVariants({ variant: size === "icon" ? null : variant, size }),
     className,
   );
-  if (asChild) {
-    return (
-      <Slot.Root className={classes} {...props}>
-        {children}
-      </Slot.Root>
-    );
-  }
   const handleClick = (event: MouseEvent<HTMLButtonElement>) => {
     if (loading) {
       event.preventDefault();
@@ -110,6 +103,18 @@ export function Button({
     }
     onClick?.(event);
   };
+  const busy = {
+    "aria-busy": loading || undefined,
+    "aria-disabled": loading || props["aria-disabled"] || undefined,
+  };
+  if (asChild) {
+    // The child (a <Link>, an <a>) keeps the click handler and the busy state; it has no spinner layer.
+    return (
+      <Slot.Root {...props} {...busy} className={classes} onClick={handleClick}>
+        {children}
+      </Slot.Root>
+    );
+  }
   const spinner = (
     <LoaderCircle
       aria-hidden
@@ -153,10 +158,9 @@ export function Button({
     <button
       {...props}
       type={type}
+      {...busy}
       className={classes}
       onClick={handleClick}
-      aria-busy={loading || undefined}
-      aria-disabled={loading || props["aria-disabled"] || undefined}
     >
       {content}
     </button>

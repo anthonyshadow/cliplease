@@ -3,6 +3,8 @@ import { cn } from "@/lib/utils";
 
 export type DataColumn<Row> = {
   header: string;
+  /** React key when headers repeat or are empty; defaults to `header`. */
+  id?: string;
   cell: (row: Row) => ReactNode;
   /** Numbers are right-aligned with tabular figures. */
   numeric?: boolean;
@@ -31,7 +33,7 @@ export function DataTable<Row>({
           <tr className="border-b border-hairline">
             {columns.map((column) => (
               <th
-                key={column.header}
+                key={column.id ?? column.header}
                 scope="col"
                 className={cn(
                   "h-10 px-3 text-footnote font-semibold text-ink-2",
@@ -51,7 +53,7 @@ export function DataTable<Row>({
             >
               {columns.map((column) => (
                 <td
-                  key={column.header}
+                  key={column.id ?? column.header}
                   className={cn(
                     "px-3 text-callout text-ink",
                     column.numeric && "text-right tabular-nums",

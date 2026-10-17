@@ -48,7 +48,7 @@ export function Banner({
         className={cn("mt-0.5 shrink-0", iconClass)}
       />
       <div className="flex flex-1 flex-wrap items-baseline gap-x-3">
-        <p>{children}</p>
+        <div>{children}</div>
         {action}
       </div>
     </div>
