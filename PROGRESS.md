@@ -21,7 +21,7 @@
   - The owner answered OQ-01–OQ-33 on 2026-10-15, revised OQ-21 and OQ-29 and added OQ-39 and OQ-40 on 2026-10-16 (07 §4.1, §8),
     answered OQ-41–OQ-48 the same day (07 §4.1, §9; the exclusive and renewal rules are `docs/08-exclusive-renewals-owner-spec.md`), and
     answered OQ-34–OQ-38 and OQ-49–OQ-53 the same day (07 §4.1, §10). Prompts never ask them again; they are listed below as answered.
-    New questions get the next free number (Q-01, …).
+    New questions get the next free number (Q-04, …; Q-01–Q-03 were asked in P02 and are answered).
   - Commands are always `bun run <script>` (Bun 1.4.3 as package manager only, Node 24 runtime; AGENTS.md §9, 07 D107).
   - Later prompts (outside the totals, 07 D105) have their own section after the Log, "## Later prompts": P34 (USD) runs last and
     only when the owner adds USD; P05b (teens) stays "not scheduled".
@@ -257,7 +257,7 @@ Later: P34 (USD) not run · P05b (teens) not scheduled
   - **`error.tsx`:** a temporary route that threw on its first render returned 500 with "Something went wrong. Try again." (one h1). "Try again" (`retry()`) recovered to the page. The route was then removed.
   - **Visual pass** (in-app browser, `bun run dev`): the gallery at 375 and 1280, light and dark; `/` and `/legal/license/v1` at 375, dark. Pills use tint and words, and only Approved and Valid are green. Each button block has one primary. Fields show the red border and the message. The header is the frosted NavBar, "Sign in" shows only on `/`, and the draft notice is a Banner.
 - Decisions: see the Decisions table (2026-10-17, P02).
-- Open questions: Q-01, Q-02 and Q-03 (sync-time wording, TabBar current-tab marker, account-menu label). Each default is built; they are not blocking.
+- Open questions: none. Q-01, Q-02 and Q-03 (sync-time wording, TabBar current-tab marker, account-menu label) were asked with defaults built; the owner chose the default for each on 2026-10-17 (see Decisions).
 - Follow-ups for later prompts:
   - **P04:**
     - Mount the creator shell (NavBar creator + TabBar) in the `(dashboard)` layout, with the real Inbox count.
@@ -847,6 +847,7 @@ Every judgment call, newest last. Source: an OQ number, a 07 row (Dxx), "owner i
 | 2026-10-17 | P02 | Q1 (dev-only gallery): (a). `/dev/ui` (`src/app/dev/ui/page.tsx`) calls `await connection()`, then `notFound()` unless `isDevAppEnv(env.APP_ENV)`, with robots noindex. It is a dev-only route, not in the 02 §4.1 route map. Its `?theme=light` / `?theme=dark` switch sets `<html data-theme>` after mount, for review only (the MVP has no theme toggle). | owner in chat |
 | 2026-10-17 | P02 | Q2 (packages shadcn pulls in): (a). Kept `class-variance-authority` 0.7.1 (2024-11-26; its only dependency is clsx 2.1.1). `init` also installed `tw-animate-css` 1.4.0 (forbidden by 04 §3.1) and the `shadcn` package itself (4.22.0, one day old); `bun remove shadcn tw-animate-css` removed both. 02 §1.1 runs the CLI only through `bunx`, and the `shadcn` package brought `braces` 3.0.3 (GHSA-vfj7-8cjw-p6xm, high) into bun.lock. After the removal `bun audit` is back to the one moderate. `sonner`, `vaul` and `next-themes` were never installed. | owner in chat; 02 §1.1 |
 | 2026-10-17 | P02 | Q3 (404 copy): (a), "Page not found." and "Go to {APP_NAME}" → `/` (05 §10). | owner in chat |
+| 2026-10-17 | P02 | Q-01–Q-03 (asked in chat as Q4–Q6 after the build): (a) each, so the built defaults stay. Q-01: a sync between 1 hour and 1 day reads "Synced {n} h ago", then "Synced 1 day ago" / "Synced {n} days ago", rounded down (`formatRelative`). Q-02: the TabBar marks the current tab with a 2 px ink bar above the icon, plus color and `aria-current`. Q-03: the creator avatar menu button is named "Account menu". No code changed. | owner in chat |
 | 2026-10-17 | P02 | shadcn setup facts (research/bun-elysia-recommendation.md §8 item 5): shadcn 4.21.1 used Bun. `bun.lock` is the only lockfile, and `bun pm untrusted` finds 0. `init` also rewrote `src/app/globals.css` (shadcn variables, `@custom-variant dark`, two CSS imports) and `src/app/layout.tsx` (Geist in place of Inter). `git checkout src/app/globals.css src/app/layout.tsx` restored both: globals.css shasum dcb74d7… matches P01. `add` has no `-b` option; it takes the base (`radix-nova`) from components.json. | P02 task 1; agent (stated) |
 | 2026-10-17 | P02 | Generated files: `input`, `textarea` and `label` were merged into `text-field.tsx`; `native-select` into `select-field.tsx`; `badge` into `status-pill.tsx`; `collapsible` into `disclosure.tsx`; `dropdown-menu` into `menu.tsx`; `alert-dialog` into `confirm-sheet.tsx`. All eight originals were deleted. `button`, `checkbox`, `switch`, `sheet`, `avatar`, `progress` and `skeleton` were rewritten in place on the same Radix parts. While restyling: shadcn token names were replaced by 04 tokens; its `data-open:` / `data-checked:` variants (defined only in the removed shadcn CSS) became `data-[state=…]:`; and blur, `opacity-50`, `ring-3` and pulse were removed. Every component imports `cn` from `@/lib/utils`, never from `"cn"`. | P02 task 1–2; 04 §3.3 |
 | 2026-10-17 | P02 | `src/lib/utils.ts` exports a configured `cn` (`createCn` from `cn/config`; no new package) that registers the 04 §4.2 type scale as font sizes. cn's defaults read `text-body`, `text-callout` and the rest as text colors, so they dropped either the size or the color: a primary Button's label could turn invisible. `utils.test.ts` guards the merges and checks that the scale equals the `--text-*` names in globals.css. | P02 audit; agent (stated) |
@@ -926,15 +927,15 @@ D107–D131 (07 §9), and for OQ-34–OQ-38 and OQ-49–OQ-53 by D132–D143 (07
 
 ## Open questions
 
-Every owner question (OQ-01–OQ-53) is answered (07 §4.1, §10). Open: Q-01–Q-03 (P02; defaults built, not blocking). Add new questions below the line with the next free number (Q-04,
+None open: every owner question (OQ-01–OQ-53, and Q-01–Q-03 from P02) is answered (07 §4.1, §10; Decisions 2026-10-17). Add new questions below the line with the next free number (Q-04,
 Q-05, …); when one is answered, set its status to "answered (Pxx)" and add the answer to Decisions.
 
 | ID | Question | Default if unanswered | Asked in | Status |
 |---|---|---|---|---|
 | | *New questions go below this line.* | | | |
-| Q-01 | Sync-time wording between 1 hour and 1 day (04 §4.4 gives only "just now", "3 min", "3 days") | "Synced {n} h ago", then "Synced 1 day ago" / "Synced {n} days ago", rounded down | P02 | open (default built) |
-| Q-02 | How the TabBar marks the current tab (color alone breaks 04 §12.1) | A 2 px ink bar above the icon, plus color and `aria-current` | P02 | open (default built) |
-| Q-03 | Screen-reader label of the creator avatar menu button | "Account menu" | P02 | open (default built) |
+| Q-01 | Sync-time wording between 1 hour and 1 day (04 §4.4 gives only "just now", "3 min", "3 days") | "Synced {n} h ago", then "Synced 1 day ago" / "Synced {n} days ago", rounded down | P02 | answered (P02): the default |
+| Q-02 | How the TabBar marks the current tab (color alone breaks 04 §12.1) | A 2 px ink bar above the icon, plus color and `aria-current` | P02 | answered (P02): the default |
+| Q-03 | Screen-reader label of the creator avatar menu button | "Account menu" | P02 | answered (P02): the default |
 
 ## Prompt map
 
