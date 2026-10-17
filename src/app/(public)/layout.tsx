@@ -1,17 +1,16 @@
+import { SHELL_GUTTER } from "@/components/layout/gutter";
 import { LandingSignInLink } from "@/components/layout/landing-sign-in-link";
-import { Wordmark } from "@/components/layout/wordmark";
+import { NavBar } from "@/components/layout/nav-bar";
+import { cn } from "@/lib/utils";
 
-// Public chrome: a sticky frosted header with the wordmark (05 §1.3). P02 swaps it for NavBar.
+// Public chrome: the public NavBar (wordmark only; "Sign in" on / alone, 05 §1.3, §4.7) and one <main>.
 export default function PublicLayout({ children }: LayoutProps<"/">) {
   return (
     <>
-      <header className="sticky top-0 z-40 h-(--nav-h) frosted border-b border-hairline">
-        <div className="mx-auto flex h-full max-w-app items-center justify-between px-(--gutter)">
-          <Wordmark />
-          <LandingSignInLink />
-        </div>
-      </header>
-      <main className="mx-auto w-full max-w-app px-(--gutter)">{children}</main>
+      <NavBar variant="public" right={<LandingSignInLink />} />
+      <main className={cn("mx-auto w-full max-w-app", SHELL_GUTTER)}>
+        {children}
+      </main>
     </>
   );
 }

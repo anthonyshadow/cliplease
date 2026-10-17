@@ -32,7 +32,7 @@
 -->
 
 ## Status
-Current prompt: P02 · Last verified: P01 · Blockers: none
+Current prompt: P03 · Last verified: P02 · Blockers: none
 Gates: A (P22) [ ] · R (P22h) [ ] · B (P25) [ ] · C (P27) [ ] · S12 Stripe renewal sign-off (P25d, not a gate) [ ]
 Later: P34 (USD) not run · P05b (teens) not scheduled
 
@@ -193,13 +193,85 @@ Later: P34 (USD) not run · P05b (teens) not scheduled
     - Terms: the US-DMCA wording for a Canadian-first entity, and sections 13 and 14.
     - Privacy: international transfers and regional rights.
 
-### P02 — UI primitives and app shell · [ ] to do
+### P02 — UI primitives and app shell ✅ (2026-10-17)
 > 120 min · Depends on: P01 · Record: the usual bullets (P03's Step 0 also checks that P00 and P01 are ✅)
 - Done:
+  - **shadcn:** `init -b radix` (style `radix-nova`) and `add` for 15 components, followed by the cleanup described in Decisions. `components.json` points at `@/components/ui` and `@/lib/utils`.
+  - **`src/lib/utils.ts`:** a configured `cn` (cn 0.4.0 `createCn`, with the 04 type scale registered), tested in `utils.test.ts`.
+  - **`src/components/ui/`** (one 04 §9.1 file per export):
+    - Forms: `button` (Button), `text-field` (TextField, TextArea and the shared field chrome), `select-field` (SelectField), `checkbox` (Checkbox), `switch` (Switch), `segmented-control` (SegmentedControl, links mode).
+    - Status: `status-pill` (StatusPill, which also re-exports CountdownChip) and `countdown-chip` (client).
+    - Feedback: `notice` (Notice), `banner` (Banner), `empty-state` (EmptyState), `fact-list` (FactList), `skeleton` (Skeleton, static), `progress` (Progress).
+    - Overlays: `sheet` (Sheet, SheetTrigger, SheetClose, SheetContent), `confirm-sheet` (ConfirmSheet), `menu` (Menu, MenuTrigger, MenuContent, MenuItem), `disclosure` (Disclosure), `toast` (Toaster, toast).
+    - Composites: `copy-link-field` (CopyLinkField), `stepper` (Stepper), `data-table` (DataTable), `avatar` (Avatar).
+  - **Pure logic:** `src/lib/countdown.ts` (`countdownState`, tested in `countdown.test.ts`). `src/lib/money/currency.ts` (`CURRENCY_DISPLAY`, `currencyLabel`). `src/lib/format.ts` holds the ten 04 §4.4 formatters; `formatEmailDateTime` is P17's. It is tested in `format.test.ts`: 99 tests, made of 48 cases (every 04 §4.4 example, the D98 goldens and boundary cases) run under TZ=Pacific/Auckland and TZ=America/Los_Angeles, plus 3 zone-independent tests.
+  - **`src/components/layout/`:**
+    - `wordmark` (Wordmark, with `href` and `prefetch` props);
+    - `nav-bar` (NavBar in the public, admin and creator variants, plus CountPill);
+    - `tab-bar` (TabBar) and `more-sheet` (MoreSheet);
+    - `creator-nav.ts` (the shared destinations and `SHELL_PREFETCH`);
+    - `gutter.ts` (`SHELL_GUTTER`, a safe-area gutter);
+    - `not-found-body.tsx`;
+    - `legal-page.tsx`, which now uses Banner and Button.
+  - **App files:**
+    - `src/app/providers.tsx` holds the LucideProvider (20 px, stroke 1.75). The root layout mounts Providers and `<Toaster />`, and keeps P01's `inter.variable`.
+    - Error views: `not-found.tsx` (public NavBar + body), `(public)/not-found.tsx` (body only), `error.tsx` and `global-error.tsx` (both "Try again" → `retry()`).
+    - `/dev/ui` gallery: `src/app/dev/ui/page.tsx` (gate), `gallery.tsx` and `theme-attribute.tsx`.
+  - **Swaps on `/` and `/legal/*`:** the header is NavBar public (with LandingSignInLink on `/`), the pill is `Button asChild`, and the footer and Contents links are `Button variant="link" asChild`. The draft notice is `Banner warning`.
+  - **e2e:** `tests/e2e/smoke.spec.ts` adds `/dev/ui` (one `<main>`, no console errors, noindex) and the 404 page (status, h1, banner, link; it ignores only the browser's log of the document's own 404). A gutter check runs on `/` and the legal pages, and the legal pages are also checked at 320 CSS px for sideways scroll (WCAG 2.2 SC 1.4.10).
 - Verified:
-- Decisions:
-- Open questions:
+  - **Checks:**
+    - `bun run typecheck` ✅
+    - `bun run lint` ✅ ("Checked 80 files … No fixes applied.")
+    - `bun run test` ✅: 7 files and 327 tests (design-tokens 139, values 3, utils 3, countdown 4, license-v1 12, format 99, env 67).
+    - `bun run test:int` ✅ (no test files)
+    - `bun run lint:tokens` ✅ (prints nothing)
+  - **Build and e2e:**
+    - `bun run test:e2e` ✅: 16 passed (8 per project, chromium-desktop + webkit-iphone), after the review fixes too.
+    - `bun run build` ✅: `ƒ /dev/ui`; `/`, `/_not-found`, `/icon` and the four `/legal/*` routes are static.
+    - `/dev/ui` under `next start` with APP_ENV=preview (and non-dev drivers) returns 404 "Page not found." with noindex, while `/` returns 200.
+  - **Verify rg checks:** each prints nothing — ranges, banned packages, `dark:`, `style: 'currency'`, `from "cn"` outside utils.ts, and Geist / font-sans outside globals.css. `git diff --stat HEAD -- src/app/globals.css` also prints nothing (shasum dcb74d7… unchanged). `className={inter.variable}` is still on `<html>`.
+  - **Packages:** `package.json` changes only by `"class-variance-authority": "0.7.1"` (`clsx` 2.1.1 is transitive). `bun pm untrusted` finds 0. `bun audit` shows 1 moderate (the existing esbuild via drizzle-kit) and no high or critical.
+  - **Interaction checks** (scratch Playwright script against `next start`; Chromium 375 and 1280, WebKit iPhone 17):
+    - The gallery has no overflow and no console errors in OS light, OS dark, `?theme=light` and `?theme=dark` (canvas #FFF / #000; data-theme set).
+    - Sheet: a bottom sheet at 375 and a 480 px centered dialog at 1280. Focus stays inside for 8 Tabs, and Esc returns focus to the trigger.
+    - ConfirmSheet: initial focus on "Keep license"; Esc returns focus.
+    - Menu: Enter and Space open it, the arrows move, and Esc returns focus.
+    - Toast: above the TabBar at 375 (bottom 736, TabBar top 745).
+    - Focus: every Tab stop has `solid 2px`, menu items included. None ends under the TabBar in Chromium 375 (58 stops) or WebKit iPhone (7 stops; WebKit's Tab skips links).
+    - Targets: every control is ≥ 44 px (its own box, `hit-44`, or a 44 px label row). A click on the far right edge of a Checkbox row toggles it, and a click on the box itself toggles it once.
+    - Reduced motion: the sheet animation is 0.001 s, the spinner 0.001 s × 1, and the label still reads "Approving…".
+    - 404: status 404, one banner.
+  - **Review fixes** (a second scratch script, 21 checks, all ✅):
+    - SelectField has the `surface` background and `hairline-strong` border in both themes; the read-only TextField keeps `fill`.
+    - Errored fields (input and select) keep the `danger` border on hover.
+    - The icon Button stays `fill` with an `ink` icon at rest, on hover and when pressed, in both themes.
+    - The money prefix ("CA$") is first in the input's `aria-describedby`.
+    - ConfirmSheet has a 44 × 44 Close button; Close returns focus to the trigger; initial focus is still "Keep license".
+    - Safe-primary ConfirmSheet: initial focus on "Keep it on", which sits first (above) at 375 and on the right at 1280. Its confirm reads "Turning off…" with `aria-busy` while loading.
+    - The toast action's focus ring uses `canvas` on the `ink` toast.
+    - MoreSheet rows have no borders.
+    - Forced colors (Chromium emulation): the TabBar marker and the Progress bar paint in CanvasText, and the track has a 1 px border.
+    - At 320 px the four legal pages don't scroll sideways, and a long Contents link wraps.
+    - The original interaction script (27 checks) still passes.
+  - **`error.tsx`:** a temporary route that threw on its first render returned 500 with "Something went wrong. Try again." (one h1). "Try again" (`retry()`) recovered to the page. The route was then removed.
+  - **Visual pass** (in-app browser, `bun run dev`): the gallery at 375 and 1280, light and dark; `/` and `/legal/license/v1` at 375, dark. Pills use tint and words, and only Approved and Valid are green. Each button block has one primary. Fields show the red border and the message. The header is the frosted NavBar, "Sign in" shows only on `/`, and the draft notice is a Banner.
+- Decisions: see the Decisions table (2026-10-17, P02).
+- Open questions: Q-01, Q-02 and Q-03 (sync-time wording, TabBar current-tab marker, account-menu label). Each default is built; they are not blocking.
 - Follow-ups for later prompts:
+  - **P04:**
+    - Mount the creator shell (NavBar creator + TabBar) in the `(dashboard)` layout, with the real Inbox count.
+    - Pass a Sign out `MenuItem` to `NavBar signOut` and a Sign out row to `MoreSheet signOut`.
+    - Keep `prefetch={false}` on both `/sign-in` links until `/sign-in` exists.
+  - **`SHELL_PREFETCH` (`creator-nav.ts`)** stays false until every `/dashboard/*` route it links exists (P04–P12, Settings). Then turn prefetch back on.
+  - **P20b** adds "My licenses" (`/licenses`) to the account Menu and the MoreSheet, and the signed-in buyer NavBar variant (07 D126, 04 §9.30).
+  - **Feature prompts** compose these primitives only and add no new `ui/*` without 04 §9.1.
+  - **Other prompts:**
+    - P17 adds `formatEmailDateTime` (07 D84) to `src/lib/format.ts`.
+    - P28b: `formatCompact` takes `(n, noun)`.
+    - P21 puts the admin tabs (SegmentedControl links mode) in `NavBar admin below`.
+  - **Gotcha:** never import a non-component value (a constant, a class string) from a `"use client"` module into a Server Component. It arrives as a client reference, not the value: P02 lost the page gutter this way until `SHELL_GUTTER` moved to `gutter.ts`. Shared constants live in plain modules.
+  - **Kit wording** (AGENTS.md §9, 02 §1.1, stack.md fact 42): `-b radix` applies to `shadcn init` only. `add` has no `-b` and takes the base from components.json.
 
 **M1 Data, sign-in and handle** · P03–P05 · 6.0 h
 
@@ -772,6 +844,22 @@ Every judgment call, newest last. Source: an OQ number, a 07 row (Dxx), "owner i
 | 2026-10-17 | P01 | `env.ts` hardening (pre-commit review): the origin refine runs only when `URL.canParse` succeeds. Before, an unparseable `APP_URL` threw a raw TypeError carrying the value and naming no key. Postgres URLs must now have `//` and a host. `env.test.ts` adds those cases, plus a check that the thrown error is a plain Error with no `input` and no value in its message. | P01 task 3; agent (stated) |
 | 2026-10-17 | P01 | The legal page shell lives in `src/components/layout/legal-page.tsx`, an existing 07 D07 folder (layout covers page chrome), not a new `components/legal/` folder. P02 swaps its inline notice for `Banner`. | 07 D07; agent (stated) |
 | 2026-10-17 | P01 | Vitest root `reporters: [["default", { summary: false }]]`, so a plain `bun run test` lists each test file (P02 Step 0 checks that it lists env.test.ts and design-tokens.test.ts). README updated: the landing path is `src/app/(public)/page.tsx` and the font is Inter. | P02 Step 0; agent (stated) |
+| 2026-10-17 | P02 | Q1 (dev-only gallery): (a). `/dev/ui` (`src/app/dev/ui/page.tsx`) calls `await connection()`, then `notFound()` unless `isDevAppEnv(env.APP_ENV)`, with robots noindex. It is a dev-only route, not in the 02 §4.1 route map. Its `?theme=light` / `?theme=dark` switch sets `<html data-theme>` after mount, for review only (the MVP has no theme toggle). | owner in chat |
+| 2026-10-17 | P02 | Q2 (packages shadcn pulls in): (a). Kept `class-variance-authority` 0.7.1 (2024-11-26; its only dependency is clsx 2.1.1). `init` also installed `tw-animate-css` 1.4.0 (forbidden by 04 §3.1) and the `shadcn` package itself (4.22.0, one day old); `bun remove shadcn tw-animate-css` removed both. 02 §1.1 runs the CLI only through `bunx`, and the `shadcn` package brought `braces` 3.0.3 (GHSA-vfj7-8cjw-p6xm, high) into bun.lock. After the removal `bun audit` is back to the one moderate. `sonner`, `vaul` and `next-themes` were never installed. | owner in chat; 02 §1.1 |
+| 2026-10-17 | P02 | Q3 (404 copy): (a), "Page not found." and "Go to {APP_NAME}" → `/` (05 §10). | owner in chat |
+| 2026-10-17 | P02 | shadcn setup facts (research/bun-elysia-recommendation.md §8 item 5): shadcn 4.21.1 used Bun. `bun.lock` is the only lockfile, and `bun pm untrusted` finds 0. `init` also rewrote `src/app/globals.css` (shadcn variables, `@custom-variant dark`, two CSS imports) and `src/app/layout.tsx` (Geist in place of Inter). `git checkout src/app/globals.css src/app/layout.tsx` restored both: globals.css shasum dcb74d7… matches P01. `add` has no `-b` option; it takes the base (`radix-nova`) from components.json. | P02 task 1; agent (stated) |
+| 2026-10-17 | P02 | Generated files: `input`, `textarea` and `label` were merged into `text-field.tsx`; `native-select` into `select-field.tsx`; `badge` into `status-pill.tsx`; `collapsible` into `disclosure.tsx`; `dropdown-menu` into `menu.tsx`; `alert-dialog` into `confirm-sheet.tsx`. All eight originals were deleted. `button`, `checkbox`, `switch`, `sheet`, `avatar`, `progress` and `skeleton` were rewritten in place on the same Radix parts. While restyling: shadcn token names were replaced by 04 tokens; its `data-open:` / `data-checked:` variants (defined only in the removed shadcn CSS) became `data-[state=…]:`; and blur, `opacity-50`, `ring-3` and pulse were removed. Every component imports `cn` from `@/lib/utils`, never from `"cn"`. | P02 task 1–2; 04 §3.3 |
+| 2026-10-17 | P02 | `src/lib/utils.ts` exports a configured `cn` (`createCn` from `cn/config`; no new package) that registers the 04 §4.2 type scale as font sizes. cn's defaults read `text-body`, `text-callout` and the rest as text colors, so they dropped either the size or the color: a primary Button's label could turn invisible. `utils.test.ts` guards the merges and checks that the scale equals the `--text-*` names in globals.css. | P02 audit; agent (stated) |
+| 2026-10-17 | P02 | Component APIs:<br>- **Button:** variants primary, secondary, tertiary, link and destructive; sizes lg, sm (with `hit-44`) and icon. The icon size ignores `variant` (its type forbids one and requires `aria-label`): a 44 px `fill` circle with an `ink` icon, `hover:brightness-95` and `active:scale-98`, so no variant's hover or pressed background can hide the icon. `loading` / `loadingLabel` stack the label and the spinner layer in one grid cell, so the width never changes; the hidden layer is aria-hidden and never repeats the children. The type requires `loadingLabel` whenever `loading` is passed (lg and sm), because that label is the button's name while loading. Press feedback runs at 100 ms (`active:duration-100`, 04 §6 `--dur-press`); colors at 200 ms. `asChild` uses Radix Slot. `link` has no pill box: no padding or min-width, `min-h-11` (lg), regular weight, and it wraps (`whitespace-normal text-left`) so long Contents links never scroll sideways.<br>- **TextField:** takes a `prefix` (from `CURRENCY_DISPLAY[c].prefix`) in place of React's RDFa `prefix`. The prefix span stays aria-hidden and its id comes first in `aria-describedby`, so screen readers hear the currency once. The read-only look (`fill`, no border) applies to TextField and TextArea only, because a `<select>` always matches `:read-only`. Errored fields keep the `danger` border on hover.<br>- **Checkbox:** the whole ≥ 44 px row is the `<label htmlFor>`, wrapping the box and the text.<br>- **Menu:** no MenuSeparator (04 names no separators) and no `outline-none` on items (04 §3.3), so the global ring shows.<br>- **StatusPill:** `tone` plus `dot` (`solid` / `hollow`, neutral only). Awaiting and danger always show their dot; cleared shows a 12 px check.<br>- **CountdownChip:** `expiresAt` (ISO), `srPrefix` ("Waiting for you") and `tone="neutral"` (the buyer's `/r`).<br>- **ConfirmSheet:** the safe button is AlertDialog.Cancel. The header has the same 44 px Close control as Sheet (a second Cancel), so initial focus is set explicitly to the safe button in `onOpenAutoFocus` rather than left to Radix's single cancel ref. The confirm variant is `destructive` by default, or `primary` / `secondary` for TurnOffAutoRenew and price sheets. With `cancelVariant="primary"` (TurnOffAutoRenewSheet) the safe button comes first in the footer, so the primary is first on mobile and last (right) on desktop. `confirmLoading` requires `confirmLoadingLabel`.<br>- **Stepper:** `steps`, `current` (0-based); mobile layout below md.<br>- **DataTable:** `columns` / `rows` / `rowKey`.<br>- **Avatar:** `name` (initials) and optional `src`. | 04 §9.2–§9.31; agent (stated) |
+| 2026-10-17 | P02 | CountdownChip hydration: the server and the first client render show the pill frame with an empty `<time dateTime>`. `Date.now()` and the viewer's zone (for the `title` via `formatDeadline`) are read in `useEffect`, which then reschedules on `countdownState(...).nextTickMs` (60 s, 10 s under 1 h, none at 0). No `aria-live`, no hydration mismatch. CopyLinkField reads `navigator.share` with `useSyncExternalStore` (server snapshot false): WebKit would otherwise hydrate a different button. | 02 §4.4; 04 §9.10, §9.25; agent (stated) |
+| 2026-10-17 | P02 | Lucide defaults: a client `Providers` with `LucideProvider size={20} strokeWidth={1.75}` in the root layout. lucide's Icon is a client component, so the context also reaches icons rendered from Server Components. 16 px icons pass `strokeWidth={2}` and 24 px pass 1.5 explicitly. | 04 §8.1 |
+| 2026-10-17 | P02 | `error.tsx` and `global-error.tsx` call `retry()`, not 05 §10's `reset()`. In Next 16.4.1, `retry()` (stable since 16.3) re-fetches and re-renders the segment, while `reset()` only re-renders the cached result and can't recover from a Server Component error (`node_modules/next/dist/docs/…/error.md`). | Next 16.4.1 docs; agent (stated) |
+| 2026-10-17 | P02 | Not-found: the root `not-found.tsx` renders the public NavBar itself, because unmatched URLs use the root layout only. `(public)/not-found.tsx` renders the body only, so a `notFound()` inside `(public)` doesn't double the chrome. The copy lives once in `NotFoundBody` (07 D49). e2e on a 404 page ignores only the browser's own "Failed to load resource … 404" for the document; every other console error still fails. | 05 §10; AGENTS §7; agent (stated) |
+| 2026-10-17 | P02 | Shell: the creator destinations live once in `creator-nav.ts`. Every shell link has `prefetch={false}` (`SHELL_PREFETCH`), because a production prefetch of a `/dashboard/*` route that doesn't exist yet logs a 404. "My licenses" isn't in the Menu or the MoreSheet yet: P20b adds it with `/licenses` (07 D126). MoreSheet rows are words only, with no chevrons (04 §8.1 "No icons in menus, the More sheet"). The admin `below` slot renders under the sticky bar, not inside it, so `scroll-padding-top` stays right. The admin NavBar's wordmark links to `/admin` (04 §9.30 names no target for admin), with `prefetch={false}` until P21 builds `/admin`. MoreSheet rows are plain, with no separators (05 §1.3 draws none). The TabBar also scrolls a focused element clear of itself when it covers that element's bottom edge, because WebKit's focus scrolling can leave a field a few px under the bar despite the root's `scroll-padding-bottom` (WCAG 2.2 SC 2.4.11); it tests with `elementFromPoint`, so a sheet above the bar or the hidden bar at lg never triggers it. | 04 §9.30; 05 §1.3; 07 D126; agent (stated) |
+| 2026-10-17 | P02 | P01 follow-up applied: full-width containers (the NavBar inner row, the `(public)` and error `<main>`) use `SHELL_GUTTER`, `max(var(--gutter), env(safe-area-inset-left/right))`. It lives in the plain module `gutter.ts`: exported from the client `nav-bar.tsx`, it reached Server Components as a client reference, and the gutter vanished. The e2e now checks the gutter. | P01 follow-up; agent (stated) |
+| 2026-10-17 | P02 | Sheet: below md a bottom sheet (`max-h-[92dvh]`); from md a 30rem dialog capped at `100dvh − 4rem`. Only the body scrolls, so the title, the 44 px close button and the footer stay on screen in short windows. Filled overlays (sheet, menu, toast, current segment, switch thumb) carry `border border-transparent` for forced colors (04 §7). Menu items are `min-h-11`; the Switch track and SegmentedControl segments use `hit-44`. Forced colors drop backgrounds, so the TabBar's current-tab bar and the Progress bar use `forced-colors:bg-[CanvasText]` and the Progress track gets `forced-colors:border`. The toast action sets `[--focus:var(--canvas)]`, so its focus ring is about 19:1 on the `ink` toast in both themes (the default ring was 2.6:1 there in dark mode); globals.css is unchanged. | 04 §2.3, §7, §9.22, §9.23; agent (stated) |
+| 2026-10-17 | P02 | Formatters: `formatBytes(n, total?)` uses binary units shown as MB/GB (07 D80: 2 GiB reads "2 GB"); the unit comes from the larger value, and with a total it prints "312 of 840 MB". `formatPostDate` is the UTC day, and `formatLicenseDate` is UTC with h23. `formatDeadline(d, tz)` builds the viewer's-zone text from en-US `formatToParts` (ASCII, the same in Node, Chromium and WebKit). `formatCountdown` rounds down to whole minutes and always prints both units. `formatEmailDateTime` is P17's. The money rules follow D98: the prefix comes from `CURRENCY_DISPLAY`, the digits from en-US `Intl.NumberFormat` (never the currency style), and U+2212 is the minus. `format.test.ts` runs every golden under `TZ=Pacific/Auckland` and `TZ=America/Los_Angeles`. | 04 §4.4; 07 D80, D84, D98; 01 G.7 |
+| 2026-10-17 | P02 | New files that aren't components in 04 §9.1: `src/components/layout/creator-nav.ts` (shell config), `gutter.ts`, `not-found-body.tsx`, `src/lib/countdown.ts`, `src/app/providers.tsx` and `src/app/dev/ui/{gallery,theme-attribute}.tsx`. The field chrome (`FIELD_BOX`, `FIELD_ERROR`, `describedBy`, label, messages, shell) is exported from `text-field.tsx` for SelectField and Checkbox, so there is no extra `ui/` file. `/dev/ui` is a review page and is exempt from 04 §5.6's budget of three frosted elements: it shows three NavBars and the real TabBar. | agent (stated) |
 
 ## Owner answers (07 §4.1)
 
@@ -838,12 +926,15 @@ D107–D131 (07 §9), and for OQ-34–OQ-38 and OQ-49–OQ-53 by D132–D143 (07
 
 ## Open questions
 
-None open: every owner question is answered (07 §4.1, §10). Add new questions below the line with the next free number (Q-01,
-Q-02, …); when one is answered, set its status to "answered (Pxx)" and add the answer to Decisions.
+Every owner question (OQ-01–OQ-53) is answered (07 §4.1, §10). Open: Q-01–Q-03 (P02; defaults built, not blocking). Add new questions below the line with the next free number (Q-04,
+Q-05, …); when one is answered, set its status to "answered (Pxx)" and add the answer to Decisions.
 
 | ID | Question | Default if unanswered | Asked in | Status |
 |---|---|---|---|---|
 | | *New questions go below this line.* | | | |
+| Q-01 | Sync-time wording between 1 hour and 1 day (04 §4.4 gives only "just now", "3 min", "3 days") | "Synced {n} h ago", then "Synced 1 day ago" / "Synced {n} days ago", rounded down | P02 | open (default built) |
+| Q-02 | How the TabBar marks the current tab (color alone breaks 04 §12.1) | A 2 px ink bar above the icon, plus color and `aria-current` | P02 | open (default built) |
+| Q-03 | Screen-reader label of the creator avatar menu button | "Account menu" | P02 | open (default built) |
 
 ## Prompt map
 

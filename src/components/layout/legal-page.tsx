@@ -1,6 +1,7 @@
-import { TriangleAlert } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { Banner } from "@/components/ui/banner";
+import { Button } from "@/components/ui/button";
 import {
   LICENSE_V1_UPDATED_LABEL,
   LICENSE_V1_VERSION,
@@ -13,7 +14,7 @@ import {
   type LegalText,
 } from "@/lib/legal/types";
 
-// The draft legal pages (05 §4.8). P02 swaps the notice for Banner and the links for Button variant="link".
+// The draft legal pages (05 §4.8): Banner notice, Button "link" contents; links inside paragraphs stay inline links.
 const INLINE_LINK = "text-link underline underline-offset-4";
 
 function textKey(text: LegalText): string {
@@ -86,21 +87,6 @@ function BlockView({ block }: { block: LegalBlock }) {
   );
 }
 
-export function DraftNotice() {
-  return (
-    <div
-      role="note"
-      className="flex items-start gap-2 rounded-md bg-awaiting-tint px-4 py-3 text-callout text-ink"
-    >
-      <TriangleAlert
-        aria-hidden="true"
-        className="mt-0.5 size-4 shrink-0 text-awaiting-text"
-      />
-      <p>Draft for testing. Not for real transactions.</p>
-    </div>
-  );
-}
-
 function blockKey(block: LegalBlock): string {
   if (isLegalText(block)) return textKey(block);
   if ("heading" in block) return `h:${block.heading}`;
@@ -136,7 +122,9 @@ export function LegalPage({
 }) {
   return (
     <article className="mx-auto flex max-w-reading flex-col gap-8 py-6 text-body text-ink wrap-break-word lg:py-12">
-      <DraftNotice />
+      <Banner tone="warning">
+        Draft for testing. Not for real transactions.
+      </Banner>
       <header className="flex flex-col gap-2">
         <h1 className="text-title-1 text-ink">{title}</h1>
         <p className="text-callout text-ink-2">
@@ -151,12 +139,9 @@ export function LegalPage({
         <ul className="flex flex-col">
           {sections.map((section) => (
             <li key={section.id}>
-              <a
-                href={`#${section.id}`}
-                className="inline-flex min-h-11 items-center text-link"
-              >
-                {section.title}
-              </a>
+              <Button asChild variant="link">
+                <a href={`#${section.id}`}>{section.title}</a>
+              </Button>
             </li>
           ))}
         </ul>

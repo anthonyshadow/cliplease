@@ -1,7 +1,9 @@
 import type { Metadata, Viewport } from "next";
+import { Toaster } from "@/components/ui/toast";
 import { APP_NAME } from "@/lib/app-name";
 import { env } from "@/server/env";
 import { inter } from "./fonts";
+import { Providers } from "./providers";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -20,7 +22,12 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className={inter.variable}>
-      <body>{children}</body>
+      <body>
+        <Providers>
+          {children}
+          <Toaster />
+        </Providers>
+      </body>
     </html>
   );
 }

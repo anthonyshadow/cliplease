@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Button } from "@/components/ui/button";
 
 const STEPS = [
   ["Connect.", "Your accounts, read-only."],
@@ -24,13 +25,12 @@ export default function LandingPage() {
           Link your Instagram, TikTok and YouTube. Turn any post into a license
           link. Get paid when you tap Approve.
         </p>
-        <Link
-          href="/sign-in"
-          prefetch={false}
-          className="inline-flex h-11 w-full items-center justify-center rounded-full border border-transparent bg-action px-5 text-body font-semibold text-action-ink hover:bg-action-hover sm:w-auto sm:self-start"
-        >
-          Sign in
-        </Link>
+        {/* No prefetch: /sign-in doesn't exist until P04. */}
+        <Button asChild className="w-full sm:w-auto sm:self-start">
+          <Link href="/sign-in" prefetch={false}>
+            Sign in
+          </Link>
+        </Button>
       </section>
 
       <ul className="flex flex-col gap-3">
@@ -42,17 +42,17 @@ export default function LandingPage() {
       </ul>
 
       <footer className="border-t border-hairline pt-6">
-        <nav aria-label="Legal" className="flex items-center gap-2 text-body">
+        <nav aria-label="Legal" className="flex items-center gap-3">
           {LEGAL_LINKS.map(([href, label], index) => (
-            <span key={href} className="flex items-center gap-2">
+            <span key={href} className="flex items-center gap-3">
               {index > 0 ? (
                 <span aria-hidden="true" className="text-ink-2">
                   ·
                 </span>
               ) : null}
-              <Link href={href} className="hit-44 text-link">
-                {label}
-              </Link>
+              <Button asChild variant="link">
+                <Link href={href}>{label}</Link>
+              </Button>
             </span>
           ))}
         </nav>
