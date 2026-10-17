@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 import { Avatar } from "@/components/ui/avatar";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
+import { pillVariants } from "@/components/ui/status-pill";
 import { cn } from "@/lib/utils";
 import {
   CREATOR_NAV,
@@ -14,12 +15,18 @@ import {
   SHELL_PREFETCH,
 } from "./creator-nav";
 import { SHELL_GUTTER } from "./gutter";
+import { Bar, PublicNavBar } from "./public-shell";
 import { Wordmark } from "./wordmark";
 
-/** The `awaiting` caption count on Inbox (04 §9.30). */
+/** The `awaiting` caption count on Inbox (04 §9.30): the awaiting pill, compact. */
 export function CountPill({ count }: { count: number }) {
   return (
-    <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full border border-transparent bg-awaiting-tint px-1.5 text-caption text-awaiting-text tabular-nums">
+    <span
+      className={cn(
+        pillVariants({ tone: "awaiting" }),
+        "h-5 min-w-5 justify-center px-1.5",
+      )}
+    >
       {count}
     </span>
   );
@@ -45,21 +52,6 @@ export type NavBarProps =
       /** The account Menu's last item; P04 wires a MenuItem that signs out. */
       signOut?: ReactNode;
     };
-
-function Bar({ children }: { children: ReactNode }) {
-  return (
-    <header className="sticky top-0 z-40 h-(--nav-h) border-b border-hairline frosted">
-      <div
-        className={cn(
-          "mx-auto flex h-full max-w-app items-center justify-between gap-4",
-          SHELL_GUTTER,
-        )}
-      >
-        {children}
-      </div>
-    </header>
-  );
-}
 
 function CreatorLinks({
   current,
@@ -99,17 +91,13 @@ function CreatorLinks({
   );
 }
 
-/** 04 §9.30: sticky frosted bar in three variants. */
+/**
+ * 04 §9.30: sticky frosted bar in three variants. Public pages render `PublicNavBar` from `public-shell.tsx`
+ * directly, so they don't load this module's menu code.
+ */
 export function NavBar(props: NavBarProps) {
   const pathname = usePathname();
-  if (props.variant === "public") {
-    return (
-      <Bar>
-        <Wordmark />
-        {props.right}
-      </Bar>
-    );
-  }
+  if (props.variant === "public") return <PublicNavBar right={props.right} />;
   if (props.variant === "admin") {
     return (
       <>

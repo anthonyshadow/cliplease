@@ -29,6 +29,8 @@ const testEnv = {
 
 export default defineConfig({
   testDir: "tests/e2e",
+  // The tests only read pages, so they run in parallel against the one server.
+  fullyParallel: true,
   use: {
     baseURL: "http://localhost:3100",
   },

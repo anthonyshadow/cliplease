@@ -61,7 +61,7 @@ describe("fillLicenseV1", () => {
   it("fills every string the /legal/license/v1 page renders, leaving no raw token", () => {
     for (const text of pageStrings) {
       const filled = fillLicenseV1(text, LICENSE_V1_NEUTRAL_VALUES);
-      expect(filled).not.toMatch(/\{[a-z_]+\}/);
+      expect(licenseV1Tokens(filled)).toEqual([]);
     }
     expect(fillLicenseV1(LICENSE_V1_TITLE, LICENSE_V1_NEUTRAL_VALUES)).toBe(
       `${APP_NAME} Video License v1`,

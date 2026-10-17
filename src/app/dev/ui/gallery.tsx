@@ -3,6 +3,7 @@
 import { Ellipsis, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 import { type ReactNode, useEffect, useState } from "react";
+import { SHELL_MAIN } from "@/components/layout/gutter";
 import { MoreSheet } from "@/components/layout/more-sheet";
 import { NavBar } from "@/components/layout/nav-bar";
 import { TabBar } from "@/components/layout/tab-bar";
@@ -36,10 +37,8 @@ import { toast } from "@/components/ui/toast";
 import { APP_NAME } from "@/lib/app-name";
 import { formatLicenseDate, formatMoney } from "@/lib/format";
 import { CURRENCY_DISPLAY } from "@/lib/money/currency";
-
-const MIN = 60_000;
-const HOUR = 60 * MIN;
-const DAY = 24 * HOUR;
+import { DAY_MS, HOUR_MS, MINUTE_MS } from "@/lib/time";
+import { cn } from "@/lib/utils";
 
 // Every label in the 04 §9.9 table, with its dot.
 const PILLS: readonly {
@@ -83,9 +82,9 @@ const PILLS: readonly {
 ];
 
 const COUNTDOWN_OFFSETS = [
-  { name: "3 d", ms: 3 * DAY },
-  { name: "5 h", ms: 5 * HOUR },
-  { name: "42 min", ms: 42 * MIN },
+  { name: "3 d", ms: 3 * DAY_MS },
+  { name: "5 h", ms: 5 * HOUR_MS },
+  { name: "42 min", ms: 42 * MINUTE_MS },
   { name: "0", ms: 0 },
 ] as const;
 
@@ -95,6 +94,22 @@ const REGIONS = [
   "Europe",
   "Middle East & Africa",
   "Asia-Pacific",
+];
+
+// A long list, so the sheet body scrolls.
+const COUNTRIES = [
+  "Canada",
+  "United States",
+  "Mexico",
+  "Brazil",
+  "United Kingdom",
+  "France",
+  "Germany",
+  "Spain",
+  "Nigeria",
+  "India",
+  "Japan",
+  "Australia",
 ];
 
 const TABLE_ROWS = [
@@ -108,6 +123,15 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
       <h2 className="text-title-2 text-ink">{title}</h2>
       {children}
     </section>
+  );
+}
+
+/** Each NavBar demo sits in its own frame, so its sticky header stays inside the frame. */
+function Frame({ children }: { children: ReactNode }) {
+  return (
+    <div className="relative overflow-hidden rounded-md border border-hairline">
+      {children}
+    </div>
   );
 }
 
@@ -208,11 +232,11 @@ function CountdownDemos() {
         />
       ))}
       <CountdownChip
-        expiresAt={new Date(now + 5 * HOUR).toISOString()}
+        expiresAt={new Date(now + 5 * HOUR_MS).toISOString()}
         srPrefix="Waiting for you"
       />
       <CountdownChip
-        expiresAt={new Date(now + 42 * MIN).toISOString()}
+        expiresAt={new Date(now + 42 * MINUTE_MS).toISOString()}
         tone="neutral"
       />
     </>
@@ -223,7 +247,7 @@ export function Gallery({ view }: { view: "waiting" | "history" }) {
   const [step, setStep] = useState(0);
   const user = { name: "Maya Ruiz" };
   return (
-    <main className="mx-auto flex max-w-app flex-col gap-10 px-(--gutter) pt-8 pb-[calc(var(--tabbar-h)+env(safe-area-inset-bottom)+2rem)] lg:pb-12">
+    <main className={cn(SHELL_MAIN, "flex flex-col gap-10 pt-8 pb-8 lg:pb-12")}>
       <div className="flex flex-col gap-2">
         <h1 className="text-title-1 text-ink">
           UI primitives <span className="text-ink-2">and shell</span>
@@ -402,15 +426,12 @@ export function Gallery({ view }: { view: "waiting" | "history" }) {
               footer={<Button>Done</Button>}
             >
               <ul className="flex flex-col">
-                {Array.from(
-                  { length: 12 },
-                  (_, i) => REGIONS[i % REGIONS.length],
-                ).map((region, i) => (
+                {COUNTRIES.map((country) => (
                   <li
-                    key={`${region}-${String(i)}`}
+                    key={country}
                     className="flex min-h-11 items-center border-b border-hairline"
                   >
-                    {region}
+                    {country}
                   </li>
                 ))}
               </ul>
@@ -503,11 +524,10 @@ export function Gallery({ view }: { view: "waiting" | "history" }) {
 
       <Section title="Shell">
         <div className="flex flex-col gap-4">
-          {/* Each NavBar demo sits in its own frame, so its sticky header stays inside the frame. */}
-          <div className="relative overflow-hidden rounded-md border border-hairline">
+          <Frame>
             <NavBar variant="public" />
-          </div>
-          <div className="relative overflow-hidden rounded-md border border-hairline">
+          </Frame>
+          <Frame>
             <NavBar
               variant="admin"
               below={
@@ -522,8 +542,8 @@ export function Gallery({ view }: { view: "waiting" | "history" }) {
                 />
               }
             />
-          </div>
-          <div className="relative overflow-hidden rounded-md border border-hairline">
+          </Frame>
+          <Frame>
             <NavBar
               variant="creator"
               current="inbox"
@@ -531,7 +551,7 @@ export function Gallery({ view }: { view: "waiting" | "history" }) {
               user={user}
               signOut={<MenuItem>Sign out</MenuItem>}
             />
-          </div>
+          </Frame>
           <MoreSheet
             trigger={<Button variant="secondary">Open MoreSheet</Button>}
             signOut={

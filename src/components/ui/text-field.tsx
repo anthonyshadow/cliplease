@@ -4,7 +4,7 @@ import { CircleAlert } from "lucide-react";
 import { type ComponentProps, type ReactNode, useId } from "react";
 import { cn } from "@/lib/utils";
 
-// Shared field chrome for TextField, TextArea, SelectField and Checkbox (04 §9.6, §9.7).
+// Shared field chrome for TextField, TextArea, SelectField, Checkbox and Switch (04 §9.6, §9.7).
 export const FIELD_BOX =
   "w-full rounded-md border border-hairline-strong bg-surface text-body text-ink placeholder:text-ink-2 hover:border-ink-2 disabled:border-transparent disabled:bg-fill disabled:text-ink-3 disabled:hover:border-transparent";
 // Text inputs and textareas only: a <select> always matches :read-only, so SelectField never gets these.
@@ -14,19 +14,46 @@ export const FIELD_ERROR =
   "border-danger ring-1 ring-inset ring-danger hover:border-danger";
 
 function fieldIds(id: string) {
-  return { helper: `${id}-helper`, error: `${id}-error` };
+  return {
+    helper: `${id}-helper`,
+    error: `${id}-error`,
+    prefix: `${id}-prefix`,
+  };
 }
 
-export function describedBy(
-  id: string,
-  helper: ReactNode,
-  error: ReactNode,
-): string | undefined {
-  const ids = fieldIds(id);
-  const parts = [error ? ids.error : null, helper ? ids.helper : null].filter(
-    Boolean,
-  );
-  return parts.length > 0 ? parts.join(" ") : undefined;
+/**
+ * A control's id (`id`, or a generated one) and its ARIA wiring (04 §9.6): invalid while there is an error, and
+ * described by the prefix (TextField's currency, read first), then the error, then the helper.
+ */
+export function useFieldControl({
+  id,
+  helper,
+  error,
+  prefix,
+}: {
+  id?: string;
+  helper?: ReactNode;
+  error?: ReactNode;
+  prefix?: string;
+}) {
+  const generated = useId();
+  const fieldId = id ?? generated;
+  const ids = fieldIds(fieldId);
+  const describedBy = [
+    prefix ? ids.prefix : null,
+    error ? ids.error : null,
+    helper ? ids.helper : null,
+  ].filter(Boolean);
+  return {
+    fieldId,
+    ids,
+    controlProps: {
+      id: fieldId,
+      "aria-invalid": error ? true : undefined,
+      "aria-describedby":
+        describedBy.length > 0 ? describedBy.join(" ") : undefined,
+    },
+  };
 }
 
 export function FieldLabel({
@@ -93,7 +120,7 @@ export function FieldShell({
   return <div className={cn("flex flex-col gap-2", className)}>{children}</div>;
 }
 
-type FieldProps = {
+export type FieldProps = {
   label: ReactNode;
   optional?: boolean;
   helper?: ReactNode;
@@ -119,24 +146,23 @@ export function TextField({
   className,
   ...props
 }: TextFieldProps) {
-  const generated = useId();
-  const fieldId = id ?? generated;
-  const prefixId = `${fieldId}-prefix`;
-  // The prefix is read first in the description ("CA$"), so a screen reader hears the currency; it stays
-  // aria-hidden so browse mode doesn't read it twice.
-  const description = [
-    prefix ? prefixId : null,
-    describedBy(fieldId, helper, error),
-  ].filter(Boolean);
+  const { fieldId, ids, controlProps } = useFieldControl({
+    id,
+    helper,
+    error,
+    prefix,
+  });
   return (
     <FieldShell className={className}>
       <FieldLabel htmlFor={fieldId} optional={optional}>
         {label}
       </FieldLabel>
       <div className="relative">
+        {/* The description reads the prefix ("CA$") first, so a screen reader hears the currency; it stays
+            aria-hidden so browse mode doesn't read it twice. */}
         {prefix ? (
           <span
-            id={prefixId}
+            id={ids.prefix}
             aria-hidden
             className="pointer-events-none absolute inset-y-0 left-3.5 flex items-center text-body text-ink-2"
           >
@@ -144,11 +170,7 @@ export function TextField({
           </span>
         ) : null}
         <input
-          id={fieldId}
-          aria-invalid={error ? true : undefined}
-          aria-describedby={
-            description.length > 0 ? description.join(" ") : undefined
-          }
+          {...controlProps}
           className={cn(
             FIELD_BOX,
             FIELD_READ_ONLY,
@@ -176,18 +198,15 @@ export function TextArea({
   rows = 4,
   ...props
 }: TextAreaProps) {
-  const generated = useId();
-  const fieldId = id ?? generated;
+  const { fieldId, controlProps } = useFieldControl({ id, helper, error });
   return (
     <FieldShell className={className}>
       <FieldLabel htmlFor={fieldId} optional={optional}>
         {label}
       </FieldLabel>
       <textarea
-        id={fieldId}
+        {...controlProps}
         rows={rows}
-        aria-invalid={error ? true : undefined}
-        aria-describedby={describedBy(fieldId, helper, error)}
         className={cn(
           FIELD_BOX,
           FIELD_READ_ONLY,

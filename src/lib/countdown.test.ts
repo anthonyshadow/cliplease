@@ -1,9 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { countdownState } from "./countdown";
+import { DAY_MS as DAY, HOUR_MS as HOUR, MINUTE_MS as MIN } from "./time";
 
-const MIN = 60_000;
-const HOUR = 60 * MIN;
-const DAY = 24 * HOUR;
 const now = Date.parse("2026-10-17T18:32:00Z");
 
 describe("countdownState (04 §9.10)", () => {

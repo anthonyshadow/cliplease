@@ -12,10 +12,8 @@ import {
   formatRelative,
 } from "./format";
 import { CURRENCY_DISPLAY, currencyLabel } from "./money/currency";
+import { DAY_MS as DAY, HOUR_MS as HOUR, MINUTE_MS as MIN } from "./time";
 
-const MIN = 60_000;
-const HOUR = 60 * MIN;
-const DAY = 24 * HOUR;
 const MIB = 1024 ** 2;
 const GIB = 1024 ** 3;
 const PRINTABLE_ASCII = /^[\x20-\x7E]*$/;
@@ -47,14 +45,10 @@ describe.each(["Pacific/Auckland", "America/Los_Angeles"])(
         [173250, "usd", undefined, "US$1,732.50"],
         [15000, "cad", undefined, "CA$150.00"],
         [99_999_999, "cad", undefined, "CA$999,999.99"],
+        // A non-whole amount keeps its cents even with wholeDollars.
+        [15050, "cad", { wholeDollars: true }, "CA$150.50"],
       ] as const)("formatMoney(%i, %s, %o) = %s", (cents, cur, opts, want) => {
         expect(formatMoney(cents, cur, opts)).toBe(want);
-      });
-
-      it("keeps cents for a non-whole amount even with wholeDollars", () => {
-        expect(formatMoney(15050, "cad", { wholeDollars: true })).toBe(
-          "CA$150.50",
-        );
       });
 
       it("refuses non-integer minor units", () => {
@@ -142,26 +136,21 @@ describe.each(["Pacific/Auckland", "America/Los_Angeles"])(
       expect(formatCountdown(ms)).toBe(want);
     });
 
-    it("formatRelative takes now", () => {
-      const now = new Date("2026-10-17T18:32:00Z");
-      const ago = (ms: number) => new Date(now.getTime() - ms);
-      expect(formatRelative(ago(20_000), now)).toBe("Synced just now");
-      expect(formatRelative(ago(3 * MIN), now)).toBe("Synced 3 min ago");
-      expect(formatRelative(ago(3 * DAY), now)).toBe("Synced 3 days ago");
-    });
-
     it.each([
+      [20_000, "Synced just now"],
       [59_000, "Synced just now"],
       [-MIN, "Synced just now"],
       [MIN, "Synced 1 min ago"],
+      [3 * MIN, "Synced 3 min ago"],
       [59 * MIN, "Synced 59 min ago"],
       [HOUR, "Synced 1 h ago"],
       [23 * HOUR + 59 * MIN, "Synced 23 h ago"],
       [DAY, "Synced 1 day ago"],
       [47 * HOUR, "Synced 1 day ago"],
       [2 * DAY, "Synced 2 days ago"],
+      [3 * DAY, "Synced 3 days ago"],
       [41 * DAY, "Synced 41 days ago"],
-    ])("formatRelative boundary %i ms = %s", (ms, want) => {
+    ])("formatRelative(now − %i ms, now) = %s", (ms, want) => {
       const now = new Date("2026-10-17T18:32:00Z");
       expect(formatRelative(new Date(now.getTime() - ms), now)).toBe(want);
     });

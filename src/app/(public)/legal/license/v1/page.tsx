@@ -1,19 +1,18 @@
 import type { Metadata } from "next";
 import { LegalPage } from "@/components/layout/legal-page";
-import { APP_NAME } from "@/lib/app-name";
 import {
   fillLicenseV1,
+  LICENSE_V1_DISPLAY_TITLE,
   LICENSE_V1_NEUTRAL_VALUES,
   LICENSE_V1_SCHEDULE_A,
   LICENSE_V1_SECTIONS,
   LICENSE_V1_SUMMARY,
-  LICENSE_V1_TITLE,
   type LicenseSummaryRow,
 } from "@/lib/legal/license-v1";
 import { mapSections } from "@/lib/legal/types";
 
 export const metadata: Metadata = {
-  title: { absolute: `${APP_NAME} Video License v1` },
+  title: { absolute: LICENSE_V1_DISPLAY_TITLE },
 };
 
 // The text of License v1 with neutral words in place of a license's own values (license.md §4 (a)).
@@ -63,7 +62,7 @@ function LicenseSummary() {
 export default function LicenseV1Page() {
   return (
     <LegalPage
-      title={fill(LICENSE_V1_TITLE)}
+      title={LICENSE_V1_DISPLAY_TITLE}
       intro={<LicenseSummary />}
       sections={sections}
     />

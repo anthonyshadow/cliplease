@@ -1,23 +1,19 @@
 "use client";
 
 import { ChevronDown } from "lucide-react";
-import { type ComponentProps, type ReactNode, useId } from "react";
+import type { ComponentProps } from "react";
 import { cn } from "@/lib/utils";
 import {
-  describedBy,
   FIELD_BOX,
   FIELD_ERROR,
   FieldLabel,
   FieldMessages,
+  type FieldProps,
   FieldShell,
+  useFieldControl,
 } from "./text-field";
 
-export type SelectFieldProps = ComponentProps<"select"> & {
-  label: ReactNode;
-  optional?: boolean;
-  helper?: ReactNode;
-  error?: ReactNode;
-};
+export type SelectFieldProps = ComponentProps<"select"> & FieldProps;
 
 /** 04 §9.6: a native <select> (the best picker on phones) in the field box, with a 16 px ChevronDown. */
 export function SelectField({
@@ -30,8 +26,7 @@ export function SelectField({
   children,
   ...props
 }: SelectFieldProps) {
-  const generated = useId();
-  const fieldId = id ?? generated;
+  const { fieldId, controlProps } = useFieldControl({ id, helper, error });
   return (
     <FieldShell className={className}>
       <FieldLabel htmlFor={fieldId} optional={optional}>
@@ -39,9 +34,7 @@ export function SelectField({
       </FieldLabel>
       <div className="relative">
         <select
-          id={fieldId}
-          aria-invalid={error ? true : undefined}
-          aria-describedby={describedBy(fieldId, helper, error)}
+          {...controlProps}
           className={cn(
             FIELD_BOX,
             "h-12 appearance-none pr-10 pl-3.5 lg:h-11",

@@ -13,17 +13,15 @@ import {
   SUPPORT_EMAIL,
   VENUE,
 } from "../app-name";
+import { formatPostDate } from "../format";
 import type { LegalSection } from "./types";
 
 export const LICENSE_V1_VERSION = "v1";
 export const LICENSE_V1_UPDATED = "2026-10-15";
-/** "15 Oct 2026": always formatted in UTC, so the date never shifts with the machine's time zone. */
-export const LICENSE_V1_UPDATED_LABEL = new Intl.DateTimeFormat("en-GB", {
-  day: "numeric",
-  month: "short",
-  year: "numeric",
-  timeZone: "UTC",
-}).format(new Date(`${LICENSE_V1_UPDATED}T00:00:00Z`));
+/** "15 Oct 2026": the UTC day, so the date never shifts with the machine's time zone. */
+export const LICENSE_V1_UPDATED_LABEL = formatPostDate(
+  new Date(`${LICENSE_V1_UPDATED}T00:00:00Z`),
+);
 
 export const LICENSE_V1_TITLE = "{app_name} Video License v1";
 
@@ -499,3 +497,9 @@ export function fillLicenseV1(
   }
   return text.replace(TOKEN, (_, token: string) => ownValue(token) ?? "");
 }
+
+/** "ClipLease Video License v1": the title as pages, links and metadata show it. */
+export const LICENSE_V1_DISPLAY_TITLE = fillLicenseV1(
+  LICENSE_V1_TITLE,
+  LICENSE_V1_LEGAL_VALUES,
+);

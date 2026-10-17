@@ -2,9 +2,9 @@
 
 import { Check } from "lucide-react";
 import { Checkbox as CheckboxPrimitive } from "radix-ui";
-import { type ComponentProps, type ReactNode, useId } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { cn } from "@/lib/utils";
-import { describedBy, FieldMessages } from "./text-field";
+import { FieldMessages, useFieldControl } from "./text-field";
 
 export type CheckboxProps = Omit<
   ComponentProps<typeof CheckboxPrimitive.Root>,
@@ -25,8 +25,7 @@ export function Checkbox({
   className,
   ...props
 }: CheckboxProps) {
-  const generated = useId();
-  const fieldId = id ?? generated;
+  const { fieldId, controlProps } = useFieldControl({ id, helper, error });
   return (
     <div className={cn("flex flex-col gap-1", className)}>
       {/* The whole row is the label, so the ≥ 44 px row is the hit area. A click on the box itself doesn't toggle
@@ -36,9 +35,7 @@ export function Checkbox({
         className="flex min-h-11 items-start gap-3 py-2.5"
       >
         <CheckboxPrimitive.Root
-          id={fieldId}
-          aria-invalid={error ? true : undefined}
-          aria-describedby={describedBy(fieldId, helper, error)}
+          {...controlProps}
           className={cn(
             "mt-px flex size-5.5 shrink-0 items-center justify-center rounded-xs border-[1.5px] border-hairline-strong bg-surface text-action-ink transition-colors duration-200 ease-standard data-[state=checked]:border-action data-[state=checked]:bg-action disabled:cursor-not-allowed disabled:border-hairline disabled:bg-fill",
             error && "border-danger",

@@ -1,6 +1,20 @@
 // Structured legal text shared by License v1 and the legal pages. Pure: no React, no env.
 export type LegalLink = { readonly href: string; readonly label: string };
 
+/** A mail link; the label defaults to the address. */
+export function mailtoLink(email: string, label = email): LegalLink {
+  return { href: `mailto:${email}`, label };
+}
+
+/** A link whose label is its own URL. */
+export function urlLink(url: string): LegalLink {
+  return { href: url, label: url };
+}
+
+/** Google's page for removing a third-party app's access (the Privacy Policy and the data-deletion page). */
+export const GOOGLE_PERMISSIONS_URL =
+  "https://security.google.com/settings/security/permissions";
+
 /** A paragraph: plain text, or text with inline links. */
 export type LegalText = string | readonly (string | LegalLink)[];
 

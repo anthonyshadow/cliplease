@@ -23,20 +23,12 @@ export const pillVariants = cva(
   },
 );
 
-const DOT = "size-1.5 shrink-0 rounded-full";
-
-function Dot({ tone, dot }: { tone: StatusPillTone; dot?: StatusPillDot }) {
-  if (tone === "awaiting")
-    return <span aria-hidden className={cn(DOT, "bg-awaiting")} />;
-  if (tone === "danger")
-    return <span aria-hidden className={cn(DOT, "bg-danger")} />;
-  if (tone === "neutral" && dot === "solid") {
-    return <span aria-hidden className={cn(DOT, "bg-ink")} />;
-  }
-  if (tone === "neutral" && dot === "hollow") {
-    return <span aria-hidden className={cn(DOT, "ring-1 ring-ink-3")} />;
-  }
-  return null;
+/** The 6 px dot: awaiting and danger always; neutral only when `dot` is set; cleared never (it shows a check). */
+function dotColor(tone: StatusPillTone, dot?: StatusPillDot): string | null {
+  if (tone === "awaiting") return "bg-awaiting";
+  if (tone === "danger") return "bg-danger";
+  if (tone !== "neutral" || dot === undefined) return null;
+  return dot === "solid" ? "bg-ink" : "ring-1 ring-ink-3";
 }
 
 /** A status label in words plus tint (04 §9.9). The label is passed in: use the exact 01 §3.0 / 04 §9.9 labels. */
@@ -51,13 +43,18 @@ export function StatusPill({
   className?: string;
   children: ReactNode;
 }) {
+  const color = dotColor(tone, dot);
   return (
     <span className={cn(pillVariants({ tone }), className)}>
       {tone === "cleared" ? (
         <Check aria-hidden size={12} strokeWidth={2.5} className="shrink-0" />
-      ) : (
-        <Dot tone={tone} dot={dot} />
-      )}
+      ) : null}
+      {color ? (
+        <span
+          aria-hidden
+          className={cn("size-1.5 shrink-0 rounded-full", color)}
+        />
+      ) : null}
       {children}
     </span>
   );

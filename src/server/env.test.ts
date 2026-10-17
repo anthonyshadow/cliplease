@@ -1,6 +1,9 @@
+import { readFileSync } from "node:fs";
+import { parseEnv as parseEnvFile } from "node:util";
 import { describe, expect, it } from "vitest";
 import {
   APP_ENVS,
+  ENV_KEYS,
   enabledCurrencies,
   env,
   isDevAppEnv,
@@ -310,5 +313,13 @@ describe("error messages", () => {
     expect(error).not.toHaveProperty("input");
     expect((error as Error).message).toContain("APP_URL");
     expect((error as Error).message).not.toContain(value);
+  });
+});
+
+describe("ENV_KEYS", () => {
+  // A key missing from .env.test would let `next start` fill it from .env.local during e2e (P01 Decisions).
+  it(".env.test lists every key the schema reads", () => {
+    const listed = Object.keys(parseEnvFile(readFileSync(".env.test", "utf8")));
+    expect(ENV_KEYS.filter((key) => !listed.includes(key))).toEqual([]);
   });
 });

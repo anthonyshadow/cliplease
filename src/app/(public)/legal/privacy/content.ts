@@ -1,9 +1,14 @@
 // Privacy Policy, DRAFT (research/license.md §8.2 outline, corrected by 03 §9.1 and 07 D64, D67, D83, D84, D87,
 // D93, D113, D126, D129). A lawyer reviews it before real money (OQ-28).
 import { APP_NAME, LEGAL_ENTITY_NAME, PRIVACY_EMAIL } from "@/lib/app-name";
-import type { LegalSection } from "@/lib/legal/types";
+import {
+  GOOGLE_PERMISSIONS_URL,
+  type LegalSection,
+  mailtoLink,
+  urlLink,
+} from "@/lib/legal/types";
 
-const privacyEmail = { href: `mailto:${PRIVACY_EMAIL}`, label: PRIVACY_EMAIL };
+const privacyEmail = mailtoLink(PRIVACY_EMAIL);
 
 export const PRIVACY_SECTIONS: readonly LegalSection[] = [
   {
@@ -93,17 +98,11 @@ export const PRIVACY_SECTIONS: readonly LegalSection[] = [
       `${APP_NAME} uses YouTube API Services.`,
       [
         "Google Privacy Policy: ",
-        {
-          href: "https://policies.google.com/privacy",
-          label: "https://policies.google.com/privacy",
-        },
+        urlLink("https://policies.google.com/privacy"),
       ],
       [
         `You can revoke ${APP_NAME}'s access at `,
-        {
-          href: "https://security.google.com/settings/security/permissions",
-          label: "https://security.google.com/settings/security/permissions",
-        },
+        urlLink(GOOGLE_PERMISSIONS_URL),
       ],
     ],
   },

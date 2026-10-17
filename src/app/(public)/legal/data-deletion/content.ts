@@ -1,7 +1,12 @@
 // Data deletion instructions, DRAFT (research/license.md §8.4 items 1–2, corrected by 03 §9.1 and 07 D87, D129).
 // Left out until they exist: Settings → Delete account ([H8]), the status lookup and the Meta callbacks (Later).
 import { APP_NAME, PRIVACY_EMAIL } from "@/lib/app-name";
-import type { LegalSection } from "@/lib/legal/types";
+import {
+  GOOGLE_PERMISSIONS_URL,
+  type LegalSection,
+  mailtoLink,
+  urlLink,
+} from "@/lib/legal/types";
 
 export const DATA_DELETION_TITLE = `Delete your data from ${APP_NAME}`;
 
@@ -15,21 +20,14 @@ export const DATA_DELETION_SECTIONS: readonly LegalSection[] = [
       { heading: "By email" },
       [
         "Write from your account's email address to ",
-        { href: `mailto:${PRIVACY_EMAIL}`, label: PRIVACY_EMAIL },
+        mailtoLink(PRIVACY_EMAIL),
         ". We delete your account and your data within 7 days.",
       ],
       { heading: "From the platform" },
       {
         list: [
           `Instagram: remove ${APP_NAME} under your Instagram app's website permissions.`,
-          [
-            "YouTube / Google: ",
-            {
-              href: "https://security.google.com/settings/security/permissions",
-              label:
-                "https://security.google.com/settings/security/permissions",
-            },
-          ],
+          ["YouTube / Google: ", urlLink(GOOGLE_PERMISSIONS_URL)],
           `TikTok: remove ${APP_NAME} under your TikTok app's security and app permissions.`,
         ],
       },

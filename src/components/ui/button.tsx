@@ -110,23 +110,24 @@ export function Button({
     }
     onClick?.(event);
   };
-  const labelGap = size === "sm" ? "gap-1.5" : "gap-2";
-  return (
-    <button
-      {...props}
-      type={type}
-      className={classes}
-      onClick={handleClick}
-      aria-busy={loading || undefined}
-      aria-disabled={loading || props["aria-disabled"] || undefined}
-    >
-      {/* The label and the loading layer (spinner + loadingLabel) share one grid cell, so the width never
-          changes while loading; the hidden layer is aria-hidden and never repeats the children. */}
+  const spinner = (
+    <LoaderCircle
+      aria-hidden
+      size={16}
+      strokeWidth={2}
+      className={cn(loading && "animate-spin")}
+    />
+  );
+  let content = children;
+  if (loadingLabel !== undefined) {
+    // The label and the loading layer (spinner + loadingLabel) share one grid cell, so the width never changes
+    // while loading; the hidden layer is aria-hidden and never repeats the children.
+    content = (
       <span className="inline-grid">
         <span
           className={cn(
             "col-start-1 row-start-1 inline-flex items-center justify-center",
-            labelGap,
+            size === "sm" ? "gap-1.5" : "gap-2",
             loading && "invisible",
           )}
         >
@@ -139,15 +140,25 @@ export function Button({
           )}
           aria-hidden={!loading}
         >
-          <LoaderCircle
-            aria-hidden
-            size={16}
-            strokeWidth={2}
-            className={cn(loading && "animate-spin")}
-          />
+          {spinner}
           {loadingLabel}
         </span>
       </span>
+    );
+  } else if (loading) {
+    // An icon button is a fixed 44 px circle: the spinner takes the icon's place; `aria-label` stays its name.
+    content = spinner;
+  }
+  return (
+    <button
+      {...props}
+      type={type}
+      className={classes}
+      onClick={handleClick}
+      aria-busy={loading || undefined}
+      aria-disabled={loading || props["aria-disabled"] || undefined}
+    >
+      {content}
     </button>
   );
 }

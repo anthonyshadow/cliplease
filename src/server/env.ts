@@ -41,28 +41,6 @@ export function isDevAppEnv(appEnv: AppEnv): boolean {
   return appEnv === "development" || appEnv === "test";
 }
 
-const ENV_KEYS = [
-  "APP_ENV",
-  "APP_URL",
-  "BETTER_AUTH_URL",
-  "DATABASE_URL",
-  "DATABASE_URL_UNPOOLED",
-  "BETTER_AUTH_SECRET",
-  "TOKEN_ENCRYPTION_KEY",
-  "CRON_SECRET",
-  "ADMIN_EMAILS",
-  "ENABLED_SOCIAL_PROVIDERS",
-  "MOCK_SOCIAL_SCENARIO",
-  "PAYMENTS_DRIVER",
-  "ENABLED_CURRENCIES",
-  "STRIPE_SECRET_KEY_CAD",
-  "STORAGE_DRIVER",
-  "PLATFORM_FEE_BPS",
-  "EMAIL_FROM",
-  "RESEND_API_KEY",
-] as const;
-type EnvKey = (typeof ENV_KEYS)[number];
-
 // An origin such as https://cliplease.com: no path, query, fragment or trailing slash (07 D102).
 // The refine also runs after a failed format check, so it must never throw on unparseable input:
 // a TypeError from `new URL` would escape parseEnv with the raw value in it.
@@ -71,6 +49,8 @@ const origin = z
   .refine((value) => URL.canParse(value) && new URL(value).origin === value, {
     error: "must be an origin with no path or trailing slash",
   });
+
+const secret = z.string().min(32, { error: "must be at least 32 characters" });
 
 const postgresUrl = z
   .url({
@@ -117,72 +97,71 @@ const adminEmails = z.string().transform((raw, ctx) => {
   return [...new Set(items)];
 });
 
-const schema = z
-  .object({
-    APP_ENV: z.enum(APP_ENVS),
-    APP_URL: origin,
-    BETTER_AUTH_URL: origin,
-    DATABASE_URL: postgresUrl,
-    DATABASE_URL_UNPOOLED: postgresUrl,
-    BETTER_AUTH_SECRET: z
-      .string()
-      .min(32, { error: "must be at least 32 characters" }),
-    TOKEN_ENCRYPTION_KEY: z.string().regex(/^[A-Za-z0-9+/]{43}=$/, {
-      error: "must be base64 of exactly 32 bytes",
-    }),
-    CRON_SECRET: z
-      .string()
-      .min(32, { error: "must be at least 32 characters" }),
-    ADMIN_EMAILS: adminEmails.optional().transform((list) => list ?? []),
-    ENABLED_SOCIAL_PROVIDERS: commaList(SOCIAL_PROVIDERS),
-    MOCK_SOCIAL_SCENARIO: z.enum(MOCK_SOCIAL_SCENARIOS).default("default"),
-    PAYMENTS_DRIVER: z.enum(PAYMENTS_DRIVERS),
-    ENABLED_CURRENCIES: commaList(CURRENCIES)
-      .default(["cad"])
-      .transform((list) => CURRENCIES.filter((c) => list.includes(c))),
-    STRIPE_SECRET_KEY_CAD: z
-      .string()
-      .regex(/^(sk|rk)_test_/, {
-        error: "must be a test key (sk_test_ or rk_test_)",
-      })
-      .optional(),
-    STORAGE_DRIVER: z.enum(STORAGE_DRIVERS),
-    PLATFORM_FEE_BPS: z
-      .string()
-      .regex(/^\d+$/, { error: "must be an integer from 0 to 5000" })
-      .transform(Number)
-      .pipe(
-        z
-          .number()
-          .int()
-          .max(5000, { error: "must be an integer from 0 to 5000" }),
-      )
-      .default(1000),
-    EMAIL_FROM: z
-      .string()
-      .regex(/^[^<>\r\n]+ <[^<>\s@]+@[^<>\s@]+>$|^[^<>\s@]+@[^<>\s@]+$/, {
-        error: 'must be "Name <address>" or an address',
-      })
-      .default(`${APP_NAME} <onboarding@resend.dev>`),
-    RESEND_API_KEY: z.string().optional(),
-  })
-  .superRefine((e, ctx) => {
-    if (isDevAppEnv(e.APP_ENV)) return;
-    const refuse = (key: EnvKey, what: string) =>
-      ctx.addIssue({
-        code: "custom",
-        path: [key],
-        message: `${what} is allowed only when APP_ENV is development or test`,
-      });
-    if (e.ENABLED_SOCIAL_PROVIDERS.includes("mock")) {
-      refuse("ENABLED_SOCIAL_PROVIDERS", "mock");
-    }
-    if (e.PAYMENTS_DRIVER === "fake") refuse("PAYMENTS_DRIVER", "fake");
-    if (e.STORAGE_DRIVER === "local") refuse("STORAGE_DRIVER", "local");
-    if (e.RESEND_API_KEY === undefined) {
-      refuse("RESEND_API_KEY", "the console email driver (unset)");
-    }
-  });
+const FEE_BPS_ERROR = "must be an integer from 0 to 5000";
+
+const shape = {
+  APP_ENV: z.enum(APP_ENVS),
+  APP_URL: origin,
+  BETTER_AUTH_URL: origin,
+  DATABASE_URL: postgresUrl,
+  DATABASE_URL_UNPOOLED: postgresUrl,
+  BETTER_AUTH_SECRET: secret,
+  TOKEN_ENCRYPTION_KEY: z.string().regex(/^[A-Za-z0-9+/]{43}=$/, {
+    error: "must be base64 of exactly 32 bytes",
+  }),
+  CRON_SECRET: secret,
+  ADMIN_EMAILS: adminEmails.default([]),
+  ENABLED_SOCIAL_PROVIDERS: commaList(SOCIAL_PROVIDERS),
+  MOCK_SOCIAL_SCENARIO: z.enum(MOCK_SOCIAL_SCENARIOS).default("default"),
+  PAYMENTS_DRIVER: z.enum(PAYMENTS_DRIVERS),
+  ENABLED_CURRENCIES: commaList(CURRENCIES)
+    .default(["cad"])
+    .transform((list) => CURRENCIES.filter((c) => list.includes(c))),
+  STRIPE_SECRET_KEY_CAD: z
+    .string()
+    .regex(/^(sk|rk)_test_/, {
+      error: "must be a test key (sk_test_ or rk_test_)",
+    })
+    .optional(),
+  STORAGE_DRIVER: z.enum(STORAGE_DRIVERS),
+  // The regex admits digits only, so the number is always an integer.
+  PLATFORM_FEE_BPS: z
+    .string()
+    .regex(/^\d+$/, { error: FEE_BPS_ERROR })
+    .transform(Number)
+    .pipe(z.number().max(5000, { error: FEE_BPS_ERROR }))
+    .default(1000),
+  EMAIL_FROM: z
+    .string()
+    .regex(/^[^<>\r\n]+ <[^<>\s@]+@[^<>\s@]+>$|^[^<>\s@]+@[^<>\s@]+$/, {
+      error: 'must be "Name <address>" or an address',
+    })
+    .default(`${APP_NAME} <onboarding@resend.dev>`),
+  RESEND_API_KEY: z.string().optional(),
+};
+
+type EnvKey = keyof typeof shape;
+
+/** Every key the schema reads. `.env.test` and `.env.example` list each one (blank when unused). */
+export const ENV_KEYS = Object.keys(shape) as EnvKey[];
+
+const schema = z.object(shape).superRefine((e, ctx) => {
+  if (isDevAppEnv(e.APP_ENV)) return;
+  const refuse = (key: EnvKey, what: string) =>
+    ctx.addIssue({
+      code: "custom",
+      path: [key],
+      message: `${what} is allowed only when APP_ENV is development or test`,
+    });
+  if (e.ENABLED_SOCIAL_PROVIDERS.includes("mock")) {
+    refuse("ENABLED_SOCIAL_PROVIDERS", "mock");
+  }
+  if (e.PAYMENTS_DRIVER === "fake") refuse("PAYMENTS_DRIVER", "fake");
+  if (e.STORAGE_DRIVER === "local") refuse("STORAGE_DRIVER", "local");
+  if (e.RESEND_API_KEY === undefined) {
+    refuse("RESEND_API_KEY", "the console email driver (unset)");
+  }
+});
 
 export type Env = z.output<typeof schema>;
 
@@ -195,12 +174,13 @@ export function parseEnv(source: Record<string, string | undefined>): Env {
   }
   const result = schema.safeParse(picked);
   if (result.success) return result.data;
-  const keys = [
-    ...new Set(result.error.issues.map((i) => String(i.path[0] ?? "env"))),
-  ];
-  const lines = result.error.issues.map(
-    (i) => `- ${i.path.join(".") || "env"}: ${i.message}`,
-  );
+  // The schema is flat, so an issue's key is its whole path.
+  const issues = result.error.issues.map((i) => ({
+    key: String(i.path[0] ?? "env"),
+    message: i.message,
+  }));
+  const keys = [...new Set(issues.map((i) => i.key))];
+  const lines = issues.map((i) => `- ${i.key}: ${i.message}`);
   throw new Error(
     `Invalid environment (${keys.join(", ")}):\n${lines.join("\n")}`,
   );

@@ -7,21 +7,32 @@ const LEGAL_ROUTES = [
   "/legal/data-deletion",
 ];
 
+/** Text each legal route's sections must carry, by section id (P01). */
+const SECTION_TEXT: Partial<Record<string, Record<string, string>>> = {
+  "/legal/terms": {
+    payouts: "Stripe may debit the bank account linked to your payouts",
+    "auto-renewal": "at most about a day before",
+  },
+};
+
 /**
- * Console errors and page errors. On a 404 page the browser itself logs the document's own 404
- * ("Failed to load resource: … 404"); pass that path to ignore exactly that entry and nothing else.
+ * Opens `path`, checks the response status and returns the page's console and page errors, collected from before
+ * the navigation. A 404 page's browser logs the document's own 404 ("Failed to load resource: … 404"); only that
+ * entry is ignored, and only when a 404 is expected.
  */
-function collectConsoleErrors(page: Page, expected404Path?: string): string[] {
+async function visit(page: Page, path: string, status = 200) {
   const errors: string[] = [];
   page.on("console", (message) => {
     if (message.type() !== "error") return;
     const isDocument404 =
-      expected404Path !== undefined &&
+      status === 404 &&
       message.text().startsWith("Failed to load resource:") &&
-      new URL(message.location().url).pathname === expected404Path;
+      new URL(message.location().url).pathname === path;
     if (!isDocument404) errors.push(message.text());
   });
   page.on("pageerror", (error) => errors.push(error.message));
+  const response = await page.goto(path);
+  expect(response?.status()).toBe(status);
   return errors;
 }
 
@@ -47,9 +58,7 @@ async function expectNoHorizontalScroll(page: Page) {
 }
 
 test("home page responds with 200 and shows main", async ({ page }) => {
-  const errors = collectConsoleErrors(page);
-  const response = await page.goto("/");
-  expect(response?.status()).toBe(200);
+  const errors = await visit(page, "/");
   await expect(page.locator("main")).toBeVisible();
   await expect(
     page.getByRole("heading", { level: 1, name: "Your video. Your price." }),
@@ -63,10 +72,8 @@ test("home page responds with 200 and shows main", async ({ page }) => {
 });
 
 for (const route of LEGAL_ROUTES) {
-  test(`${route} shows the draft notice`, async ({ page }) => {
-    const errors = collectConsoleErrors(page);
-    const response = await page.goto(route);
-    expect(response?.status()).toBe(200);
+  test(`${route} shows the draft notice and its sections`, async ({ page }) => {
+    const errors = await visit(page, route);
     await expect(
       page.getByText("Draft for testing. Not for real transactions."),
     ).toBeVisible();
@@ -75,6 +82,9 @@ for (const route of LEGAL_ROUTES) {
       page.getByRole("banner").getByRole("link", { name: "Sign in" }),
     ).toHaveCount(0);
     await expect(page.locator("main")).not.toContainText(/\{[a-z_]+\}/);
+    for (const [id, text] of Object.entries(SECTION_TEXT[route] ?? {})) {
+      await expect(page.locator(`#${id}`)).toContainText(text);
+    }
     await expectNoHorizontalScroll(page);
     await expectGutter(page);
     await page.setViewportSize(NARROWEST);
@@ -83,24 +93,10 @@ for (const route of LEGAL_ROUTES) {
   });
 }
 
-test("/legal/terms carries the payouts and auto-renewal sections", async ({
-  page,
-}) => {
-  await page.goto("/legal/terms");
-  await expect(page.locator("#payouts")).toContainText(
-    "Stripe may debit the bank account linked to your payouts",
-  );
-  await expect(page.locator("#auto-renewal")).toContainText(
-    "at most about a day before",
-  );
-});
-
 test("/dev/ui renders the primitive gallery (APP_ENV=test)", async ({
   page,
 }) => {
-  const errors = collectConsoleErrors(page);
-  const response = await page.goto("/dev/ui");
-  expect(response?.status()).toBe(200);
+  const errors = await visit(page, "/dev/ui");
   await expect(
     page.getByRole("heading", { level: 1, name: /UI primitives/ }),
   ).toBeVisible();
@@ -130,10 +126,7 @@ test("/dev/ui renders the primitive gallery (APP_ENV=test)", async ({
 });
 
 test("an unknown URL returns 404 with the designed page", async ({ page }) => {
-  const path = "/does-not-exist";
-  const errors = collectConsoleErrors(page, path);
-  const response = await page.goto(path);
-  expect(response?.status()).toBe(404);
+  const errors = await visit(page, "/does-not-exist", 404);
   await expect(
     page.getByRole("heading", { level: 1, name: "Page not found." }),
   ).toBeVisible();

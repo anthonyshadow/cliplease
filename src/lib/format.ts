@@ -4,6 +4,7 @@
 // Every date formatter names its zone; none reads the machine's zone (01 G.7).
 import type { Currency } from "./domain/values";
 import { CURRENCY_DISPLAY } from "./money/currency";
+import { DAY_MS, HOUR_MS, MINUTE_MS } from "./time";
 
 const MINUS = "−";
 const UTC = "UTC";
@@ -70,27 +71,57 @@ export function formatDuration(sec: number): string {
 
 type DateParts = Partial<Record<Intl.DateTimeFormatPartTypes, string>>;
 
-function partsOf(
-  d: Date,
-  timeZone: string,
-  options: Intl.DateTimeFormatOptions,
-): DateParts {
+function partsOf(format: Intl.DateTimeFormat, d: Date): DateParts {
   const out: DateParts = {};
-  for (const p of new Intl.DateTimeFormat("en-US", {
-    ...options,
-    timeZone,
-  }).formatToParts(d)) {
+  for (const p of format.formatToParts(d)) {
     if (p.type !== "literal") out[p.type] = p.value;
   }
   return out;
 }
 
+// Built once: a DateTimeFormat costs about ten times more to build than to use.
+const utcDayFormat = new Intl.DateTimeFormat("en-US", {
+  timeZone: UTC,
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+});
+const utcTimeFormat = new Intl.DateTimeFormat("en-US", {
+  timeZone: UTC,
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
+const DEADLINE_OPTIONS: Intl.DateTimeFormatOptions = {
+  weekday: "short",
+  day: "numeric",
+  month: "short",
+  hour: "numeric",
+  minute: "2-digit",
+  hour12: true,
+  timeZoneName: "short",
+};
+const deadlineFormats = new Map<string, Intl.DateTimeFormat>();
+
+/** The deadline format for `tz`, cached per zone; an unknown zone falls back to UTC (and isn't cached). */
+function deadlineFormat(tz: string): Intl.DateTimeFormat {
+  const cached = deadlineFormats.get(tz);
+  if (cached) return cached;
+  let format: Intl.DateTimeFormat;
+  try {
+    format = new Intl.DateTimeFormat("en-US", {
+      ...DEADLINE_OPTIONS,
+      timeZone: tz,
+    });
+  } catch {
+    return deadlineFormat(UTC);
+  }
+  deadlineFormats.set(tz, format);
+  return format;
+}
+
 function utcDay(d: Date): string {
-  const p = partsOf(d, UTC, {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
+  const p = partsOf(utcDayFormat, d);
   return `${p.day} ${p.month} ${p.year}`;
 }
 
@@ -101,40 +132,18 @@ export function formatPostDate(d: Date): string {
 
 /** License start/end, always UTC: "19 Nov 2026, 14:32 UTC" (01 G.7). */
 export function formatLicenseDate(d: Date): string {
-  const t = partsOf(d, UTC, {
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  });
+  const t = partsOf(utcTimeFormat, d);
   return `${utcDay(d)}, ${t.hour}:${t.minute} UTC`;
-}
-
-function safeZone(tz: string): string {
-  try {
-    new Intl.DateTimeFormat("en-US", { timeZone: tz });
-    return tz;
-  } catch {
-    return UTC;
-  }
 }
 
 /** Pages only, in the viewer's zone with its en-US short label: "Sun 18 Oct, 3:10 PM EDT" (01 G.7, 07 D84). */
 export function formatDeadline(d: Date, tz: string): string {
-  const p = partsOf(d, safeZone(tz), {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-    timeZoneName: "short",
-  });
+  const p = partsOf(deadlineFormat(tz), d);
   return `${p.weekday} ${p.day} ${p.month}, ${p.hour}:${p.minute} ${p.dayPeriod} ${p.timeZoneName}`;
 }
 
-const MINUTE_MS = 60_000;
-const HOUR_MIN = 60;
-const DAY_MIN = 24 * HOUR_MIN;
+const HOUR_MIN = HOUR_MS / MINUTE_MS;
+const DAY_MIN = DAY_MS / MINUTE_MS;
 
 /** "Expires in 2 d 23 h" · "Expires in 5 h 12 min" · "Expires in 42 min"; whole minutes rounded down; 0 and below read "Expires in 0 min". */
 export function formatCountdown(ms: number): string {

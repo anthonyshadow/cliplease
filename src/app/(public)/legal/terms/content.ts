@@ -9,7 +9,8 @@ import {
   SUPPORT_EMAIL,
   VENUE,
 } from "@/lib/app-name";
-import type { LegalSection } from "@/lib/legal/types";
+import { LICENSE_V1_DISPLAY_TITLE } from "@/lib/legal/license-v1";
+import { type LegalSection, mailtoLink, urlLink } from "@/lib/legal/types";
 
 // The full service agreement (research/stripe-owner-answers.md §2.2).
 const STRIPE_CONNECTED_ACCOUNT_AGREEMENT_URL =
@@ -21,11 +22,7 @@ export const TERMS_SECTIONS: readonly LegalSection[] = [
     title: "1. Who we are",
     blocks: [
       `${APP_NAME} is run by ${LEGAL_ENTITY_NAME}. It is a marketplace: creators publish their videos with prices, and buyers license them for a chosen use, term and territory.`,
-      [
-        "Contact: ",
-        { href: `mailto:${SUPPORT_EMAIL}`, label: SUPPORT_EMAIL },
-        ".",
-      ],
+      ["Contact: ", mailtoLink(SUPPORT_EMAIL), "."],
     ],
   },
   {
@@ -56,10 +53,7 @@ export const TERMS_SECTIONS: readonly LegalSection[] = [
       ],
       [
         "By connecting YouTube, you agree to be bound by the YouTube Terms of Service (",
-        {
-          href: "https://www.youtube.com/t/terms",
-          label: "https://www.youtube.com/t/terms",
-        },
+        urlLink("https://www.youtube.com/t/terms"),
         ").",
       ],
     ],
@@ -93,10 +87,7 @@ export const TERMS_SECTIONS: readonly LegalSection[] = [
           "Once a request is approved, you get the original file, your license as a PDF and a public verification page.",
           [
             "Your license is the ",
-            {
-              href: "/legal/license/v1",
-              label: `${APP_NAME} Video License v1`,
-            },
+            { href: "/legal/license/v1", label: LICENSE_V1_DISPLAY_TITLE },
             ", and it is part of these terms.",
           ],
         ],
@@ -198,11 +189,11 @@ export const TERMS_SECTIONS: readonly LegalSection[] = [
     blocks: [
       [
         `If you believe a video on ${APP_NAME} infringes your copyright, contact our copyright agent, ${COPYRIGHT_AGENT}, at `,
-        { href: `mailto:${COPYRIGHT_EMAIL}`, label: COPYRIGHT_EMAIL },
+        mailtoLink(COPYRIGHT_EMAIL),
         ".",
       ],
       [
-        { href: `mailto:${COPYRIGHT_EMAIL}`, label: "Report a video" },
+        mailtoLink(COPYRIGHT_EMAIL, "Report a video"),
         " by email. We may disable a reported video and revoke its licenses where needed.",
       ],
       "If your video was removed and you believe that was a mistake, you can send a counter-notice to the same address.",
@@ -226,11 +217,7 @@ export const TERMS_SECTIONS: readonly LegalSection[] = [
     title: "15. Changes and contact",
     blocks: [
       "We tell you about changes to these terms by email or in the app. Licenses already issued keep their version.",
-      [
-        "Questions: ",
-        { href: `mailto:${SUPPORT_EMAIL}`, label: SUPPORT_EMAIL },
-        ".",
-      ],
+      ["Questions: ", mailtoLink(SUPPORT_EMAIL), "."],
     ],
   },
 ];

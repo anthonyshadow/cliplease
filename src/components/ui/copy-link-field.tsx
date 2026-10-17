@@ -35,13 +35,14 @@ export function CopyLinkField({
   className?: string;
 }) {
   const canShare = useCanShare();
-  const [copied, setCopied] = useState(false);
-  const [manual, setManual] = useState(false);
+  // "copied" for 2 s after a copy; "manual" when there is no clipboard and the text is selected instead.
+  const [status, setStatus] = useState<"idle" | "copied" | "manual">("idle");
+  const copied = status === "copied";
   const textRef = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
     if (!copied) return;
-    const timer = setTimeout(() => setCopied(false), 2000);
+    const timer = setTimeout(() => setStatus("idle"), 2000);
     return () => clearTimeout(timer);
   }, [copied]);
 
@@ -58,11 +59,10 @@ export function CopyLinkField({
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(url);
-      setCopied(true);
-      setManual(false);
+      setStatus("copied");
     } catch {
       selectText();
-      setManual(true);
+      setStatus("manual");
     }
   };
 
@@ -97,7 +97,7 @@ export function CopyLinkField({
         ) : null}
       </div>
       <p aria-live="polite" className="text-footnote text-ink-2">
-        {manual ? "Press and hold to copy" : ""}
+        {status === "manual" ? "Press and hold to copy" : ""}
         <span className="sr-only">{copied ? "Link copied" : ""}</span>
       </p>
     </div>

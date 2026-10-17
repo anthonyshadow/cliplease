@@ -1,8 +1,6 @@
 // Pure countdown logic for CountdownChip (04 §9.10, 01 J8.1). No clock reads here: `nowMs` is passed in.
 import { formatCountdown } from "./format";
-
-const MINUTE = 60_000;
-const HOUR = 60 * MINUTE;
+import { HOUR_MS, MINUTE_MS } from "./time";
 
 export type CountdownTone = "neutral" | "awaiting";
 
@@ -22,7 +20,8 @@ export function countdownState(
   const remaining = Math.max(0, expiresAtMs - nowMs);
   return {
     label: formatCountdown(remaining),
-    tone: remaining > 6 * HOUR ? "neutral" : "awaiting",
-    nextTickMs: remaining === 0 ? null : remaining < HOUR ? 10_000 : MINUTE,
+    tone: remaining > 6 * HOUR_MS ? "neutral" : "awaiting",
+    nextTickMs:
+      remaining === 0 ? null : remaining < HOUR_MS ? 10_000 : MINUTE_MS,
   };
 }
