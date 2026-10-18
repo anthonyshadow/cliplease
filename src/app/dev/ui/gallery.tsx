@@ -260,6 +260,12 @@ export function Gallery({ view }: { view: "waiting" | "history" }) {
             Dev-only review page. Add ?theme=light or ?theme=dark to force a
             theme.
           </p>
+          <p data-testid="tier" className="text-callout text-ink-2">
+            Tier: <span className="md:hidden">Mobile</span>
+            <span className="hidden md:inline lg:hidden">Tablet</span>
+            <span className="hidden lg:inline 2xl:hidden">Desktop</span>
+            <span className="hidden 2xl:inline">XL</span>
+          </p>
         </div>
 
         <Section title="Buttons">

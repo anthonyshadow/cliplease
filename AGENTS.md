@@ -111,7 +111,7 @@ Current prompt: P07 · Last verified: P06 · Blockers: none
 ## 7. Definition of done (every prompt)
 - `bun run typecheck`, `bun run lint` and `bun run test` pass with zero errors.
 - Every acceptance criterion is ✅ with evidence.
-- New pure logic has unit tests; new pages render without console errors at 375 px and 1280 px wide.
+- New pure logic has unit tests; new and changed pages render without console errors at 375, 768, 1024, 1280 and 1920 px (plus a 2560 px spot check), in light and dark, with no horizontal scroll at any width from 320 to 2560, and follow the four layout tiers of docs/04 §5.2 (Mobile < 768 · Tablet `md:` · Desktop `lg:` · XL `2xl:`).
 - Light and dark themes both look right for anything you touched.
 - `PROGRESS.md` updated and work committed.
 
@@ -125,7 +125,8 @@ Current prompt: P07 · Last verified: P06 · Blockers: none
   downgrade without asking. The Drizzle docs site shows the 1.0 RC API by default; this project uses 0.45.x syntax.
 - Money is integer minor units (cents for CAD and USD) with its `currency`; multipliers are integer basis points. One pricing function, shared.
 - Components use design tokens and the primitives listed in `docs/04-design-system.md`.
-- Accessible by default: labels, focus rings, keyboard paths, 44 px touch targets, reduced-motion support.
+- Accessible by default: labels, focus rings, keyboard paths, 44 px touch targets at every tier (touch is not a tier: use `pointer-coarse:`, never a tier prefix), reduced-motion support.
+- Layout switches only at base, `md:`, `lg:` and `2xl:` (XL is `2xl:`; never `sm:`, `xl:`, `min-[…]:`, `max-[…]:` or `@container`). Layout boxes are `w-full` plus a `max-w-*` cap. Never `100vw`, `w-screen` or `overflow-x: hidden` on a page root.
 - Small files, clear names, no dead code, no commented-out code.
 
 ## 9. Version gotchas (07 D58, D107)

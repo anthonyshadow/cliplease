@@ -83,7 +83,7 @@ export function Toaster() {
           ) : null}
         </Toast.Root>
       ))}
-      <Toast.Viewport className="fixed bottom-[calc(16px+env(safe-area-inset-bottom)+var(--toast-offset,0px))] left-1/2 z-60 m-0 flex w-max max-w-[calc(100vw-2*var(--gutter))] -translate-x-1/2 list-none flex-col items-center gap-2 p-0" />
+      <Toast.Viewport className="fixed bottom-[calc(16px+env(safe-area-inset-bottom)+var(--toast-offset,0px))] left-1/2 z-60 m-0 flex w-max max-w-[calc(100%-2*var(--gutter))] -translate-x-1/2 list-none flex-col items-center gap-2 p-0" />
     </Toast.Provider>
   );
 }

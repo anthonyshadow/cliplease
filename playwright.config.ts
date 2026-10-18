@@ -51,6 +51,21 @@ export default defineConfig({
       name: "webkit-iphone",
       use: { ...devices["iPhone 17"] },
     },
+    // The two layout-tier projects run only the responsive spec (07 D154). iPad Mini, not iPad (gen 11): that one is
+    // 656 px wide, which is the Mobile tier.
+    {
+      name: "webkit-ipad", // Tablet, 768 × 1024, WebKit, touch
+      use: { ...devices["iPad Mini"] },
+      testMatch: /responsive\.spec\.ts$/,
+    },
+    {
+      name: "chromium-xl", // XL
+      use: {
+        ...devices["Desktop Chrome"],
+        viewport: { width: 1920, height: 1080 },
+      },
+      testMatch: /responsive\.spec\.ts$/,
+    },
   ],
   webServer: {
     command: "bun run build && bun run start --port 3100",

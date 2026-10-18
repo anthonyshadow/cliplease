@@ -1,5 +1,6 @@
 import { expect, type Page, test } from "@playwright/test";
 import { collectConsoleErrors } from "./helpers/console";
+import { expectNoHorizontalScroll } from "./helpers/layout";
 
 const LEGAL_ROUTES = [
   "/legal/license/v1",
@@ -31,7 +32,7 @@ async function visit(page: Page, path: string, status = 200) {
   return errors;
 }
 
-/** The page content keeps the side gutter (--gutter, 16 px on phones and more from sm). */
+/** The page content keeps the side gutter (--gutter: 16 px below md, 24 px from md, 32 px from lg). */
 async function expectGutter(page: Page) {
   const padding = await page
     .locator("main")
@@ -42,15 +43,6 @@ async function expectGutter(page: Page) {
 
 /** WCAG 2.2 SC 1.4.10 Reflow width: long words and link rows must wrap, never scroll sideways. */
 const NARROWEST = { width: 320, height: 640 };
-
-async function expectNoHorizontalScroll(page: Page) {
-  const overflow = await page.evaluate(
-    () =>
-      document.documentElement.scrollWidth -
-      document.documentElement.clientWidth,
-  );
-  expect(overflow).toBeLessThanOrEqual(0);
-}
 
 test("home page responds with 200 and shows main", async ({ page }) => {
   const errors = await visit(page, "/");

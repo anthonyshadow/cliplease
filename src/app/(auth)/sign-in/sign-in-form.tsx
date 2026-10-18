@@ -64,6 +64,21 @@ function failureViews(failure: Failure | null) {
 }
 
 /**
+ * "m…@domain." as one block on its own line when it fits. The ellipsis is a line-break opportunity, so "m…@" is kept
+ * together; a domain wider than the column still wraps (07 D153).
+ */
+function MaskedAddress({ email }: { email: string }) {
+  const masked = maskEmail(email);
+  const at = masked.indexOf("@") + 1;
+  return (
+    <span className="inline-block max-w-full wrap-anywhere">
+      <span className="whitespace-nowrap">{masked.slice(0, at)}</span>
+      {masked.slice(at)}.
+    </span>
+  );
+}
+
+/**
  * S10 (05 §5.1): step 1 asks for the email, step 2 for the 6-digit code. Enter submits each step. Six digits that arrive
  * in one change (paste, autofill) submit once by themselves; typing keeps the Sign in button in control. On success, a
  * full navigation to `next`.
@@ -241,7 +256,7 @@ export function SignInForm({ next }: { next: string }) {
           type="submit"
           loading={pending === "send"}
           loadingLabel="Sending…"
-          className="w-full sm:w-auto sm:self-start"
+          className="w-full md:w-auto md:self-start"
         >
           Email me a code
         </Button>
@@ -272,8 +287,7 @@ export function SignInForm({ next }: { next: string }) {
       <div className="flex flex-col gap-2">
         <h1 className="text-title-1 text-ink">Check your email.</h1>
         <p id={codeHintId} className="text-body text-ink-2">
-          Enter the 6-digit code we sent to{" "}
-          <span className="whitespace-nowrap">{maskEmail(email)}.</span>
+          Enter the 6-digit code we sent to <MaskedAddress email={email} />
         </p>
       </div>
       {notice}
@@ -293,7 +307,7 @@ export function SignInForm({ next }: { next: string }) {
         type="submit"
         loading={pending === "verify"}
         loadingLabel="Signing in…"
-        className="w-full sm:w-auto sm:self-start"
+        className="w-full md:w-auto md:self-start"
       >
         Sign in
       </Button>

@@ -50,6 +50,7 @@
   --nav-h: 3rem;
   --tabbar-h: 3.5rem;
   --pricebar-h: 5.75rem;
+  --app-max: 75rem;   /* max-w-app: 1200; 1440 at XL (below) */
 
   /* motion */
   --dur-press: 100ms;
@@ -61,10 +62,11 @@
   --font-stack: -apple-system, BlinkMacSystemFont, var(--font-inter), "Helvetica Neue", Arial, sans-serif;
 }
 
-@media (min-width: 48rem) {
+/* Layout tiers (07 D144): Mobile = base (< 48rem) · Tablet = md (48rem) · Desktop = lg (64rem) · XL = 2xl (96rem). sm (40rem) and xl (80rem) are not tiers. Type sizes switch only at lg. */
+@media (min-width: 48rem) {   /* Tablet (md) */
   :root { --gutter: 1.5rem; }
 }
-@media (min-width: 64rem) {
+@media (min-width: 64rem) {   /* Desktop (lg) */
   :root {
     --gutter: 2rem;
     --fs-display: 3.5rem;
@@ -75,6 +77,9 @@
     --lh-title-2: 1.875rem;
     --pricebar-h: 3.5rem;
   }
+}
+@media (min-width: 96rem) {   /* XL (2xl) */
+  :root { --app-max: 90rem; }
 }
 
 /* ── 2. Raw tokens · dark, from the OS preference unless the page forces light ── */
@@ -170,9 +175,8 @@
 
   --aspect-post: 9 / 16;     /* Library tile well, video card well */
 
-  --container-reading: 40rem;  /* 640: /r, /l, /verify, /sign-in, /onboarding */
+  --container-reading: 40rem;  /* 640: reading pages and settings columns, every tier */
   --container-license: 66rem;  /* 1056: license page from lg */
-  --container-app: 75rem;      /* 1200: dashboard, admin */
 
   --ease-standard: cubic-bezier(0.25, 0.1, 0.25, 1);  /* color, opacity */
   --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);         /* things entering or moving */
@@ -232,6 +236,7 @@
   --color-scrim: var(--scrim);
 
   --font-sans: var(--font-stack);
+  --container-app: var(--app-max);   /* 1200, 1440 from 2xl: dashboard, admin, bar rows (07 D145) */
 
   --text-display: var(--fs-display);
   --text-display--line-height: var(--lh-display);
@@ -320,7 +325,7 @@
   scroll-padding-bottom: calc(var(--pricebar-h) + env(safe-area-inset-bottom) + 1rem);
   --toast-offset: var(--pricebar-h);
 }
-@media (min-width: 64rem) {
+@media (min-width: 64rem) {   /* Desktop (lg): the bars move up or go away */
   :root:has([data-tabbar]) { scroll-padding-bottom: 1rem; --toast-offset: 0px; }
   :root:has([data-pricebar]) {
     scroll-padding-top: calc(var(--nav-h) + var(--pricebar-h) + 1rem);

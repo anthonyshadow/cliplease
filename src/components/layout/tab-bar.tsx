@@ -106,7 +106,7 @@ export function TabBar({
         BAR_HEIGHT,
       )}
     >
-      <ul className="mx-auto flex h-full max-w-app">
+      <ul className="mx-auto flex h-full max-w-app pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] md:max-w-reading">
         {TABS.map(({ key, icon: Icon }) => {
           const isCurrent = key === active;
           return (

@@ -52,6 +52,8 @@ describe('design tokens', () => {
     expect(darkSystem.replace(/\s+/g, ' ').trim()).toBe(darkForced.replace(/\s+/g, ' ').trim());
   });
 
+  it('keeps the default Tailwind breakpoints (07 D144)', () => expect(css).not.toMatch(/--breakpoint-/));
+
   for (const [mode, body, under] of [['light', light, '#000000'], ['dark', darkForced, '#FFFFFF']] as const) {
     const t: Record<string, string> = hexVars(body);
     const bar = barOf(body);

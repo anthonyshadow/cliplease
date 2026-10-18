@@ -11,11 +11,17 @@ export function uniqueEmail(testInfo: TestInfo): string {
   return `creator+${testInfo.project.name}-${randomUUID().slice(0, 8)}@example.com`;
 }
 
-/** One ADMIN_EMAILS address per project (.env.test lists both, 07 D88), for the same reason. */
-export function e2eAdminEmail(testInfo: TestInfo): string {
-  return testInfo.project.name === "webkit-iphone"
-    ? "e2e-admin-2@example.com"
-    : "e2e-admin@example.com";
+const E2E_ADMINS: Readonly<Partial<Record<string, string>>> = {
+  "chromium-desktop": "e2e-admin@example.com",
+  "webkit-iphone": "e2e-admin-2@example.com",
+};
+
+/**
+ * One ADMIN_EMAILS address per original project (.env.test lists both, 07 D88), for the same reason; `null` on every
+ * other project, where admin checks skip (07 D154).
+ */
+export function e2eAdminEmail(testInfo: TestInfo): string | null {
+  return E2E_ADMINS[testInfo.project.name] ?? null;
 }
 
 /** Opens /sign-in?next=…, asks for a code for `email` and returns it once step 2 shows. */

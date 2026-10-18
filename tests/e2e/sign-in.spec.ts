@@ -4,6 +4,11 @@ import { DAY_MS } from "../../src/lib/time";
 import { readSignInCode, wrongCode } from "../helpers/read-latest-email";
 import { collectConsoleErrors } from "./helpers/console";
 import {
+  atEveryWidth,
+  expectNoHorizontalScroll,
+  expectPageFrame,
+} from "./helpers/layout";
+import {
   e2eAdminEmail,
   requestCode,
   signInWithEmail,
@@ -287,14 +292,28 @@ test.describe("signed in", () => {
   test("an ADMIN_EMAILS address opens the /admin placeholder", async ({
     page,
   }, testInfo) => {
+    const admin = e2eAdminEmail(testInfo);
+    if (admin === null) {
+      test.skip(
+        true,
+        "admin sign-in runs on chromium-desktop and webkit-iphone only (07 D88, D154)",
+      );
+      return;
+    }
     const errors = collectConsoleErrors(page);
-    await signInWithEmail(page, e2eAdminEmail(testInfo), "/admin");
+    await signInWithEmail(page, admin, "/admin");
     await expect(page).toHaveURL("/admin");
     await expect(page).toHaveTitle("Admin · ClipLease");
     await expect(
       page.getByRole("heading", { level: 1, name: "Admin" }),
     ).toBeAttached();
     await expect(page.getByRole("banner")).toContainText("Admin");
+    // The admin shell fits every tier (07 D154). The sweep lives in this test because a second test signing in the same
+    // e2e admin would replace this one's code: only the newest code works.
+    await atEveryWidth(page, testInfo, async ({ width }) => {
+      await expectNoHorizontalScroll(page);
+      await expectPageFrame(page, width, { banner: true });
+    });
     // The admin shell keeps the sign-in alive too.
     await expectRefreshWhenDue(page, "/admin");
     expect(errors).toEqual([]);

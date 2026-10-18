@@ -77,7 +77,8 @@ function CreatorLinks({
                 prefetch={SHELL_PREFETCH}
                 aria-current={isCurrent ? "page" : undefined}
                 className={cn(
-                  "inline-flex h-11 items-center gap-1.5 text-callout",
+                  // hit-44: a short label ("Inbox") is under 44 px wide (07 D152); the hit area grows, nothing shows.
+                  "hit-44 inline-flex h-11 items-center gap-1.5 text-callout",
                   isCurrent
                     ? "font-semibold text-ink underline decoration-2 underline-offset-6"
                     : "text-ink-2",

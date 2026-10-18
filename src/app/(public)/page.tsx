@@ -25,7 +25,7 @@ export default function LandingPage() {
           Link your Instagram, TikTok and YouTube. Turn any post into a license
           link. Get paid when you tap Approve.
         </p>
-        <Button asChild className="w-full sm:w-auto sm:self-start">
+        <Button asChild className="w-full md:w-auto md:self-start">
           <Link href="/sign-in">Sign in</Link>
         </Button>
       </section>

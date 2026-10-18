@@ -12,11 +12,11 @@ export const SCRIM_CLASS =
 export const SHEET_CLASS =
   "fixed inset-x-0 bottom-0 z-50 flex max-h-[92dvh] flex-col rounded-t-lg border border-transparent bg-surface-raised text-ink shadow-overlay safe-area-bar animate-sheet-in data-[state=closed]:animate-sheet-out md:inset-x-auto md:bottom-auto md:top-1/2 md:left-1/2 md:max-h-[calc(100dvh-4rem)] md:w-[calc(100%-2*var(--gutter))] md:max-w-[30rem] md:-translate-x-1/2 md:-translate-y-1/2 md:rounded-lg md:animate-dialog-in md:data-[state=closed]:animate-fade-out";
 export const SHEET_HEADER_CLASS =
-  "flex shrink-0 items-start gap-3 px-4 pt-2 md:px-8 md:pt-8";
+  "flex shrink-0 items-start gap-3 pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] pt-2 md:px-8 md:pt-8";
 export const SHEET_BODY_CLASS =
-  "min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 text-body md:px-8";
+  "min-h-0 flex-1 overflow-y-auto overscroll-contain pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] py-4 text-body md:px-8";
 export const SHEET_FOOTER_CLASS =
-  "flex shrink-0 flex-col gap-3 px-4 pb-4 *:w-full md:flex-row-reverse md:justify-start md:px-8 md:pb-8 md:*:w-auto";
+  "flex shrink-0 flex-col gap-3 pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] pb-4 *:w-full md:flex-row-reverse md:justify-start md:px-8 md:pb-8 md:*:w-auto";
 
 /** The header's 44 px close control: a 20 px `X` in `ink-2` on a 32 px `fill` circle (ConfirmSheet shares it). */
 export const CLOSE_BUTTON_CLASS =

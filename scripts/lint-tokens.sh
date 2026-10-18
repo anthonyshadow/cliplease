@@ -13,6 +13,8 @@ matches=$(rg -n --glob '!src/app/globals.css' --glob '!**/*.test.ts' \
   -e '#[0-9A-Fa-f]{3,8}\b' -e 'rgba?\(' -e '\bdark:' -e 'font-(medium|bold|light)' \
   -e '\b(bg|text|border|ring)-(primary|secondary|muted|accent|destructive|background|foreground|popover|card|input)\b' \
   -e '\b(zinc|slate|gray|neutral|stone|red|green|blue|sky|amber)-[0-9]{2,3}\b' -e 'shadow-(xs|sm|md|lg|xl)\b' \
+  -e '\b(max-)?(sm|xl):[a-z0-9!\[(-]' -e '\b(min|max)-\[' -e '@container' \
+  -e '\b100vw\b' -e '\bw-screen\b' -e 'overflow-x-hidden' \
   src/components src/app)
 status=$?
 
