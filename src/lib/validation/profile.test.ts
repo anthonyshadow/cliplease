@@ -1,9 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { DISPLAY_NAME_COPY, displayNameMessage } from "./display-name";
 import { HANDLE_COPY } from "./handle";
 import {
   AGE_ERROR,
-  DISPLAY_NAME_COPY,
-  displayNameMessage,
   displayNameSchema,
   profileStepFieldErrors,
   profileStepSchema,

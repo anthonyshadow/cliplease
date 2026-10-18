@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
+import { READING_COLUMN } from "@/components/layout/gutter";
 import { Banner } from "@/components/ui/banner";
 import { safeNextPath } from "@/lib/sign-in";
 import { getSessionUser, hasStaleSessionCookie } from "@/server/auth/session";
@@ -18,7 +19,7 @@ export default async function SignInPage({
   if (await getSessionUser()) redirect(next);
   const signedOut = requested !== undefined && (await hasStaleSessionCookie());
   return (
-    <div className="mx-auto flex w-full max-w-reading flex-col gap-6 py-6 lg:py-12">
+    <div className={READING_COLUMN}>
       {signedOut ? (
         <Banner>You've been signed out. Sign in again to continue.</Banner>
       ) : null}

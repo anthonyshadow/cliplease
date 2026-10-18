@@ -31,13 +31,18 @@ import {
 } from "../../../src/server/creators/profile";
 import { checkHandleAvailability } from "../../../src/server/creators/queries";
 import { INVALID_HANDLES, VALID_HANDLES } from "../../fixtures/handles";
+import { formOf, redirectTo } from "../../helpers/actions";
 import {
   mockNextHeaders,
   newCreatorEmail,
   signInWithOtp,
 } from "../../helpers/auth";
 import { expectDbError, PG_ERROR, resetDb } from "../../helpers/db";
-import { insertCreator, insertUser, randomHex } from "../../helpers/factories";
+import {
+  insertCreator,
+  insertUser,
+  uniqueTestHandle,
+} from "../../helpers/factories";
 
 // Onboarding (02 §5.2, 07 D93, D94): the domain function, the profile step's action and the handle rules against the
 // database. Outside a request, redirect() throws an error whose digest names the target.
@@ -45,13 +50,6 @@ vi.mock("next/headers", () => import("../../helpers/next-headers"));
 
 afterAll(resetDb);
 beforeEach(() => mockNextHeaders(null));
-
-/** A free handle for one test: rows build up across the file. */
-const uniqueHandle = () => `t.${randomHex(4)}`;
-
-const redirectTo = (url: string) => ({
-  digest: `NEXT_REDIRECT;replace;${url};307;`,
-});
 
 /** Signs a new email in for the action's requireUser and returns its session user. */
 async function signedIn(): Promise<SessionUser> {
@@ -63,12 +61,6 @@ async function signedIn(): Promise<SessionUser> {
 async function sessionUser(): Promise<SessionUser> {
   const row = await insertUser({ name: "" });
   return { id: row.id, email: row.email, name: row.name, role: "creator" };
-}
-
-function profileForm(fields: Record<string, string>): FormData {
-  const form = new FormData();
-  for (const [key, value] of Object.entries(fields)) form.set(key, value);
-  return form;
 }
 
 const validInput = (handle: string) =>
@@ -114,7 +106,7 @@ const byKey = <T extends { optionKey: string }>(rows: readonly T[]) =>
 describe("completeOnboarding (the domain function)", () => {
   it("writes the profile, a CA$150 rate card with the 10 default options, user.name and one audit row", async () => {
     const owner = await sessionUser();
-    const handle = uniqueHandle();
+    const handle = uniqueTestHandle();
     const before = Date.now();
     const { creatorId } = await completeOnboarding(owner, {
       ...validInput(handle),
@@ -174,7 +166,7 @@ describe("completeOnboarding (the domain function)", () => {
   ])("stores the time zone %j as %j", async (given, stored) => {
     const owner = await sessionUser();
     await completeOnboarding(owner, {
-      ...validInput(uniqueHandle()),
+      ...validInput(uniqueTestHandle()),
       timeZone: given,
     });
     const [profile] = await profilesOf(owner.id);
@@ -185,7 +177,7 @@ describe("completeOnboarding (the domain function)", () => {
     const owner = await sessionUser();
     await expect(
       completeOnboarding(owner, {
-        ...validInput(uniqueHandle()),
+        ...validInput(uniqueTestHandle()),
         ageConfirmed: false as unknown as true,
       }),
     ).rejects.toMatchObject({ code: "invalid_input" });
@@ -202,7 +194,7 @@ describe("completeOnboarding (the domain function)", () => {
   });
 
   it("refuses a taken handle, and the availability check offers up to 3 free, valid alternatives", async () => {
-    const handle = uniqueHandle();
+    const handle = uniqueTestHandle();
     await completeOnboarding(await sessionUser(), validInput(handle));
     const firstChoice = (await checkHandleAvailability(handle)).suggestions[0];
     // Taking the first suggestion shows the list skips taken candidates.
@@ -234,7 +226,7 @@ describe("completeOnboarding (the domain function)", () => {
   });
 
   it("lets exactly one of two users claiming the same handle at once win", async () => {
-    const handle = uniqueHandle();
+    const handle = uniqueTestHandle();
     const [a, b] = [await sessionUser(), await sessionUser()];
     const results = await Promise.allSettled([
       completeOnboarding(a, validInput(handle)),
@@ -252,15 +244,15 @@ describe("completeOnboarding (the domain function)", () => {
 
   it("refuses the same user twice with already_onboarded, in turn or at once", async () => {
     const owner = await sessionUser();
-    await completeOnboarding(owner, validInput(uniqueHandle()));
+    await completeOnboarding(owner, validInput(uniqueTestHandle()));
     await expect(
-      completeOnboarding(owner, validInput(uniqueHandle())),
+      completeOnboarding(owner, validInput(uniqueTestHandle())),
     ).rejects.toMatchObject({ code: "already_onboarded" });
 
     const racer = await sessionUser();
     const results = await Promise.allSettled([
-      completeOnboarding(racer, validInput(uniqueHandle())),
-      completeOnboarding(racer, validInput(uniqueHandle())),
+      completeOnboarding(racer, validInput(uniqueTestHandle())),
+      completeOnboarding(racer, validInput(uniqueTestHandle())),
     ]);
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
     const [lost] = results.filter((r) => r.status === "rejected");
@@ -280,12 +272,12 @@ describe("the profile step's action", () => {
       const before = await userAndSessions(owner.id);
       const fields: Record<string, string> = {
         displayName: "Maya R.",
-        handle: uniqueHandle(),
+        handle: uniqueTestHandle(),
         timeZone: "America/Toronto",
       };
       if (tick !== undefined) fields.ageConfirmed = tick;
 
-      const result = await completeOnboardingAction(null, profileForm(fields));
+      const result = await completeOnboardingAction(null, formOf(fields));
       expect(AGE_ERROR).toBe("You must be 18 or older to sell on ClipLease.");
       expect(result).toEqual({
         ok: false,
@@ -305,11 +297,11 @@ describe("the profile step's action", () => {
 
   it("normalizes the handle, saves the step and redirects to the connect step", async () => {
     const owner = await signedIn();
-    const handle = uniqueHandle();
+    const handle = uniqueTestHandle();
     await expect(
       completeOnboardingAction(
         null,
-        profileForm({
+        formOf({
           displayName: "Maya R.",
           handle: ` @${handle.toUpperCase()} `,
           ageConfirmed: "on",
@@ -324,7 +316,7 @@ describe("the profile step's action", () => {
   it("answers a reserved or a just-taken handle with its field error, and a second onboarding with /dashboard", async () => {
     const owner = await signedIn();
     const form = (handle: string) =>
-      profileForm({ displayName: "Maya R.", handle, ageConfirmed: "on" });
+      formOf({ displayName: "Maya R.", handle, ageConfirmed: "on" });
 
     expect(await completeOnboardingAction(null, form("admin"))).toEqual({
       ok: false,
@@ -335,7 +327,7 @@ describe("the profile step's action", () => {
       },
     });
 
-    const taken = uniqueHandle();
+    const taken = uniqueTestHandle();
     await insertCreator({ handle: taken });
     const { suggestions } = await checkHandleAvailability(taken);
     expect(await completeOnboardingAction(null, form(taken))).toEqual({
@@ -350,10 +342,10 @@ describe("the profile step's action", () => {
     expect(await profilesOf(owner.id)).toEqual([]);
 
     await expect(
-      completeOnboardingAction(null, form(uniqueHandle())),
+      completeOnboardingAction(null, form(uniqueTestHandle())),
     ).rejects.toMatchObject(redirectTo("/onboarding?step=connect"));
     await expect(
-      completeOnboardingAction(null, form(uniqueHandle())),
+      completeOnboardingAction(null, form(uniqueTestHandle())),
     ).rejects.toMatchObject(redirectTo("/dashboard"));
   });
 });
@@ -363,7 +355,7 @@ describe("updateProfile", () => {
     const owner = await sessionUser();
     const { creatorId } = await completeOnboarding(
       owner,
-      validInput(uniqueHandle()),
+      validInput(uniqueTestHandle()),
     );
     const [before] = await profilesOf(owner.id);
     const actor = { kind: "creator", userId: owner.id, creatorId } as const;

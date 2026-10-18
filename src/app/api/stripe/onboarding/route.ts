@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { signInPath } from "@/lib/sign-in";
-import { getCreatorForApi, getSessionUser } from "@/server/auth/session";
+import { getCreatorContext, getSessionUser } from "@/server/auth/session";
 import { refreshPayoutsStatus } from "@/server/creators/profile";
 import { ensureConnectedAccount } from "@/server/payments/connect";
 import { paymentsDriver } from "@/server/payments/registry";
@@ -16,11 +16,15 @@ export async function GET(request: Request) {
       302,
     );
   }
-  const ctx = await getCreatorForApi();
+  // The user is already in hand: reuse it rather than read the session a second time.
+  const ctx = await getCreatorContext(user);
   if (!ctx) {
     return NextResponse.redirect(new URL("/onboarding", request.url), 302);
   }
-  const accountId = await ensureConnectedAccount(ctx.creator.id);
+  // An account id never changes once stored (07 D29), so a repeat click skips the lookup.
+  const accountId =
+    ctx.creator.stripeAccountId ??
+    (await ensureConnectedAccount(ctx.creator.id));
   await refreshPayoutsStatus(ctx.creator.id, { maxAgeMs: 0 });
   const link = await paymentsDriver(
     ctx.creator.payoutCurrency,

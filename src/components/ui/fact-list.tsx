@@ -4,8 +4,8 @@ import { cn } from "@/lib/utils";
 export type Fact = { label: string; value: ReactNode };
 
 /**
- * 04 §9.31: a <dl>; labels stack above values on mobile and sit in a 112 px column from `md`. A long unbroken value (an
- * email address) wraps instead of pushing the page sideways.
+ * 04 §9.31: a <dl>; labels stack above values on mobile and sit in a 112 px column from `md`. The value column's `0`
+ * minimum lets the page's wrap rule break a long unbroken value (an email address) instead of widening the grid.
  */
 export function FactList({
   facts,
@@ -24,9 +24,7 @@ export function FactList({
       {facts.map((fact) => (
         <div key={fact.label} className="flex flex-col gap-1 md:contents">
           <dt className="text-footnote text-ink-2">{fact.label}</dt>
-          <dd className="min-w-0 text-callout text-ink wrap-anywhere">
-            {fact.value}
-          </dd>
+          <dd className="text-callout text-ink">{fact.value}</dd>
         </div>
       ))}
     </dl>

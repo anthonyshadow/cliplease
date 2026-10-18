@@ -67,14 +67,16 @@ export async function expectWithinCap(locator: Locator, maxPx: number) {
 export const appCap = (width: number) => (tierAt(width) === "xl" ? 1440 : 1200);
 
 /**
- * The page frame at `width`: <main>, and the NavBar row when the page has a banner, each keep the tier's gutter, are
- * capped by `max-w-app` (the computed max-width too, so the XL widening is proven) and centered.
+ * The page frame at `width`: nothing scrolls sideways, and <main>, plus the NavBar row when the page has a banner,
+ * each keep the tier's gutter, are capped by `max-w-app` (the computed max-width too, so the XL widening is proven)
+ * and centered.
  */
 export async function expectPageFrame(
   page: Page,
   width: number,
   { banner }: { banner: boolean },
 ) {
+  await expectNoHorizontalScroll(page);
   const gutter = `${GUTTER[tierAt(width)]}px`;
   const boxes = [page.locator("main")];
   if (banner) boxes.push(page.getByRole("banner").locator(":scope > div"));
@@ -88,7 +90,6 @@ export async function expectPageFrame(
 
 /** A reading page (04 §5.2.3): the frame, one centered 640 px column, and no TabBar at any tier. */
 export async function expectReadingPage(page: Page, width: number) {
-  await expectNoHorizontalScroll(page);
   await expectPageFrame(page, width, { banner: true });
   const column = page.locator("main .max-w-reading").first();
   await expect(column).toHaveCSS("max-width", "640px");
@@ -98,11 +99,14 @@ export async function expectReadingPage(page: Page, width: number) {
 
 /**
  * The creator chrome for `width` (04 §9.30): the TabBar below lg, with its five tabs in a centered row of at most 640
- * px on Tablet; the NavBar's creator links from lg.
+ * px on Tablet; the NavBar's creator links (`links`, the banner's nav unless given) from lg.
  */
-export async function expectCreatorChrome(page: Page, width: number) {
+export async function expectCreatorChrome(
+  page: Page,
+  width: number,
+  links: Locator = page.getByRole("banner").locator("nav"),
+) {
   const tabBar = page.locator("[data-tabbar]");
-  const links = page.getByRole("banner").locator("nav");
   if (width >= TIERS.desktop) {
     await expect(tabBar).toBeHidden();
     await expect(links).toBeVisible();

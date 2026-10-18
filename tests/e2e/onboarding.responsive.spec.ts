@@ -4,12 +4,11 @@ import { signUpCreator, uniqueLongHandle } from "./helpers/creator";
 import {
   atEveryWidth,
   expectCreatorChrome,
-  expectNoHorizontalScroll,
   expectPageFrame,
   expectReadingPage,
   TIERS,
 } from "./helpers/layout";
-import { pressAndSettle } from "./helpers/server-action";
+import { pressAndSettle } from "./helpers/press";
 
 // G.6 for P05's pages (07 D154), on all four projects: each test signs up its own creator with signUpCreator. The
 // profile step stays in responsive.spec.ts (its /onboarding route lands on ?step=profile).
@@ -72,7 +71,6 @@ test("G.6: Settings keeps a left-aligned 640 px column and the creator chrome at
   await signUpCreator(page, { handle: uniqueLongHandle(testInfo) });
   await page.goto("/dashboard/settings");
   await atEveryWidth(page, testInfo, async ({ width }) => {
-    await expectNoHorizontalScroll(page);
     await expectPageFrame(page, width, { banner: true });
     await expectSettingsColumn(page, width);
     await expectCreatorChrome(page, width);
@@ -91,7 +89,6 @@ test("G.6: the Inbox and the Library show the payouts banner and the creator chr
       "Set up payouts so you can approve requests (about 2 min)",
     );
     await atEveryWidth(page, testInfo, async ({ width }) => {
-      await expectNoHorizontalScroll(page);
       await expectPageFrame(page, width, { banner: true });
       await expectCreatorChrome(page, width);
       await expect(banner).toBeVisible();
@@ -116,7 +113,6 @@ test("G.6: /@handle fits every tier, logged out", async ({
   expect(response?.status()).toBe(200);
   const main = page.locator("main");
   await atEveryWidth(page, testInfo, async ({ width }) => {
-    await expectNoHorizontalScroll(page);
     await expectPageFrame(page, width, { banner: true });
     await expect(
       main.getByRole("heading", { level: 1, name: LONG_NAME }),

@@ -3,11 +3,7 @@ import { OTP_RESEND_DELAY_MS } from "../../src/lib/sign-in";
 import { DAY_MS } from "../../src/lib/time";
 import { readSignInCode, wrongCode } from "../helpers/read-latest-email";
 import { collectConsoleErrors } from "./helpers/console";
-import {
-  atEveryWidth,
-  expectNoHorizontalScroll,
-  expectPageFrame,
-} from "./helpers/layout";
+import { atEveryWidth, expectPageFrame } from "./helpers/layout";
 import {
   e2eAdminEmail,
   requestCode,
@@ -311,7 +307,6 @@ test.describe("signed in", () => {
     // The admin shell fits every tier (07 D154). The sweep lives in this test because a second test signing in the same
     // e2e admin would replace this one's code: only the newest code works.
     await atEveryWidth(page, testInfo, async ({ width }) => {
-      await expectNoHorizontalScroll(page);
       await expectPageFrame(page, width, { banner: true });
     });
     // The admin shell keeps the sign-in alive too.

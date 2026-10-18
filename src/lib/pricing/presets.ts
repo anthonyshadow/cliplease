@@ -1,12 +1,13 @@
 // Rate card presets (02 §5.5, 07 D97): per-currency money maps, currency-free multipliers. The only home of these
 // constants: P12 adds PLATFORM_FEE_MIN_CENTS here, P19e the exclusive constants; nothing redeclares them.
-import type {
-  Currency,
-  RateDimension,
-  RateOptionKey,
-  TermKey,
-  TerritoryKey,
-  UseKey,
+import {
+  type Currency,
+  RATE_DIMENSIONS,
+  type RateDimension,
+  type RateOptionKey,
+  type TermKey,
+  type TerritoryKey,
+  type UseKey,
 } from "../domain/values";
 
 export const DEFAULT_BASE_PRICE_CENTS = {
@@ -51,7 +52,7 @@ export type DefaultRateOption = {
 
 /** The 10 rate_option rows of a new rate card, in 03 §8.1's order; sortOrder counts within each dimension. */
 export function defaultRateOptions(): DefaultRateOption[] {
-  return (["use", "term", "territory"] as const).flatMap((dimension) =>
+  return RATE_DIMENSIONS.flatMap((dimension) =>
     Object.entries(DEFAULT_OPTIONS[dimension]).map(([optionKey, bps], i) => ({
       dimension,
       optionKey: optionKey as RateOptionKey,

@@ -7,7 +7,9 @@ import {
   DEFAULT_BASE_PRICE_CENTS,
   defaultRateOptions,
 } from "@/lib/pricing/presets";
+import { MINUTE_MS } from "@/lib/time";
 import { handleProblem } from "@/lib/validation/handle";
+import { displayNameSchema } from "@/lib/validation/profile";
 import { normalizeTimeZone } from "@/lib/validation/time-zone";
 import { writeAudit } from "@/server/audit";
 import type { Actor } from "@/server/auth/actor";
@@ -31,10 +33,10 @@ export class OnboardingError extends Error {
   }
 }
 
-/** The trimmed display name, or null outside 1–60 characters (UTF-16 units: stricter than the CHECK's char_length). */
+/** The trimmed display name, or null when the shared schema refuses it (UTF-16 units: stricter than the CHECK's char_length). */
 function cleanDisplayName(raw: string): string | null {
-  const name = raw.trim();
-  return name.length >= 1 && name.length <= 60 ? name : null;
+  const parsed = displayNameSchema.safeParse({ displayName: raw });
+  return parsed.success ? parsed.data.displayName : null;
 }
 
 function requireCreatorActor(a: Actor) {
@@ -180,7 +182,7 @@ export async function updateTimeZone(
  */
 export async function refreshPayoutsStatus(
   creatorId: string,
-  { maxAgeMs = 600_000 }: { maxAgeMs?: number } = {},
+  { maxAgeMs = 10 * MINUTE_MS }: { maxAgeMs?: number } = {},
 ): Promise<PayoutsStatus> {
   const [row] = await db
     .select({

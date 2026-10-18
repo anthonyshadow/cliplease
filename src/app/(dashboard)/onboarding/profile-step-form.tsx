@@ -1,27 +1,23 @@
 "use client";
 
-import {
-  type FormEvent,
-  startTransition,
-  useActionState,
-  useEffect,
-  useId,
-  useRef,
-  useState,
-} from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { NativeCheckbox } from "@/components/ui/checkbox";
+import { PRIMARY_WIDTH } from "@/components/ui/primary-width";
 import { TextField } from "@/components/ui/text-field";
+import { useFormAction } from "@/components/ui/use-form-action";
+import { DISPLAY_NAME_MAX } from "@/lib/validation/display-name";
 import {
   HANDLE_COPY,
   handleProblem,
   handleProblemMessage,
   normalizeHandleInput,
 } from "@/lib/validation/handle";
-import { DISPLAY_NAME_MAX } from "@/lib/validation/profile";
 import { checkHandle, completeOnboarding } from "./actions";
 
 type Availability = Awaited<ReturnType<typeof checkHandle>>;
+// The latest answer for a handle; `failed` when the check couldn't run (its line then stays empty, not "Checking…").
+type Check = Availability | { handle: string; state: "failed" };
 type Field = "displayName" | "handle" | "ageConfirmed";
 const FIELD_ORDER: readonly Field[] = ["displayName", "handle", "ageConfirmed"];
 const CHECK_DELAY_MS = 300; // 01 J1.4
@@ -36,31 +32,29 @@ function availabilityText(handle: string, result: Availability): string {
     case "reserved":
       return HANDLE_COPY.reserved;
     case "invalid":
-      return handleProblemMessage(handle) ?? HANDLE_COPY.characters;
+      return HANDLE_COPY.characters;
   }
 }
 
 /**
  * Step 1 (05 §5.2): name, handle, the 18+ box and a hidden time zone. Continue is never disabled; the server checks
- * everything and answers with field errors, and nothing is saved without the tick (07 D93). The form dispatches its
- * action by hand, so React doesn't reset it: typed values survive an error.
+ * everything and answers with field errors, and nothing is saved without the tick (07 D93). Typed values survive an
+ * error (useFormAction); only the handle is controlled, because it is normalized as typed.
  */
 export function ProfileStepForm({ linkHost }: { linkHost: string }) {
-  const [state, formAction, pending] = useActionState(completeOnboarding, null);
-  const [displayName, setDisplayName] = useState("");
-  const [handle, setHandle] = useState("");
-  const [ageConfirmed, setAgeConfirmed] = useState(false);
-  const [timeZone, setTimeZone] = useState("");
   const [handleTouched, setHandleTouched] = useState(false);
+  const { state, pending, formProps } = useFormAction(
+    completeOnboarding,
+    null,
+    () => setHandleTouched(true),
+  );
+  const [handle, setHandle] = useState("");
+  const [timeZone, setTimeZone] = useState("");
   // The handle as it was when typing last paused: format messages wait for it, like the availability check.
   const [settled, setSettled] = useState("");
-  const [checked, setChecked] = useState<Availability | null>(null);
-  // The handle whose availability check failed: its line stays empty rather than "Checking…" for good.
-  const [unchecked, setUnchecked] = useState<string | null>(null);
+  const [checked, setChecked] = useState<Check | null>(null);
   const [errors, setErrors] = useState<Partial<Record<Field, string>>>({});
-  const [suggestions, setSuggestions] = useState<string[]>([]);
   const [alertId, setAlertId] = useState(0);
-  const latestCheck = useRef(0);
   const nameRef = useRef<HTMLInputElement>(null);
   const handleRef = useRef<HTMLInputElement>(null);
   const ageRef = useRef<HTMLInputElement>(null);
@@ -71,24 +65,26 @@ export function ProfileStepForm({ linkHost }: { linkHost: string }) {
     setTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone);
   }, []);
 
-  // Once typing pauses: settle the handle, and ask the server when its format allows; an older answer never replaces a
-  // newer one.
+  // Once typing pauses: settle the handle, and ask the server when its format allows. A newer handle ends this effect,
+  // so an older answer never replaces a newer one.
   useEffect(() => {
-    const id = ++latestCheck.current;
+    let current = true;
     setChecked(null);
-    setUnchecked(null);
     const timer = setTimeout(() => {
       setSettled(handle);
       if (handle === "" || handleProblem(handle) !== null) return;
       checkHandle({ handle })
         .then((result) => {
-          if (id === latestCheck.current) setChecked(result);
+          if (current) setChecked(result);
         })
         .catch(() => {
-          if (id === latestCheck.current) setUnchecked(handle);
+          if (current) setChecked({ handle, state: "failed" });
         });
     }, CHECK_DELAY_MS);
-    return () => clearTimeout(timer);
+    return () => {
+      current = false;
+      clearTimeout(timer);
+    };
   }, [handle]);
 
   // A refusal: show its field errors and move focus to the first one (05 §5.2).
@@ -100,7 +96,6 @@ export function ProfileStepForm({ linkHost }: { linkHost: string }) {
       if (message) next[field] = message;
     }
     setErrors(next);
-    setSuggestions(state.suggestions ?? []);
     setAlertId((id) => id + 1);
     const first = FIELD_ORDER.find((field) => next[field]);
     const ref = {
@@ -111,11 +106,8 @@ export function ProfileStepForm({ linkHost }: { linkHost: string }) {
     if (first) ref[first].current?.focus();
   }, [state]);
 
-  function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setHandleTouched(true);
-    const formData = new FormData(event.currentTarget);
-    startTransition(() => formAction(formData));
+  function clearError(field: Field) {
+    setErrors(({ [field]: _, ...rest }) => rest);
   }
 
   function changeHandle(value: string) {
@@ -123,8 +115,7 @@ export function ProfileStepForm({ linkHost }: { linkHost: string }) {
     // A keystroke that normalizes away (a space, "@") changes nothing, so a refusal such as "was just taken" stays.
     if (next === handle) return;
     setHandle(next);
-    setErrors(({ handle: _, ...rest }) => rest);
-    setSuggestions([]);
+    clearError("handle");
   }
 
   const problem = handleProblem(handle);
@@ -146,25 +137,22 @@ export function ProfileStepForm({ linkHost }: { linkHost: string }) {
     } else if (problem === "reserved") {
       line = HANDLE_COPY.reserved;
     } else if (checked?.handle === handle) {
-      line = availabilityText(handle, checked);
+      line =
+        checked.state === "failed" ? null : availabilityText(handle, checked);
     } else {
-      line = unchecked === handle ? null : "Checking…";
+      line = "Checking…";
     }
   }
+  // A refusal's fresh suggestions while its handle error shows, else the latest check's.
   const chips =
     errors.handle !== undefined
-      ? suggestions
+      ? (state?.suggestions ?? [])
       : checked?.handle === handle && checked.state === "taken"
         ? checked.suggestions
         : [];
 
   return (
-    <form
-      noValidate
-      action={formAction}
-      onSubmit={submit}
-      className="flex flex-col gap-6"
-    >
+    <form {...formProps} className="flex flex-col gap-6">
       <TextField
         ref={nameRef}
         label="Your name"
@@ -172,11 +160,7 @@ export function ProfileStepForm({ linkHost }: { linkHost: string }) {
         autoComplete="name"
         maxLength={DISPLAY_NAME_MAX}
         helper="Shown on your page and on licenses."
-        value={displayName}
-        onChange={(event) => {
-          setDisplayName(event.target.value);
-          setErrors(({ displayName: _, ...rest }) => rest);
-        }}
+        onChange={() => clearError("displayName")}
         error={errors.displayName}
       />
       <div className="flex flex-col gap-2">
@@ -197,11 +181,7 @@ export function ProfileStepForm({ linkHost }: { linkHost: string }) {
           error={errors.handle}
           aria-describedby={lineId}
         />
-        <p
-          id={lineId}
-          aria-live="polite"
-          className="text-footnote text-ink-2 wrap-anywhere"
-        >
+        <p id={lineId} aria-live="polite" className="text-footnote text-ink-2">
           {line}
         </p>
         {chips.length > 0 ? (
@@ -212,7 +192,7 @@ export function ProfileStepForm({ linkHost }: { linkHost: string }) {
                 type="button"
                 size="sm"
                 variant="secondary"
-                // A 30-character suggestion can be wider than a phone column: it wraps instead (07 D153).
+                // A 30-character suggestion can be wider than a phone column: the label wraps inside the chip (07 D153).
                 className="h-auto min-h-9 max-w-full whitespace-normal wrap-anywhere"
                 onClick={() => {
                   changeHandle(suggestion);
@@ -226,8 +206,7 @@ export function ProfileStepForm({ linkHost }: { linkHost: string }) {
         ) : null}
         {handle !== "" ? (
           <p className="text-footnote text-ink-2">
-            Your links will look like{" "}
-            <span className="wrap-anywhere">{`${linkHost}/@${handle}/your-video`}</span>
+            Your links will look like {`${linkHost}/@${handle}/your-video`}
           </p>
         ) : null}
       </div>
@@ -236,11 +215,7 @@ export function ProfileStepForm({ linkHost }: { linkHost: string }) {
         label="I'm 18 or older"
         name="ageConfirmed"
         required
-        checked={ageConfirmed}
-        onChange={(event) => {
-          setAgeConfirmed(event.target.checked);
-          setErrors(({ ageConfirmed: _, ...rest }) => rest);
-        }}
+        onChange={() => clearError("ageConfirmed")}
         error={errors.ageConfirmed}
       />
       <input type="hidden" name="timeZone" value={timeZone} />
@@ -253,7 +228,7 @@ export function ProfileStepForm({ linkHost }: { linkHost: string }) {
         type="submit"
         loading={pending}
         loadingLabel="Continuing…"
-        className="w-full md:w-auto md:self-start"
+        className={PRIMARY_WIDTH}
       >
         Continue
       </Button>

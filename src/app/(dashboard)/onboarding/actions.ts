@@ -2,7 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { z } from "zod";
-import type { ActionResult } from "@/lib/result";
+import { type ActionError, fieldError, formText } from "@/lib/result";
 import { HANDLE_COPY, normalizeHandleInput } from "@/lib/validation/handle";
 import {
   profileStepFieldErrors,
@@ -19,34 +19,18 @@ import {
 } from "@/server/creators/queries";
 
 /** The profile step's refusal: a field error, plus fresh suggestions when the handle was just taken. */
-export type ProfileStepError = Extract<ActionResult, { ok: false }> & {
-  suggestions?: string[];
-};
+export type ProfileStepError = ActionError & { suggestions?: string[] };
 export type ProfileStepState = ProfileStepError | null;
+
+const checkHandleInput = z.object({ handle: z.string().max(64) });
 
 /** The live availability line (01 J1.4). */
 export async function checkHandle(input: {
   handle: string;
 }): Promise<HandleAvailability> {
   await requireUser("/onboarding");
-  const { handle } = z.object({ handle: z.string().max(64) }).parse(input);
+  const { handle } = checkHandleInput.parse(input);
   return checkHandleAvailability(handle);
-}
-
-function text(formData: FormData, key: string): string {
-  const value = formData.get(key);
-  return typeof value === "string" ? value : "";
-}
-
-function fieldError(
-  code: string,
-  field: string,
-  message: string,
-): ProfileStepError {
-  return {
-    ok: false,
-    error: { code, message, fields: { [field]: [message] } },
-  };
 }
 
 /**
@@ -57,10 +41,10 @@ export async function completeOnboarding(
   _previous: ProfileStepState,
   formData: FormData,
 ): Promise<ProfileStepState> {
-  const timeZone = text(formData, "timeZone");
+  const timeZone = formText(formData, "timeZone");
   const input = {
-    displayName: text(formData, "displayName"),
-    handle: normalizeHandleInput(text(formData, "handle")),
+    displayName: formText(formData, "displayName"),
+    handle: normalizeHandleInput(formText(formData, "handle")),
     // The checkbox posts "on" only when ticked.
     ageConfirmed: formData.get("ageConfirmed") === "on",
     // A zone longer than 64 characters can't be real; it becomes UTC rather than an error on a hidden field.

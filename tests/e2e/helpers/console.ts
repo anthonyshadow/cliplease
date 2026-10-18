@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 
 /** A failed response the page is expected to log, e.g. a document 404 or the 400 from a wrong sign-in code. */
 export type ExpectedFailure = { status: number; pathname: string };
@@ -37,5 +37,19 @@ export function collectConsoleErrors(
   page.on("pageerror", (error) => {
     if (!CANCELLED_RSC_FETCH.test(error.message)) errors.push(error.message);
   });
+  return errors;
+}
+
+/**
+ * Opens `path` with the console collector attached first, checks the response status and returns the collected errors.
+ * A 404 page's browser logs the document's own 404; only that entry is ignored, and only when a 404 is expected.
+ */
+export async function visit(page: Page, path: string, status = 200) {
+  const errors = collectConsoleErrors(
+    page,
+    status === 404 ? [{ status, pathname: path }] : [],
+  );
+  const response = await page.goto(path);
+  expect(response?.status()).toBe(status);
   return errors;
 }

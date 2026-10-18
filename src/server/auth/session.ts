@@ -62,7 +62,8 @@ export const getSessionUser = cache(async (): Promise<SessionUser | null> => {
   return { id, email, name, role: role === "admin" ? "admin" : "creator" };
 });
 
-const getCreatorContext = cache(
+/** `user`'s creator context, or null without a profile; for a caller that already holds the session user. */
+export const getCreatorContext = cache(
   async (user: SessionUser): Promise<CreatorContext | null> => {
     const [profile] = await db
       .select()

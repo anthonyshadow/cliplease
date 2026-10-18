@@ -13,6 +13,7 @@ import * as z from "zod/mini";
 import { Banner } from "@/components/ui/banner";
 import { Button } from "@/components/ui/button";
 import { INLINE_LINK } from "@/components/ui/inline-link";
+import { PRIMARY_WIDTH } from "@/components/ui/primary-width";
 import { TextField } from "@/components/ui/text-field";
 import { authClient } from "@/lib/auth-client";
 import {
@@ -71,7 +72,7 @@ function MaskedAddress({ email }: { email: string }) {
   const masked = maskEmail(email);
   const at = masked.indexOf("@") + 1;
   return (
-    <span className="inline-block max-w-full wrap-anywhere">
+    <span className="inline-block max-w-full">
       <span className="whitespace-nowrap">{masked.slice(0, at)}</span>
       {masked.slice(at)}.
     </span>
@@ -256,7 +257,7 @@ export function SignInForm({ next }: { next: string }) {
           type="submit"
           loading={pending === "send"}
           loadingLabel="Sending…"
-          className="w-full md:w-auto md:self-start"
+          className={PRIMARY_WIDTH}
         >
           Email me a code
         </Button>
@@ -307,7 +308,7 @@ export function SignInForm({ next }: { next: string }) {
         type="submit"
         loading={pending === "verify"}
         loadingLabel="Signing in…"
-        className="w-full md:w-auto md:self-start"
+        className={PRIMARY_WIDTH}
       >
         Sign in
       </Button>

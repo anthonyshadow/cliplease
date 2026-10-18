@@ -6,3 +6,7 @@ export const SHELL_GUTTER =
 
 /** A page's <main> column: centered at `max-w-app`, with the safe-area gutter. */
 export const SHELL_MAIN = `mx-auto w-full max-w-app ${SHELL_GUTTER}`;
+
+/** A reading page's one column inside <main> (04 §5.2.3, 07 D145): 640 px, centered at every tier. */
+export const READING_COLUMN =
+  "mx-auto flex w-full max-w-reading flex-col gap-6 py-6 lg:py-12";

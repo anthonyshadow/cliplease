@@ -1,7 +1,7 @@
 "use client";
 
 import { Toast } from "radix-ui";
-import { useSyncExternalStore } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 
 // 04 §9.23: Radix Toast. A small module store lets toast() run from any client component; mount <Toaster /> once
 // (root layout). Polite (`type="background"`), 4 s (8 s with an action), pauses on hover and focus.
@@ -49,6 +49,20 @@ export function toast(message: string, options?: { action?: ToastAction }) {
     { id: nextId++, message, action: options?.action, open: true },
   ];
   emit();
+}
+
+/**
+ * Shows `message` once when it mounts: for a page the server renders after an outcome (a return from payout setup, a
+ * connect). The guard keeps Strict Mode's second effect run from showing it twice.
+ */
+export function ToastOnMount({ message }: { message: string }) {
+  const shown = useRef(false);
+  useEffect(() => {
+    if (shown.current) return;
+    shown.current = true;
+    toast(message);
+  }, [message]);
+  return null;
 }
 
 export function Toaster() {

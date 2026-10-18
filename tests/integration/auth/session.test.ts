@@ -13,6 +13,7 @@ import {
   requireUser,
   toActor,
 } from "../../../src/server/auth/session";
+import { NOT_FOUND, redirectTo } from "../../helpers/actions";
 import {
   mockNextHeaders,
   newCreatorEmail,
@@ -30,11 +31,6 @@ vi.mock("next/headers", () => import("../../helpers/next-headers"));
 
 afterAll(resetDb);
 beforeEach(() => mockNextHeaders(null));
-
-const redirectTo = (url: string) => ({
-  digest: `NEXT_REDIRECT;replace;${url};307;`,
-});
-const NOT_FOUND = { digest: "NEXT_HTTP_ERROR_FALLBACK;404" };
 
 async function signedIn(email = newCreatorEmail()) {
   mockNextHeaders(await signInWithOtp(email));

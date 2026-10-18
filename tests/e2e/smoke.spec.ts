@@ -1,5 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
-import { collectConsoleErrors } from "./helpers/console";
+import { visit } from "./helpers/console";
 import { expectNoHorizontalScroll } from "./helpers/layout";
 
 const LEGAL_ROUTES = [
@@ -16,21 +16,6 @@ const SECTION_TEXT: Partial<Record<string, Record<string, string>>> = {
     "auto-renewal": "at most about a day before",
   },
 };
-
-/**
- * Opens `path`, checks the response status and returns the page's console and page errors, collected from before
- * the navigation. A 404 page's browser logs the document's own 404; only that entry is ignored, and only when a 404 is
- * expected.
- */
-async function visit(page: Page, path: string, status = 200) {
-  const errors = collectConsoleErrors(
-    page,
-    status === 404 ? [{ status, pathname: path }] : [],
-  );
-  const response = await page.goto(path);
-  expect(response?.status()).toBe(status);
-  return errors;
-}
 
 /** The page content keeps the side gutter (--gutter: 16 px below md, 24 px from md, 32 px from lg). */
 async function expectGutter(page: Page) {

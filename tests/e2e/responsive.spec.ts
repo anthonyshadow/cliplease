@@ -1,13 +1,15 @@
 import { expect, type Page, test } from "@playwright/test";
-import { collectConsoleErrors } from "./helpers/console";
+import { collectConsoleErrors, visit } from "./helpers/console";
 import {
   atEveryWidth,
-  expectNoHorizontalScroll,
+  expectCreatorChrome,
   expectPageFrame,
   expectReadingPage,
   expectWithinCap,
+  TIERS,
   type Tier,
 } from "./helpers/layout";
+import { pressButton } from "./helpers/press";
 import { requestCode, signInWithEmail, uniqueEmail } from "./helpers/sign-in";
 
 // G.6 as amended by 07 §11: every page built so far fits the four layout tiers, on all four projects. Reduced motion
@@ -22,26 +24,13 @@ const TIER_LABEL: Record<Tier, string> = {
   xl: "XL",
 };
 
-/** Opens `path` with the console collector attached first; a 404 page's own document 404 is expected. */
-async function visit(page: Page, path: string, status = 200) {
-  const errors = collectConsoleErrors(
-    page,
-    status === 404 ? [{ status, pathname: path }] : [],
-  );
-  const response = await page.goto(path);
-  expect(response?.status()).toBe(status);
-  return errors;
-}
-
 /**
  * Opens the gallery's Sheet and checks its form for `width` (04 §5.2.5, §9.22): a full-width bottom sheet with 16 px
  * sides below md, a centered dialog of at most 480 px with 32 px sides from md. Opened with the keyboard: below lg a
  * click can land on the fixed TabBar.
  */
 async function expectSheet(page: Page, width: number) {
-  const trigger = page.getByRole("button", { name: "Open sheet", exact: true });
-  await trigger.focus();
-  await trigger.press("Enter");
+  await pressButton(page, "Open sheet");
   const dialog = page.getByRole("dialog", { name: "Which countries?" });
   await expect(dialog).toBeVisible();
   // Even at 1 ms the entry animation starts below the screen: measure its end state.
@@ -62,7 +51,7 @@ async function expectSheet(page: Page, width: number) {
     };
   });
   const body = dialog.locator(".overflow-y-auto");
-  if (width < 768) {
+  if (width < TIERS.tablet) {
     expect(Math.abs(box.bottom - box.innerHeight)).toBeLessThanOrEqual(1);
     expect(Math.abs(box.width - box.clientWidth)).toBeLessThanOrEqual(1);
     await expect(body).toHaveCSS("padding-left", "16px");
@@ -130,12 +119,10 @@ test("G.6: /dev/ui shows the shell and the primitives per tier", async ({
   const errors = await visit(page, "/dev/ui");
   // The countdown chips render once the page has hydrated; the Sheet trigger works from then on.
   await expect(page.locator("main time").first()).toHaveText(/\S/);
-  const tabBar = page.locator("[data-tabbar]");
   // The creator NavBar demo is the only header in <main> with a nav inside (the admin demo's tabs sit below its header).
   const creatorLinks = page.locator("main header nav");
   await expect(creatorLinks).toHaveCount(1);
   await atEveryWidth(page, testInfo, async ({ width, tier }) => {
-    await expectNoHorizontalScroll(page);
     // The NavBar demos sit inside <main>, so the page has no banner.
     await expectPageFrame(page, width, { banner: false });
     // Each demo sits in an overflow-hidden frame, which hides a row that runs past its bar from the page-level check.
@@ -148,17 +135,8 @@ test("G.6: /dev/ui shows the shell and the primitives per tier", async ({
       `Tier: ${TIER_LABEL[tier]}`,
       { useInnerText: true },
     );
-    const desktop = width >= 1024;
-    if (desktop) {
-      await expect(tabBar).toBeHidden();
-      await expect(creatorLinks).toBeVisible();
-    } else {
-      await expect(tabBar).toBeVisible();
-      await expect(creatorLinks).toBeHidden();
-    }
-    if (tier === "tablet") {
-      await expectWithinCap(tabBar.locator(":scope > ul"), 640);
-    }
+    await expectCreatorChrome(page, width, creatorLinks);
+    const desktop = width >= TIERS.desktop;
     // Fields are 48 px tall below lg and 44 px from lg (04 §9.6). The gallery has two "Email" fields, so not that label.
     for (const label of ["Handle", "Region"]) {
       const height = await page

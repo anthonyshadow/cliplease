@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import { PRIMARY_WIDTH } from "@/components/ui/primary-width";
 
 const STEPS = [
   ["Connect.", "Your accounts, read-only."],
@@ -25,7 +26,7 @@ export default function LandingPage() {
           Link your Instagram, TikTok and YouTube. Turn any post into a license
           link. Get paid when you tap Approve.
         </p>
-        <Button asChild className="w-full md:w-auto md:self-start">
+        <Button asChild className={PRIMARY_WIDTH}>
           <Link href="/sign-in">Sign in</Link>
         </Button>
       </section>

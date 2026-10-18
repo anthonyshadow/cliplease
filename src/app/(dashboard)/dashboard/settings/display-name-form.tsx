@@ -1,18 +1,11 @@
 "use client";
 
-import {
-  type FormEvent,
-  type ReactNode,
-  startTransition,
-  useActionState,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { TextField } from "@/components/ui/text-field";
 import { toast } from "@/components/ui/toast";
-import { DISPLAY_NAME_MAX } from "@/lib/validation/profile";
+import { useFormAction } from "@/components/ui/use-form-action";
+import { DISPLAY_NAME_MAX } from "@/lib/validation/display-name";
 import { saveDisplayName } from "./actions";
 
 /**
@@ -26,8 +19,7 @@ export function DisplayNameForm({
   initial: string;
   children?: ReactNode;
 }) {
-  const [state, formAction, pending] = useActionState(saveDisplayName, null);
-  const [value, setValue] = useState(initial);
+  const { state, pending, formProps } = useFormAction(saveDisplayName, null);
   const [error, setError] = useState<string | undefined>();
   const fieldRef = useRef<HTMLInputElement>(null);
 
@@ -42,30 +34,16 @@ export function DisplayNameForm({
     fieldRef.current?.focus();
   }, [state]);
 
-  function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const formData = new FormData(event.currentTarget);
-    startTransition(() => formAction(formData));
-  }
-
   return (
-    <form
-      noValidate
-      action={formAction}
-      onSubmit={submit}
-      className="flex flex-col gap-4"
-    >
+    <form {...formProps} className="flex flex-col gap-4">
       <TextField
         ref={fieldRef}
         label="Display name"
         name="displayName"
         autoComplete="name"
         maxLength={DISPLAY_NAME_MAX}
-        value={value}
-        onChange={(event) => {
-          setValue(event.target.value);
-          setError(undefined);
-        }}
+        defaultValue={initial}
+        onChange={() => setError(undefined)}
         error={error}
       />
       {children}

@@ -5,7 +5,9 @@ import { PayoutCurrencyFacts } from "@/components/payouts/payout-currency-facts"
 import { Button } from "@/components/ui/button";
 import { FactList } from "@/components/ui/fact-list";
 import { INLINE_LINK } from "@/components/ui/inline-link";
+import { PRIMARY_WIDTH } from "@/components/ui/primary-width";
 import { StatusPill } from "@/components/ui/status-pill";
+import { ToastOnMount } from "@/components/ui/toast";
 import { SUPPORT_EMAIL } from "@/lib/app-name";
 import { currencyLabel } from "@/lib/money/currency";
 import {
@@ -16,7 +18,6 @@ import {
 import { requireCreator } from "@/server/auth/session";
 import { refreshPayoutsStatus } from "@/server/creators/profile";
 import { DisplayNameForm } from "./display-name-form";
-import { PayoutsReturnedToast } from "./payouts-returned-toast";
 import { TimeZoneRow } from "./time-zone-row";
 
 export const metadata: Metadata = { title: "Settings" };
@@ -96,18 +97,23 @@ export default async function SettingsPage({
         />
         <PayoutCurrencyFacts currency={creator.payoutCurrency} />
         {setupLabel ? (
-          <Button asChild className="w-full md:w-auto md:self-start">
+          <Button asChild className={PRIMARY_WIDTH}>
             <a href="/api/stripe/onboarding">{setupLabel}</a>
           </Button>
         ) : null}
-        {returned && status === "active" ? <PayoutsReturnedToast /> : null}
+        {/* Back from payout setup with payouts on (05 §6.11 States, proposed copy). The address keeps
+            ?payouts=returned: rewriting it on the client starts a router update in Next 16, and a Settings action
+            sent during it is cancelled. */}
+        {returned && status === "active" ? (
+          <ToastOnMount message="Payouts are on." />
+        ) : null}
       </Section>
 
       <Section title="Profile">
         <DisplayNameForm initial={creator.displayName}>
           <div className="flex flex-col gap-1">
             <p className="text-callout font-semibold text-ink">Handle</p>
-            <p className="text-body text-ink wrap-anywhere">{`@${creator.handle}`}</p>
+            <p className="text-body text-ink">{`@${creator.handle}`}</p>
             <p className="text-footnote text-ink-2">
               Handles can't change yet.
             </p>

@@ -9,7 +9,7 @@ import {
   uniqueLongHandle,
 } from "./helpers/creator";
 import { expectNoHorizontalScroll } from "./helpers/layout";
-import { pressAndSettle } from "./helpers/server-action";
+import { pressAndSettle, pressButton } from "./helpers/press";
 import { signInWithEmail, uniqueEmail } from "./helpers/sign-in";
 
 // J1 and J11 with the fake payments driver (05 §5.2, §6.11, §4.6; 07 D93, D95, D139).
@@ -32,13 +32,6 @@ async function expectPayoutFacts(page: Page) {
   await expect(
     page.getByRole("link", { name: /^Payout terms/ }),
   ).toHaveAttribute("href", "/legal/terms#payouts");
-}
-
-/** Presses a control with the keyboard: on the iPhone a click near the bottom can land on the fixed TabBar. */
-async function press(page: Page, name: string) {
-  const control = page.getByRole("button", { name, exact: true });
-  await control.focus();
-  await control.press("Enter");
 }
 
 test("a new creator onboards, sets up payouts, has a public page and signs out", async ({
@@ -160,7 +153,7 @@ test("a new creator onboards, sets up payouts, has a public page and signs out",
 
   // Sign out from Settings (J1.11).
   await page.goto("/dashboard/settings");
-  await press(page, "Sign out");
+  await pressButton(page, "Sign out");
   await expect(page).toHaveURL("/sign-in");
   await page.goto("/dashboard");
   await expect(page).toHaveURL("/sign-in?next=%2Fdashboard");
@@ -198,11 +191,10 @@ test("a taken handle offers free suggestions, a handle claimed meanwhile is just
   baseURL,
 }, testInfo) => {
   const errors = collectConsoleErrors(page);
-  // The longest handle: its suggestions are as long as handles get.
-  const { handle: taken } = await signUpCreator(page, {
-    payouts: false,
-    handle: uniqueLongHandle(testInfo),
-  });
+  // The longest handle: its suggestions are as long as handles get. A saved profile is all the test needs.
+  const taken = uniqueLongHandle(testInfo);
+  await signInWithEmail(page, uniqueEmail(testInfo), "/onboarding");
+  await completeProfileStep(page, taken);
   await page.context().clearCookies();
   // A controllable clock (time still flows) lets the test move past the 300 ms pause without sleeping.
   await page.clock.install();
@@ -250,10 +242,9 @@ test("a taken handle offers free suggestions, a handle claimed meanwhile is just
 
   // 01 J1.5: the handle was free when checked, and someone else claims it before Continue.
   const rivalContext = await browser.newContext({ baseURL });
-  await signUpCreator(await rivalContext.newPage(), {
-    payouts: false,
-    handle: suggestion,
-  });
+  const rival = await rivalContext.newPage();
+  await signInWithEmail(rival, uniqueEmail(testInfo), "/onboarding");
+  await completeProfileStep(rival, suggestion);
   await rivalContext.close();
   await page.getByLabel("Your name", { exact: true }).fill(E2E_CREATOR_NAME);
   await page.getByLabel("I'm 18 or older", { exact: true }).check();

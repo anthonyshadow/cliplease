@@ -42,6 +42,9 @@ import { DAY_MS, HOUR_MS } from "../../src/lib/time";
 /** Random lowercase hex, for unique test values. */
 export const randomHex = (bytes: number) => randomBytes(bytes).toString("hex");
 
+/** A free, valid handle for one test (rows build up across a file). */
+export const uniqueTestHandle = () => `t.${randomHex(4)}`;
+
 /** The Instagram reel URL insertVideoPosting builds for a link key. */
 export const instagramReelUrl = (linkKey: string) =>
   `https://www.instagram.com/reel/${linkKey}/`;

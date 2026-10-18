@@ -1,33 +1,24 @@
-// The profile step's rules and copy (02 §6.1, 07 D93). Pure and client-safe: the form, the action and Settings share them.
+// The profile step's schemas and copy (02 §6.1, 07 D93), shared by the onboarding and Settings actions and the domain
+// functions. The client forms import the display-name limit from ./display-name instead, which has no Zod.
 import { z } from "zod";
 import { APP_NAME } from "../app-name";
+import { DISPLAY_NAME_MAX, displayNameMessage } from "./display-name";
 import { HANDLE_COPY, HANDLE_RE, handleProblemMessage } from "./handle";
 
 export const AGE_ERROR = `You must be 18 or older to sell on ${APP_NAME}.`;
 
-/** Display-name errors (proposed copy, owner answer Q3). */
-export const DISPLAY_NAME_COPY = {
-  empty: "Enter your name.",
-  long: "Use 60 characters or fewer.",
-} as const;
-export const DISPLAY_NAME_MAX = 60;
+// Trimmed, 1 to DISPLAY_NAME_MAX characters: the one definition of a valid display name.
+const displayNameField = z.string().trim().min(1).max(DISPLAY_NAME_MAX);
 
 /** 02 §6.1's completeOnboarding schema, with `{APP_NAME}` filled in the 18+ message (AGE_ERROR). */
 export const profileStepSchema = z.object({
-  displayName: z.string().trim().min(1).max(DISPLAY_NAME_MAX),
+  displayName: displayNameField,
   handle: z.string().regex(HANDLE_RE),
   ageConfirmed: z.literal(true, { error: AGE_ERROR }),
   timeZone: z.string().max(64).optional(),
 });
 
-export const displayNameSchema = z.object({
-  displayName: z.string().trim().min(1).max(DISPLAY_NAME_MAX),
-});
-
-/** The message for a display name the schema refused. */
-export function displayNameMessage(raw: string): string {
-  return raw.trim() === "" ? DISPLAY_NAME_COPY.empty : DISPLAY_NAME_COPY.long;
-}
+export const displayNameSchema = z.object({ displayName: displayNameField });
 
 /** Field errors for a refused profile step, in the docs' words (never Zod's own text). */
 export function profileStepFieldErrors(

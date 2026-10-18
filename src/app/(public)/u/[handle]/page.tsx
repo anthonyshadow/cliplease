@@ -41,7 +41,7 @@ export default async function CreatorPage({
   const creator = await creatorFor((await params).handle);
   return (
     <div className="flex flex-col gap-6 py-6 lg:py-12">
-      <div className="flex flex-col gap-1 wrap-anywhere">
+      <div className="flex flex-col gap-1">
         <h1 className="text-title-1 text-ink">{creator.displayName}</h1>
         <p className="text-callout text-ink-2">{`@${creator.handle}`}</p>
       </div>

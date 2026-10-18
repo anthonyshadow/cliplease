@@ -3,10 +3,12 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
 import { AppShell } from "@/components/layout/app-shell";
+import { READING_COLUMN } from "@/components/layout/gutter";
 import { NavBar } from "@/components/layout/nav-bar";
 import { SignOutMenuItem } from "@/components/layout/sign-out";
 import { PayoutCurrencyFacts } from "@/components/payouts/payout-currency-facts";
 import { Button } from "@/components/ui/button";
+import { PRIMARY_WIDTH } from "@/components/ui/primary-width";
 import { Stepper } from "@/components/ui/stepper";
 import { APP_NAME } from "@/lib/app-name";
 import type { Currency, PayoutsStatus } from "@/lib/domain/values";
@@ -16,6 +18,7 @@ import {
   type OnboardingStep,
   resolveOnboardingStep,
 } from "@/lib/onboarding";
+import { PAYOUTS_STATUS_LABEL } from "@/lib/payouts";
 import { getCreatorForApi, requireUser } from "@/server/auth/session";
 import { refreshPayoutsStatus } from "@/server/creators/profile";
 import { env } from "@/server/env";
@@ -23,8 +26,7 @@ import { ProfileStepForm } from "./profile-step-form";
 
 export const metadata: Metadata = { title: "Welcome" };
 
-// Primaries are full width below md and their own width from md (07 D149); tertiaries sit on the column's left edge.
-const PRIMARY = "w-full md:w-auto md:self-start";
+// Tertiaries sit on the column's left edge.
 const TERTIARY = "self-start px-0";
 
 function Heading({ step }: { step: OnboardingStep }) {
@@ -51,7 +53,7 @@ function ConnectStep({ payoutsActive }: { payoutsActive: boolean }) {
         {`Your profile and your videos. Read-only. ${APP_NAME} never posts.`}
       </p>
       {/* P06 adds the provider rows here (ConnectRow, returnTo=/onboarding?step=connect). */}
-      <Button asChild className={PRIMARY}>
+      <Button asChild className={PRIMARY_WIDTH}>
         <Link
           href={
             payoutsActive ? "/dashboard/library" : "/onboarding?step=payouts"
@@ -82,14 +84,14 @@ function PayoutsStep({
   let actions: ReactNode;
   if (settled) {
     actions = (
-      <Button asChild className={PRIMARY}>
+      <Button asChild className={PRIMARY_WIDTH}>
         <Link href="/dashboard/library">Continue</Link>
       </Button>
     );
   } else {
     actions = (
       <>
-        <Button asChild className={PRIMARY}>
+        <Button asChild className={PRIMARY_WIDTH}>
           <a href="/api/stripe/onboarding">Set up payouts</a>
         </Button>
         <Button asChild variant="tertiary" className={TERTIARY}>
@@ -104,7 +106,7 @@ function PayoutsStep({
         You can publish now. You'll need payouts set up to approve a request.
       </p>
       {status === "active" ? (
-        <p className="text-body text-ink">Payouts on</p>
+        <p className="text-body text-ink">{PAYOUTS_STATUS_LABEL.active}</p>
       ) : null}
       {status === "pending" ? (
         <p className="text-body text-ink">Stripe is checking your details.</p>
@@ -159,7 +161,7 @@ export default async function OnboardingPage({
         />
       }
     >
-      <div className="mx-auto flex w-full max-w-reading flex-col gap-6 py-6 lg:py-12">
+      <div className={READING_COLUMN}>
         <div className="flex flex-col gap-4">
           <Heading step={step} />
           <Stepper
