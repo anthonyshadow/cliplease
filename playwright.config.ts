@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { parseEnv } from "node:util";
 import { defineConfig, devices } from "@playwright/test";
+import { checkTestDatabase } from "./tests/helpers/test-database";
 
 // e2e env: .env.test, then .env.test.local, parsed with node:util. Playwright starts the
 // webServer with { ...process.env, ...webServer.env }, so these values win over the shell.
@@ -27,9 +28,16 @@ const testEnv = {
   ...readEnvFile(".env.test.local"),
 };
 
+// The e2e server signs users in and writes rows: the same guard as the integration tests (never the .env.local
+// database).
+checkTestDatabase(
+  testEnv,
+  existsSync(".env.local") ? readFileSync(".env.local", "utf8") : undefined,
+);
+
 export default defineConfig({
   testDir: "tests/e2e",
-  // The tests only read pages, so they run in parallel against the one server.
+  // One server; the tests run in parallel because each one signs in its own address.
   fullyParallel: true,
   use: {
     baseURL: "http://localhost:3100",

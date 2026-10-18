@@ -21,11 +21,17 @@ export function Checkbox({
   label,
   helper,
   error,
+  "aria-describedby": describedBy,
   id,
   className,
   ...props
 }: CheckboxProps) {
-  const { fieldId, controlProps } = useFieldControl({ id, helper, error });
+  const { fieldId, controlProps } = useFieldControl({
+    id,
+    helper,
+    error,
+    describedBy,
+  });
   return (
     <div className={cn("flex flex-col gap-1", className)}>
       {/* The whole row is the label, so the ≥ 44 px row is the hit area. A click on the box itself doesn't toggle

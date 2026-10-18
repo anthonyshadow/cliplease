@@ -15,7 +15,7 @@ const ROW = "flex h-13 w-full items-center text-body text-ink";
 
 /**
  * 04 §9.30 / 05 §1.3: a Sheet titled "More" with 52 px text rows, words only (no icons, no chevrons;
- * 04 §8.1 "No icons in menus, the More sheet"). Sign out is a slot P04 wires.
+ * 04 §8.1 "No icons in menus, the More sheet"). Sign out is a slot: SignOutButton (sign-out.tsx).
  */
 export function MoreSheet({
   trigger,

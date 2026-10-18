@@ -17,6 +17,7 @@
     "db:migrate": "drizzle-kit migrate",
     "db:check": "drizzle-kit check",
     "db:studio": "drizzle-kit studio",
+    "db:seed": "NODE_OPTIONS=--conditions=react-server tsx scripts/seed.ts",
     "auth:schema": "bunx auth@1.7.7 generate --config src/server/auth/auth.ts --output src/db/schema/auth.ts --adapter drizzle --dialect postgresql --yes",
     "smoke:compat": "tsx scripts/compat-smoke.tsx"
   },

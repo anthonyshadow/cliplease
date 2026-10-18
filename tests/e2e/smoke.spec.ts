@@ -1,4 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
+import { collectConsoleErrors } from "./helpers/console";
 
 const LEGAL_ROUTES = [
   "/legal/license/v1",
@@ -17,20 +18,14 @@ const SECTION_TEXT: Partial<Record<string, Record<string, string>>> = {
 
 /**
  * Opens `path`, checks the response status and returns the page's console and page errors, collected from before
- * the navigation. A 404 page's browser logs the document's own 404 ("Failed to load resource: … 404"); only that
- * entry is ignored, and only when a 404 is expected.
+ * the navigation. A 404 page's browser logs the document's own 404; only that entry is ignored, and only when a 404 is
+ * expected.
  */
 async function visit(page: Page, path: string, status = 200) {
-  const errors: string[] = [];
-  page.on("console", (message) => {
-    if (message.type() !== "error") return;
-    const isDocument404 =
-      status === 404 &&
-      message.text().startsWith("Failed to load resource:") &&
-      new URL(message.location().url).pathname === path;
-    if (!isDocument404) errors.push(message.text());
-  });
-  page.on("pageerror", (error) => errors.push(error.message));
+  const errors = collectConsoleErrors(
+    page,
+    status === 404 ? [{ status, pathname: path }] : [],
+  );
   const response = await page.goto(path);
   expect(response?.status()).toBe(status);
   return errors;

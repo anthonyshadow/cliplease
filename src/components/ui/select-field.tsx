@@ -21,12 +21,18 @@ export function SelectField({
   optional,
   helper,
   error,
+  "aria-describedby": describedBy,
   id,
   className,
   children,
   ...props
 }: SelectFieldProps) {
-  const { fieldId, controlProps } = useFieldControl({ id, helper, error });
+  const { fieldId, controlProps } = useFieldControl({
+    id,
+    helper,
+    error,
+    describedBy,
+  });
   return (
     <FieldShell className={className}>
       <FieldLabel htmlFor={fieldId} optional={optional}>

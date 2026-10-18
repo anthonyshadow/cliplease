@@ -360,4 +360,9 @@
     line-height: 1.5625rem;
     letter-spacing: -0.012em;
   }
+  /* The app's own pages (/onboarding, /dashboard/**, /admin) sit on canvas-alt (04 §3); their shells carry data-app. On
+     the root, so overscroll and the TabBar's reserved space match too. */
+  html:has([data-app]) {
+    background-color: var(--canvas-alt);
+  }
 }

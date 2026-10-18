@@ -49,7 +49,12 @@ export type NavBarProps =
       current?: CreatorNavKey;
       inboxCount?: number;
       user: { name: string; image?: string | null };
-      /** The account Menu's last item; P04 wires a MenuItem that signs out. */
+      /**
+       * A signed-in user with no creator profile yet (/onboarding): no links, and the Menu holds only Sign out, since
+       * every creator page would send them back (04 §9.30; P20b adds My licenses).
+       */
+      withoutProfile?: boolean;
+      /** The account Menu's last item: SignOutMenuItem (sign-out.tsx). */
       signOut?: ReactNode;
     };
 
@@ -119,7 +124,9 @@ export function NavBar(props: NavBarProps) {
   return (
     <Bar>
       <Wordmark href={CREATOR_NAV.inbox.href} prefetch={SHELL_PREFETCH} />
-      <CreatorLinks current={current} inboxCount={props.inboxCount} />
+      {props.withoutProfile ? null : (
+        <CreatorLinks current={current} inboxCount={props.inboxCount} />
+      )}
       <Menu>
         <MenuTrigger
           aria-label="Account menu"
@@ -132,11 +139,13 @@ export function NavBar(props: NavBarProps) {
           />
         </MenuTrigger>
         <MenuContent>
-          <MenuItem asChild>
-            <Link href={CREATOR_NAV.settings.href} prefetch={SHELL_PREFETCH}>
-              {CREATOR_NAV.settings.label}
-            </Link>
-          </MenuItem>
+          {props.withoutProfile ? null : (
+            <MenuItem asChild>
+              <Link href={CREATOR_NAV.settings.href} prefetch={SHELL_PREFETCH}>
+                {CREATOR_NAV.settings.label}
+              </Link>
+            </MenuItem>
+          )}
           {props.signOut}
         </MenuContent>
       </Menu>

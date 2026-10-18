@@ -6,6 +6,7 @@ import { type ReactNode, useEffect, useState } from "react";
 import { SHELL_MAIN } from "@/components/layout/gutter";
 import { MoreSheet } from "@/components/layout/more-sheet";
 import { NavBar } from "@/components/layout/nav-bar";
+import { SignOutButton, SignOutMenuItem } from "@/components/layout/sign-out";
 import { TabBar } from "@/components/layout/tab-bar";
 import { Avatar } from "@/components/ui/avatar";
 import { Banner } from "@/components/ui/banner";
@@ -557,19 +558,12 @@ export function Gallery({ view }: { view: "waiting" | "history" }) {
                 current="inbox"
                 inboxCount={2}
                 user={user}
-                signOut={<MenuItem>Sign out</MenuItem>}
+                signOut={<SignOutMenuItem />}
               />
             </Frame>
             <MoreSheet
               trigger={<Button variant="secondary">Open MoreSheet</Button>}
-              signOut={
-                <button
-                  type="button"
-                  className="flex h-full w-full items-center"
-                >
-                  Sign out
-                </button>
-              }
+              signOut={<SignOutButton />}
             />
             <p className="flex items-center gap-2 text-callout text-ink-2">
               <TriangleAlert aria-hidden size={16} strokeWidth={2} />
@@ -578,7 +572,7 @@ export function Gallery({ view }: { view: "waiting" | "history" }) {
           </div>
         </Section>
       </main>
-      <TabBar current="inbox" inboxCount={2} />
+      <TabBar current="inbox" inboxCount={2} signOut={<SignOutButton />} />
     </>
   );
 }

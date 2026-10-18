@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { Banner } from "@/components/ui/banner";
 import { Button } from "@/components/ui/button";
+import { INLINE_LINK } from "@/components/ui/inline-link";
 import {
   LICENSE_V1_UPDATED_LABEL,
   LICENSE_V1_VERSION,
@@ -15,7 +16,6 @@ import {
 } from "@/lib/legal/types";
 
 // The draft legal pages (05 §4.8): Banner notice, Button "link" contents; links inside paragraphs stay inline links.
-const INLINE_LINK = "text-link underline underline-offset-4";
 
 /** Stable React keys from the content itself (the text is static); repeated content gets a counter. */
 function keyed<T>(items: readonly T[]) {

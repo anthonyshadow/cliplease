@@ -23,18 +23,22 @@ function fieldIds(id: string) {
 
 /**
  * A control's id (`id`, or a generated one) and its ARIA wiring (04 §9.6): invalid while there is an error, and
- * described by the prefix (TextField's currency, read first), then the error, then the helper.
+ * described by the prefix (TextField's currency, read first), then the error, then the caller's own `aria-describedby`
+ * (text elsewhere on the page that explains the field), then the helper. Each field takes `aria-describedby` out of its
+ * props and passes it here, so it adds to these links instead of replacing them.
  */
 export function useFieldControl({
   id,
   helper,
   error,
   prefix,
+  describedBy: extra,
 }: {
   id?: string;
   helper?: ReactNode;
   error?: ReactNode;
   prefix?: string;
+  describedBy?: string;
 }) {
   const generated = useId();
   const fieldId = id ?? generated;
@@ -42,6 +46,7 @@ export function useFieldControl({
   const describedBy = [
     prefix ? ids.prefix : null,
     error ? ids.error : null,
+    extra,
     helper ? ids.helper : null,
   ].filter(Boolean);
   return {
@@ -142,6 +147,7 @@ export function TextField({
   helper,
   error,
   prefix,
+  "aria-describedby": describedBy,
   id,
   className,
   ...props
@@ -151,6 +157,7 @@ export function TextField({
     helper,
     error,
     prefix,
+    describedBy,
   });
   return (
     <FieldShell className={className}>
@@ -193,12 +200,18 @@ export function TextArea({
   optional,
   helper,
   error,
+  "aria-describedby": describedBy,
   id,
   className,
   rows = 4,
   ...props
 }: TextAreaProps) {
-  const { fieldId, controlProps } = useFieldControl({ id, helper, error });
+  const { fieldId, controlProps } = useFieldControl({
+    id,
+    helper,
+    error,
+    describedBy,
+  });
   return (
     <FieldShell className={className}>
       <FieldLabel htmlFor={fieldId} optional={optional}>

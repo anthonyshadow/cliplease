@@ -25,11 +25,8 @@ export default function LandingPage() {
           Link your Instagram, TikTok and YouTube. Turn any post into a license
           link. Get paid when you tap Approve.
         </p>
-        {/* No prefetch: /sign-in doesn't exist until P04. */}
         <Button asChild className="w-full sm:w-auto sm:self-start">
-          <Link href="/sign-in" prefetch={false}>
-            Sign in
-          </Link>
+          <Link href="/sign-in">Sign in</Link>
         </Button>
       </section>
 

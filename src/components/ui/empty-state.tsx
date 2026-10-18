@@ -9,9 +9,12 @@ export function EmptyState({
   title,
   description,
   actions,
+  as: Heading = "h2",
   className,
 }: {
   title: ReactNode;
+  /** The title's heading level: h1 when the empty state is the whole page (the Inbox placeholder). */
+  as?: "h1" | "h2";
   description?: ReactNode;
   actions?: ReactNode;
   className?: string;
@@ -23,7 +26,7 @@ export function EmptyState({
         className,
       )}
     >
-      <h2 className="text-title-2 text-ink">{title}</h2>
+      <Heading className="text-title-2 text-ink">{title}</Heading>
       {description ? (
         <p className="text-callout text-ink-2">{description}</p>
       ) : null}
