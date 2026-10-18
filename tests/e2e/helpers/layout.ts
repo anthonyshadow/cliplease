@@ -86,6 +86,36 @@ export async function expectPageFrame(
   }
 }
 
+/** A reading page (04 §5.2.3): the frame, one centered 640 px column, and no TabBar at any tier. */
+export async function expectReadingPage(page: Page, width: number) {
+  await expectNoHorizontalScroll(page);
+  await expectPageFrame(page, width, { banner: true });
+  const column = page.locator("main .max-w-reading").first();
+  await expect(column).toHaveCSS("max-width", "640px");
+  await expectWithinCap(column, 640);
+  await expect(page.locator("[data-tabbar]")).toHaveCount(0);
+}
+
+/**
+ * The creator chrome for `width` (04 §9.30): the TabBar below lg, with its five tabs in a centered row of at most 640
+ * px on Tablet; the NavBar's creator links from lg.
+ */
+export async function expectCreatorChrome(page: Page, width: number) {
+  const tabBar = page.locator("[data-tabbar]");
+  const links = page.getByRole("banner").locator("nav");
+  if (width >= TIERS.desktop) {
+    await expect(tabBar).toBeHidden();
+    await expect(links).toBeVisible();
+    return;
+  }
+  await expect(tabBar).toBeVisible();
+  await expect(links).toBeHidden();
+  if (tierAt(width) === "tablet") {
+    await expect(tabBar.locator(":scope > ul > li")).toHaveCount(5);
+    await expectWithinCap(tabBar.locator(":scope > ul"), 640);
+  }
+}
+
 export type WidthCheck = {
   width: number;
   tier: Tier;

@@ -4,6 +4,7 @@ import {
   atEveryWidth,
   expectNoHorizontalScroll,
   expectPageFrame,
+  expectReadingPage,
   expectWithinCap,
   type Tier,
 } from "./helpers/layout";
@@ -30,16 +31,6 @@ async function visit(page: Page, path: string, status = 200) {
   const response = await page.goto(path);
   expect(response?.status()).toBe(status);
   return errors;
-}
-
-/** A reading page (04 §5.2.3): the frame, one centered 640 px column, and no TabBar at any tier. */
-async function expectReadingPage(page: Page, width: number) {
-  await expectNoHorizontalScroll(page);
-  await expectPageFrame(page, width, { banner: true });
-  const column = page.locator("main .max-w-reading").first();
-  await expect(column).toHaveCSS("max-width", "640px");
-  await expectWithinCap(column, 640);
-  await expect(page.locator("[data-tabbar]")).toHaveCount(0);
 }
 
 /**
@@ -124,7 +115,7 @@ test("G.6: /sign-in fits every tier, both steps", async ({
 test("G.6: /onboarding fits every tier", async ({ page }, testInfo) => {
   const errors = collectConsoleErrors(page);
   await signInWithEmail(page, uniqueEmail(testInfo), "/onboarding");
-  await expect(page).toHaveURL("/onboarding");
+  await expect(page).toHaveURL("/onboarding?step=profile");
   await atEveryWidth(page, testInfo, async ({ width }) => {
     await expectReadingPage(page, width);
     // No creator profile yet, so no NavBar links at any tier (NavBar withoutProfile).

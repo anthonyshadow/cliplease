@@ -103,7 +103,7 @@ export function FieldMessages({
             strokeWidth={2}
             className="mt-px shrink-0"
           />
-          <span>{error}</span>
+          <span className="min-w-0 wrap-anywhere">{error}</span>
         </p>
       ) : null}
       {helper ? (

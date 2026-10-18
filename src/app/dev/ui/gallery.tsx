@@ -11,7 +11,7 @@ import { TabBar } from "@/components/layout/tab-bar";
 import { Avatar } from "@/components/ui/avatar";
 import { Banner } from "@/components/ui/banner";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
+import { Checkbox, NativeCheckbox } from "@/components/ui/checkbox";
 import { ConfirmSheet } from "@/components/ui/confirm-sheet";
 import { CopyLinkField } from "@/components/ui/copy-link-field";
 import { DataTable } from "@/components/ui/data-table";
@@ -341,6 +341,11 @@ export function Gallery({ view }: { view: "waiting" | "history" }) {
                 label="I'm 18 or older"
                 error={`You must be 18 or older to sell on ${APP_NAME}.`}
               />
+              <NativeCheckbox label="I'm 18 or older (native)" defaultChecked />
+              <NativeCheckbox
+                label="I'm 18 or older (native)"
+                error={`You must be 18 or older to sell on ${APP_NAME}.`}
+              />
               <Switch label="Approve requests automatically" defaultChecked />
               <Switch label="Show buyers this link" />
             </div>
@@ -412,6 +417,12 @@ export function Gallery({ view }: { view: "waiting" | "history" }) {
           <FactList
             facts={[
               { label: "Licensed to", value: "Daily Laughs Media" },
+              // A long unbroken value: it wraps at every width (the responsive spec checks /dev/ui for sideways scroll).
+              {
+                label: "Buyer email",
+                value:
+                  "sam.lee.highlights.productions@studiomailuniversity.example.com",
+              },
               { label: "Scope", value: "Paid social ads · 1 year · Worldwide" },
               {
                 label: "You get",

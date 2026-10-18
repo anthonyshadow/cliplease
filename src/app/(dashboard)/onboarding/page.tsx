@@ -1,14 +1,153 @@
 import type { Metadata } from "next";
+import Link from "next/link";
+import { redirect } from "next/navigation";
+import type { ReactNode } from "react";
 import { AppShell } from "@/components/layout/app-shell";
 import { NavBar } from "@/components/layout/nav-bar";
 import { SignOutMenuItem } from "@/components/layout/sign-out";
-import { requireUser } from "@/server/auth/session";
+import { PayoutCurrencyFacts } from "@/components/payouts/payout-currency-facts";
+import { Button } from "@/components/ui/button";
+import { Stepper } from "@/components/ui/stepper";
+import { APP_NAME } from "@/lib/app-name";
+import type { Currency, PayoutsStatus } from "@/lib/domain/values";
+import {
+  ONBOARDING_STEP_LABELS,
+  ONBOARDING_STEPS,
+  type OnboardingStep,
+  resolveOnboardingStep,
+} from "@/lib/onboarding";
+import { getCreatorForApi, requireUser } from "@/server/auth/session";
+import { refreshPayoutsStatus } from "@/server/creators/profile";
+import { env } from "@/server/env";
+import { ProfileStepForm } from "./profile-step-form";
 
 export const metadata: Metadata = { title: "Welcome" };
 
-// The onboarding placeholder: NavBar with the wordmark and avatar, no TabBar (05 §5.2). P05 builds the form.
-export default async function OnboardingPage() {
+// Primaries are full width below md and their own width from md (07 D149); tertiaries sit on the column's left edge.
+const PRIMARY = "w-full md:w-auto md:self-start";
+const TERTIARY = "self-start px-0";
+
+function Heading({ step }: { step: OnboardingStep }) {
+  if (step === "profile") {
+    return (
+      <h1 className="text-title-1 text-ink">
+        Welcome. <span className="text-ink-2">Pick your handle.</span>
+      </h1>
+    );
+  }
+  return (
+    <h1 className="text-title-1 text-ink">
+      {step === "connect"
+        ? "Connect your accounts"
+        : "Set up payouts (about 2 min)"}
+    </h1>
+  );
+}
+
+function ConnectStep({ payoutsActive }: { payoutsActive: boolean }) {
+  return (
+    <>
+      <p className="text-body text-ink-2">
+        {`Your profile and your videos. Read-only. ${APP_NAME} never posts.`}
+      </p>
+      {/* P06 adds the provider rows here (ConnectRow, returnTo=/onboarding?step=connect). */}
+      <Button asChild className={PRIMARY}>
+        <Link
+          href={
+            payoutsActive ? "/dashboard/library" : "/onboarding?step=payouts"
+          }
+        >
+          Continue
+        </Link>
+      </Button>
+      <Button asChild variant="tertiary" className={TERTIARY}>
+        <Link href="/onboarding?step=payouts">Skip, I'll upload a video</Link>
+      </Button>
+    </>
+  );
+}
+
+/**
+ * Step 3: publishing never waits for payouts (07 D74). Payouts already on (a judgment call): "Payouts on" and Continue
+ * to the Library; pending: Stripe's line and Continue. Set up payouts is a plain link: the route creates the account.
+ */
+function PayoutsStep({
+  status,
+  currency,
+}: {
+  status: PayoutsStatus;
+  currency: Currency;
+}) {
+  const settled = status === "active" || status === "pending";
+  let actions: ReactNode;
+  if (settled) {
+    actions = (
+      <Button asChild className={PRIMARY}>
+        <Link href="/dashboard/library">Continue</Link>
+      </Button>
+    );
+  } else {
+    actions = (
+      <>
+        <Button asChild className={PRIMARY}>
+          <a href="/api/stripe/onboarding">Set up payouts</a>
+        </Button>
+        <Button asChild variant="tertiary" className={TERTIARY}>
+          <Link href="/dashboard/library">Skip for now</Link>
+        </Button>
+      </>
+    );
+  }
+  return (
+    <>
+      <p className="text-callout text-ink-2">
+        You can publish now. You'll need payouts set up to approve a request.
+      </p>
+      {status === "active" ? (
+        <p className="text-body text-ink">Payouts on</p>
+      ) : null}
+      {status === "pending" ? (
+        <p className="text-body text-ink">Stripe is checking your details.</p>
+      ) : null}
+      <PayoutCurrencyFacts currency={currency} />
+      {actions}
+    </>
+  );
+}
+
+/**
+ * S11 (05 §5.2): /onboarding?step=profile|connect|payouts. Without a profile only the profile step renders; with one,
+ * connect and payouts (07 D38, D93). One centered max-w-reading column at every tier (07 D145).
+ */
+export default async function OnboardingPage({
+  searchParams,
+}: PageProps<"/onboarding">) {
   const user = await requireUser("/onboarding");
+  const { step: param } = await searchParams;
+  const ctx = await getCreatorForApi();
+  const route = resolveOnboardingStep({
+    hasProfile: ctx !== null,
+    step: typeof param === "string" ? param : undefined,
+  });
+  if (route.kind === "redirect") redirect(route.to);
+  const { step } = route;
+
+  let body: ReactNode;
+  if (step === "profile") {
+    body = <ProfileStepForm linkHost={new URL(env.APP_URL).host} />;
+  } else if (step === "connect") {
+    body = (
+      <ConnectStep payoutsActive={ctx?.creator.payoutsStatus === "active"} />
+    );
+  } else if (ctx) {
+    body = (
+      <PayoutsStep
+        status={await refreshPayoutsStatus(ctx.creator.id)}
+        currency={ctx.creator.payoutCurrency}
+      />
+    );
+  }
+
   return (
     <AppShell
       nav={
@@ -20,10 +159,15 @@ export default async function OnboardingPage() {
         />
       }
     >
-      <div className="mx-auto max-w-reading py-6 lg:py-12">
-        <h1 className="text-title-1 text-ink">
-          Welcome. <span className="text-ink-2">Pick your handle.</span>
-        </h1>
+      <div className="mx-auto flex w-full max-w-reading flex-col gap-6 py-6 lg:py-12">
+        <div className="flex flex-col gap-4">
+          <Heading step={step} />
+          <Stepper
+            steps={ONBOARDING_STEP_LABELS}
+            current={ONBOARDING_STEPS.indexOf(step)}
+          />
+        </div>
+        {body}
       </div>
     </AppShell>
   );

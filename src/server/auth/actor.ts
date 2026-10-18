@@ -1,5 +1,5 @@
-// Who did something (02 §5). The audit writer maps it to audit_event.actor_type (07 D47). No guardian actor or source:
-// the teen flow is Later (07 D93).
+// Who did something (02 §5). The audit writer maps it to audit_event.actor_type (07 D47). The teen flow is Later
+// (07 D93), so it has no actor or source here.
 export type Actor =
   | { kind: "creator"; userId: string; creatorId: string }
   | { kind: "admin"; userId: string }

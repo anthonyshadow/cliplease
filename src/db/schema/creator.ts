@@ -28,7 +28,7 @@ export const creatorProfile = pgTable(
       .references(() => user.id, { onDelete: "restrict" }),
     handle: text("handle").notNull(), // lowercase, no "@"; immutable in the prototype (07 D20)
     displayName: text("display_name").notNull(),
-    // 18+ only (07 D93): no date of birth, no age band; under-18 cannot continue and nothing is saved.
+    // 18+ only (07 D93): only the time of the "I'm 18 or older" tick is stored; without the tick nothing is saved.
     ageConfirmedAt: tstz("age_confirmed_at").notNull(), // time the creator ticked "I'm 18 or older" (07 D93)
     timeZone: text("time_zone").notNull().default("UTC"), // IANA zone from the device at onboarding (normalizeTimeZone); emails only (07 D84)
     approvalWindowHours: smallint("approval_window_hours")

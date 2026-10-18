@@ -1,4 +1,4 @@
-// The license snapshot stored in license.snapshot (03 §3.7.2, 07 §8.2: no guardianName; amounts carry the currency).
+// The license snapshot stored in license.snapshot (03 §3.7.2, 07 §8.2: the creator is an adult; amounts carry the currency).
 // Type only: license issuing (P18) adds the Zod schema. Client-safe.
 import type {
   Currency,
@@ -16,7 +16,7 @@ export type LicenseSnapshotV1 = {
   startsAt: string;
   endsAt: string | null; // ISO UTC
   licensee: { name: string }; // public
-  creator: { handle: string; displayName: string }; // at issue time (no guardianName, 07 D93)
+  creator: { handle: string; displayName: string }; // at issue time (adult creators only, 07 D93)
   // From the primary verified posting: is_source, else the lowest-position verified one (07 D70, D71)
   ownership:
     | {

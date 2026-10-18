@@ -44,6 +44,10 @@ const nextConfig: NextConfig = {
       { source: "/admin/:path*", headers: NOINDEX },
     ];
   },
+  // /@handle is served by /u/[handle] (02 §4.3; afterFiles, the array form). Never redirect /u/* to /@*.
+  async rewrites() {
+    return [{ source: "/@:handle", destination: "/u/:handle" }];
+  },
   experimental: {
     serverActions: {
       bodySizeLimit: "1mb",

@@ -1,5 +1,6 @@
 "use client";
 
+import { Button } from "@/components/ui/button";
 import { MenuItem } from "@/components/ui/menu";
 import { authClient } from "@/lib/auth-client";
 
@@ -27,5 +28,18 @@ export function SignOutButton() {
     >
       Sign out
     </button>
+  );
+}
+
+/** Settings' Account section: a secondary button (05 §6.11 callout 6). */
+export function SignOutSettingsButton() {
+  return (
+    <Button
+      variant="secondary"
+      className="self-start"
+      onClick={() => void signOutAndLeave()}
+    >
+      Sign out
+    </Button>
   );
 }

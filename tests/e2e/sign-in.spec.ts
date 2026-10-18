@@ -205,7 +205,7 @@ test.describe("sign-in form", () => {
     ).toBeVisible();
     expect(verifies.count).toBe(0);
     await field.press("Enter");
-    await page.waitForURL("/onboarding");
+    await page.waitForURL("/onboarding?step=profile");
     expect(verifies.count).toBe(1);
     // A brand-new session isn't due for its daily extension: SessionRefresh stays quiet.
     await page.waitForLoadState("networkidle");
@@ -226,7 +226,7 @@ test.describe("sign-in form", () => {
     await page
       .getByLabel("Code", { exact: true })
       .fill(await readSignInCode(email, since));
-    await page.waitForURL("/onboarding");
+    await page.waitForURL("/onboarding?step=profile");
   });
 
   test("Use a different email goes back to step 1", async ({
@@ -250,7 +250,7 @@ test.describe("signed in", () => {
     ]);
     const verifies = countRequests(page, VERIFY_PATH);
     await signInWithEmail(page, uniqueEmail(testInfo));
-    await expect(page).toHaveURL("/onboarding");
+    await expect(page).toHaveURL("/onboarding?step=profile");
     // The app's pages sit on canvas-alt (04 §3).
     await expect(page.locator("html")).toHaveCSS(
       "background-color",
@@ -265,7 +265,7 @@ test.describe("signed in", () => {
     expect(verifies.count).toBe(1);
 
     await page.goto("/sign-in?next=%2Fonboarding");
-    await expect(page).toHaveURL("/onboarding");
+    await expect(page).toHaveURL("/onboarding?step=profile");
 
     const admin = await page.goto("/admin");
     expect(admin?.status()).toBe(404);
@@ -324,7 +324,7 @@ test.describe("signed in", () => {
   }, testInfo) => {
     const errors = collectConsoleErrors(page);
     await signInWithEmail(page, uniqueEmail(testInfo));
-    await expect(page).toHaveURL("/onboarding");
+    await expect(page).toHaveURL("/onboarding?step=profile");
     await expectRefreshWhenDue(page, "/onboarding");
     expect(errors).toEqual([]);
   });
