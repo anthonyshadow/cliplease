@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
+import { CONNECT_PAGE_LINE } from "@/components/connections/connect-messages";
+import { ConnectSection } from "@/components/connections/connect-section";
 import { AppShell } from "@/components/layout/app-shell";
 import { READING_COLUMN } from "@/components/layout/gutter";
 import { NavBar } from "@/components/layout/nav-bar";
@@ -10,7 +12,6 @@ import { PayoutCurrencyFacts } from "@/components/payouts/payout-currency-facts"
 import { Button } from "@/components/ui/button";
 import { PRIMARY_WIDTH } from "@/components/ui/primary-width";
 import { Stepper } from "@/components/ui/stepper";
-import { APP_NAME } from "@/lib/app-name";
 import type { Currency, PayoutsStatus } from "@/lib/domain/values";
 import {
   ONBOARDING_STEP_LABELS,
@@ -19,9 +20,11 @@ import {
   resolveOnboardingStep,
 } from "@/lib/onboarding";
 import { PAYOUTS_STATUS_LABEL } from "@/lib/payouts";
-import { getCreatorForApi, requireUser } from "@/server/auth/session";
+import { getCreatorForApi, requireUser, toActor } from "@/server/auth/session";
 import { refreshPayoutsStatus } from "@/server/creators/profile";
 import { env } from "@/server/env";
+import { listAccountSummaries } from "@/server/library/queries";
+import { enabledPlatforms } from "@/server/social/registry";
 import { ProfileStepForm } from "./profile-step-form";
 
 export const metadata: Metadata = { title: "Welcome" };
@@ -46,13 +49,18 @@ function Heading({ step }: { step: OnboardingStep }) {
   );
 }
 
-function ConnectStep({ payoutsActive }: { payoutsActive: boolean }) {
+/** Step 2: link a platform (`children`, the ConnectSection), then Continue, or skip it and upload. A connect comes back here (07 D37). */
+function ConnectStep({
+  payoutsActive,
+  children,
+}: {
+  payoutsActive: boolean;
+  children: ReactNode;
+}) {
   return (
     <>
-      <p className="text-body text-ink-2">
-        {`Your profile and your videos. Read-only. ${APP_NAME} never posts.`}
-      </p>
-      {/* P06 adds the provider rows here (ConnectRow, returnTo=/onboarding?step=connect). */}
+      <p className="text-body text-ink-2">{CONNECT_PAGE_LINE}</p>
+      {children}
       <Button asChild className={PRIMARY_WIDTH}>
         <Link
           href={
@@ -125,7 +133,7 @@ export default async function OnboardingPage({
   searchParams,
 }: PageProps<"/onboarding">) {
   const user = await requireUser("/onboarding");
-  const { step: param } = await searchParams;
+  const { step: param, error, connected } = await searchParams;
   const ctx = await getCreatorForApi();
   const route = resolveOnboardingStep({
     hasProfile: ctx !== null,
@@ -137,9 +145,17 @@ export default async function OnboardingPage({
   let body: ReactNode;
   if (step === "profile") {
     body = <ProfileStepForm linkHost={new URL(env.APP_URL).host} />;
-  } else if (step === "connect") {
+  } else if (step === "connect" && ctx) {
     body = (
-      <ConnectStep payoutsActive={ctx?.creator.payoutsStatus === "active"} />
+      <ConnectStep payoutsActive={ctx.creator.payoutsStatus === "active"}>
+        <ConnectSection
+          platforms={enabledPlatforms()}
+          accounts={await listAccountSummaries(toActor(ctx))}
+          returnTo="/onboarding?step=connect"
+          error={error}
+          connected={connected}
+        />
+      </ConnectStep>
     );
   } else if (ctx) {
     body = (

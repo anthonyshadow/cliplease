@@ -1,11 +1,17 @@
 import type { Page, Request } from "@playwright/test";
 
-/** Presses the button `name` with the keyboard: on the iPhone a click near the bottom can land on the fixed TabBar. */
-export async function pressButton(page: Page, name: string) {
-  const control = page.getByRole("button", { name, exact: true });
+/** Focuses the control and presses Enter: on the iPhone a click near the bottom can land on the fixed TabBar. */
+async function pressControl(page: Page, role: "button" | "link", name: string) {
+  const control = page.getByRole(role, { name, exact: true });
   await control.focus();
   await control.press("Enter");
 }
+
+export const pressButton = (page: Page, name: string) =>
+  pressControl(page, "button", name);
+
+export const pressLink = (page: Page, name: string) =>
+  pressControl(page, "link", name);
 
 const isServerAction = (request: Request) =>
   request.method() === "POST" && request.headers()["next-action"] !== undefined;

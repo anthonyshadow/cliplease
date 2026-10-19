@@ -8,10 +8,11 @@ import {
   expectReadingPage,
   TIERS,
 } from "./helpers/layout";
-import { pressAndSettle } from "./helpers/press";
+import { pressAndSettle, pressLink } from "./helpers/press";
 
-// G.6 for P05's pages (07 D154), on all four projects: each test signs up its own creator with signUpCreator. The
-// profile step stays in responsive.spec.ts (its /onboarding route lands on ?step=profile).
+// G.6 for P05's and P06's pages (07 D154), on all four projects: each test signs up its own creator with signUpCreator.
+// The profile step stays in responsive.spec.ts (its /onboarding route lands on ?step=profile). P08 moves the Connections
+// checks into its own connections.responsive.spec.ts.
 test.use({ reducedMotion: "reduce" });
 
 // 43 characters, no break opportunity.
@@ -60,6 +61,66 @@ test("G.6: the connect and payouts steps keep one centered 640 px column at ever
       expectReadingPage(page, width),
     );
   }
+  expect(errors).toEqual([]);
+});
+
+const CONNECTED_TOAST = "Demo connected. Showing your latest videos.";
+const DEMO_LINE = "@demo.creator · Demo · Connected";
+
+/** Checks the Connect Demo link carries `returnTo`, follows it and waits for the toast back on `returnTo`. */
+async function connectDemo(page: Page, returnTo: string) {
+  await expect(
+    page.getByRole("link", { name: "Connect Demo" }),
+  ).toHaveAttribute(
+    "href",
+    `/api/connect/mock/start?returnTo=${encodeURIComponent(returnTo)}`,
+  );
+  await pressLink(page, "Connect Demo");
+  const back = new URL(returnTo, "http://x");
+  back.searchParams.set("connected", "mock");
+  await page.waitForURL(`${back.pathname}${back.search}`);
+  await expect(page.getByText(CONNECTED_TOAST, { exact: true })).toBeVisible();
+}
+
+test("G.6: a Demo connect from onboarding comes back to the connect step, which keeps its centered column", async ({
+  page,
+}, testInfo) => {
+  const errors = collectConsoleErrors(page);
+  await signUpCreator(page);
+  await page.goto("/onboarding?step=connect");
+  await connectDemo(page, "/onboarding?step=connect");
+  await atEveryWidth(page, testInfo, async ({ width }) => {
+    await expectReadingPage(page, width);
+    await expect(page.getByText(DEMO_LINE)).toBeVisible();
+  });
+  expect(errors).toEqual([]);
+});
+
+test("G.6: Connections keeps a left-aligned 640 px column, and a connect comes back to it", async ({
+  page,
+}, testInfo) => {
+  const errors = collectConsoleErrors(page);
+  await signUpCreator(page);
+  await page.goto("/dashboard/connections");
+  await expect(
+    page.getByRole("heading", { level: 1, name: /^Connections\./ }),
+  ).toBeVisible();
+  await connectDemo(page, "/dashboard/connections");
+  await expect(page.getByText(DEMO_LINE)).toBeVisible();
+  // The page never carries a token (07 D37).
+  const html = await (await page.request.get("/dashboard/connections")).text();
+  expect(html).not.toMatch(/mock_(access|refresh)_/);
+
+  // The longest error message, with the account line and the row, at every width.
+  await page.goto("/dashboard/connections?error=already_linked");
+  const banner = page.getByText(/is already connected to another/);
+  await atEveryWidth(page, testInfo, async ({ width }) => {
+    await expectPageFrame(page, width, { banner: true });
+    await expectSettingsColumn(page, width);
+    await expectCreatorChrome(page, width);
+    await expect(banner).toBeVisible();
+    await expect(page.getByText(DEMO_LINE)).toBeVisible();
+  });
   expect(errors).toEqual([]);
 });
 

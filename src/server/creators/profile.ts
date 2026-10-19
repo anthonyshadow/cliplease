@@ -12,7 +12,7 @@ import { handleProblem } from "@/lib/validation/handle";
 import { displayNameSchema } from "@/lib/validation/profile";
 import { normalizeTimeZone } from "@/lib/validation/time-zone";
 import { writeAudit } from "@/server/audit";
-import type { Actor } from "@/server/auth/actor";
+import { type Actor, requireCreatorActor } from "@/server/auth/actor";
 import type { SessionUser } from "@/server/auth/session";
 import { uniqueViolationConstraint } from "@/server/db-errors";
 import { paymentsDriver } from "@/server/payments/registry";
@@ -37,11 +37,6 @@ export class OnboardingError extends Error {
 function cleanDisplayName(raw: string): string | null {
   const parsed = displayNameSchema.safeParse({ displayName: raw });
   return parsed.success ? parsed.data.displayName : null;
-}
-
-function requireCreatorActor(a: Actor) {
-  if (a.kind !== "creator") throw new Error("a creator actor is required");
-  return a;
 }
 
 /**

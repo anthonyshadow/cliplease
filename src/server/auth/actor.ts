@@ -1,3 +1,5 @@
+import "server-only";
+
 // Who did something (02 §5). The audit writer maps it to audit_event.actor_type (07 D47). The teen flow is Later
 // (07 D93), so it has no actor or source here.
 export type Actor =
@@ -17,3 +19,11 @@ export type Actor =
         | "auto_approve"
         | "renewals";
     };
+
+export type CreatorActor = Extract<Actor, { kind: "creator" }>;
+
+/** `a` as a creator actor; any other actor here is a programming error. */
+export function requireCreatorActor(a: Actor): CreatorActor {
+  if (a.kind !== "creator") throw new Error("a creator actor is required");
+  return a;
+}

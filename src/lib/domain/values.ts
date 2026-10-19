@@ -285,3 +285,11 @@ export type RenewalReservationReason =
   (typeof RENEWAL_RESERVATION_REASONS)[number];
 export type RenewalReservationStatus =
   (typeof RENEWAL_RESERVATION_STATUSES)[number];
+
+/** Narrows `value` (a query or form value, say) to one of `tuple`'s members. */
+export function isOneOf<const T extends readonly string[]>(
+  tuple: T,
+  value: string,
+): value is T[number] {
+  return (tuple as readonly string[]).includes(value);
+}
