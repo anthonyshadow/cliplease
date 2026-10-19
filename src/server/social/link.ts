@@ -7,7 +7,7 @@ import type { SocialProviderId } from "../../lib/domain/values";
 import { writeAudit } from "../audit";
 import type { Actor } from "../auth/actor";
 import { uniqueViolationConstraint } from "../db-errors";
-import { logEvent } from "../log";
+import { errorName, logEvent } from "../log";
 import { AlreadyLinkedError } from "./errors";
 import { sealTokenColumns, tokenUpdateColumns } from "./tokens";
 import type { SocialProfile, SocialProvider, TokenSet } from "./types";
@@ -16,6 +16,17 @@ import type { SocialProfile, SocialProvider, TokenSet } from "./types";
 // columns once, here (03 DB1): externalAccountId → provider_account_id.
 
 type LinkResult = { socialAccountId: string; created: boolean };
+
+/** The profile columns an adapter's SocialProfile fills; a connect and every sync write them (03 DB1). */
+export function profileColumns(profile: SocialProfile) {
+  return {
+    username: profile.username,
+    displayName: profile.displayName,
+    avatarUrl: profile.avatarUrl,
+    profileUrl: profile.profileUrl,
+    accountType: profile.accountType,
+  };
+}
 
 type LinkInput = {
   creatorId: string;
@@ -79,13 +90,7 @@ function linkOnce({
     }
 
     const now = new Date();
-    const profileColumns = {
-      username: profile.username,
-      displayName: profile.displayName,
-      avatarUrl: profile.avatarUrl,
-      profileUrl: profile.profileUrl,
-      accountType: profile.accountType,
-    };
+    const profileFields = profileColumns(profile);
     const own = rows[0];
     const socialAccountId = own?.id ?? randomUUID();
     if (own) {
@@ -94,7 +99,7 @@ function linkOnce({
         .update(socialAccount)
         .set({
           ...tokenUpdateColumns(own.id, tokens, now),
-          ...profileColumns,
+          ...profileFields,
           status: "connected",
           connectedAt: now,
           disconnectedAt: null,
@@ -113,7 +118,7 @@ function linkOnce({
         creatorId,
         provider: platform,
         providerAccountId: profile.externalAccountId,
-        ...profileColumns,
+        ...profileFields,
         ...sealTokenColumns(socialAccountId, tokens, now),
         status: "connected",
         connectedAt: now,
@@ -141,7 +146,7 @@ export async function revokeQuietly(
   } catch (error) {
     logEvent("warn", "social.revoke_failed", {
       provider: provider.platform,
-      error: error instanceof Error ? error.name : "unknown",
+      error: errorName(error),
     });
   }
 }

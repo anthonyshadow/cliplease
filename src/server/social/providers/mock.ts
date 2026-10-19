@@ -64,15 +64,40 @@ function tokenSuffix(token: string | null, kind: "access" | "refresh"): string {
 
 const nonce = () => randomBytes(8).toString("hex");
 
-function tokenPair(suffix: string, scopes: string[]): TokenSet {
-  const now = Date.now();
+/** A token set in the mock's format: the access token lasts an hour unless `accessTokenExpiresAt` says otherwise. */
+function tokenSet(
+  suffix: string,
+  tags: { access: string; refresh: string },
+  accessTokenExpiresAt = new Date(Date.now() + HOUR_MS),
+): TokenSet {
   return {
-    accessToken: `mock_access_${suffix}_${nonce()}`,
-    accessTokenExpiresAt: new Date(now + HOUR_MS),
-    refreshToken: `mock_refresh_${suffix}_${nonce()}`,
-    refreshTokenExpiresAt: new Date(now + 30 * DAY_MS),
-    scopes,
+    accessToken: `mock_access_${suffix}_${tags.access}`,
+    accessTokenExpiresAt,
+    refreshToken: `mock_refresh_${suffix}_${tags.refresh}`,
+    refreshTokenExpiresAt: new Date(Date.now() + 30 * DAY_MS),
+    scopes: ["mock.read"],
   };
+}
+
+const tokenPair = (suffix: string, scopes: string[]): TokenSet => ({
+  ...tokenSet(suffix, { access: nonce(), refresh: nonce() }),
+  scopes,
+});
+
+/**
+ * Tokens the mock accepts for `userId`'s Demo account, as an exchange would issue them (`tag` in place of the random
+ * part): for the P09 seed and tests, which seal them with sealTokenColumns.
+ */
+export function mockTokensFor(
+  userId: string,
+  tag: string,
+  opts: { second?: boolean; accessTokenExpiresAt?: Date } = {},
+): TokenSet {
+  return tokenSet(
+    ownSuffix(userId, opts.second ?? false),
+    { access: tag, refresh: tag },
+    opts.accessTokenExpiresAt,
+  );
 }
 
 const pad = (n: number) => String(n).padStart(2, "0");

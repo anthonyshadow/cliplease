@@ -63,6 +63,33 @@ export async function expectWithinCap(locator: Locator, maxPx: number) {
   expect(Math.abs(left - (clientWidth - right))).toBeLessThanOrEqual(1);
 }
 
+/** A control keeps a 44 × 44 px target at every tier (07 D152): its own box, or the hit-44 ::after around a smaller one. */
+export async function expectTouchTarget(control: Locator) {
+  const { width, height } = await control.evaluate((el) => {
+    const box = el.getBoundingClientRect();
+    const hit = getComputedStyle(el, "::after");
+    return {
+      width: Math.max(box.width, Number.parseFloat(hit.width) || 0),
+      height: Math.max(box.height, Number.parseFloat(hit.height) || 0),
+    };
+  });
+  expect(width).toBeGreaterThanOrEqual(44);
+  expect(height).toBeGreaterThanOrEqual(44);
+}
+
+/** The element sits inside its reading column (`.max-w-reading`) from left to right, within 1 px. */
+export async function expectInsideColumn(locator: Locator) {
+  const box = await locator.evaluate((el) => {
+    const column = el.closest(".max-w-reading");
+    if (!column) throw new Error("no .max-w-reading column around the element");
+    const own = el.getBoundingClientRect();
+    const outer = column.getBoundingClientRect();
+    return { left: own.left - outer.left, right: outer.right - own.right };
+  });
+  expect(box.left).toBeGreaterThanOrEqual(-1);
+  expect(box.right).toBeGreaterThanOrEqual(-1);
+}
+
 /** The app column's cap: 1200 px, 1440 px from XL (07 D145). */
 export const appCap = (width: number) => (tierAt(width) === "xl" ? 1440 : 1200);
 

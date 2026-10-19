@@ -4,8 +4,10 @@ import { signUpCreator, uniqueLongHandle } from "./helpers/creator";
 import {
   atEveryWidth,
   expectCreatorChrome,
+  expectInsideColumn,
   expectPageFrame,
   expectReadingPage,
+  expectTouchTarget,
   TIERS,
 } from "./helpers/layout";
 import { pressAndSettle, pressLink } from "./helpers/press";
@@ -66,6 +68,8 @@ test("G.6: the connect and payouts steps keep one centered 640 px column at ever
 
 const CONNECTED_TOAST = "Demo connected. Showing your latest videos.";
 const DEMO_LINE = "@demo.creator · Demo · Connected";
+// The callback's first sync (P07, 07 D13); a slow run can read "1 min ago".
+const SYNC_LINE = /^Synced (just now|\d+ min ago) · 24 videos$/;
 
 /** Checks the Connect Demo link carries `returnTo`, follows it and waits for the toast back on `returnTo`. */
 async function connectDemo(page: Page, returnTo: string) {
@@ -89,9 +93,12 @@ test("G.6: a Demo connect from onboarding comes back to the connect step, which 
   await signUpCreator(page);
   await page.goto("/onboarding?step=connect");
   await connectDemo(page, "/onboarding?step=connect");
+  // Onboarding shows the sync status but no Sync now (P08 Task 3).
+  await expect(page.getByRole("button", { name: "Sync now" })).toHaveCount(0);
   await atEveryWidth(page, testInfo, async ({ width }) => {
     await expectReadingPage(page, width);
     await expect(page.getByText(DEMO_LINE)).toBeVisible();
+    await expect(page.getByText(SYNC_LINE)).toBeVisible();
   });
   expect(errors).toEqual([]);
 });
@@ -107,11 +114,19 @@ test("G.6: Connections keeps a left-aligned 640 px column, and a connect comes b
   ).toBeVisible();
   await connectDemo(page, "/dashboard/connections");
   await expect(page.getByText(DEMO_LINE)).toBeVisible();
+  await expect(page.getByText(SYNC_LINE)).toBeVisible();
+  // Sync now can be pressed, its action completes, and the button comes back ready with the status line still there.
+  // The [int] suite proves what the action does (sync.test.ts: "syncAccount syncs the creator's account").
+  await pressAndSettle(page, "Sync now");
+  const syncNow = page.getByRole("button", { name: "Sync now", exact: true });
+  await expect(syncNow).toBeEnabled();
+  await expect(syncNow).not.toHaveAttribute("aria-busy", "true");
+  await expect(page.getByText(SYNC_LINE)).toBeVisible();
   // The page never carries a token (07 D37).
   const html = await (await page.request.get("/dashboard/connections")).text();
   expect(html).not.toMatch(/mock_(access|refresh)_/);
 
-  // The longest error message, with the account line and the row, at every width.
+  // The longest error message, with the account, its sync status, Sync now and the row, at every width.
   await page.goto("/dashboard/connections?error=already_linked");
   const banner = page.getByText(/is already connected to another/);
   await atEveryWidth(page, testInfo, async ({ width }) => {
@@ -120,6 +135,10 @@ test("G.6: Connections keeps a left-aligned 640 px column, and a connect comes b
     await expectCreatorChrome(page, width);
     await expect(banner).toBeVisible();
     await expect(page.getByText(DEMO_LINE)).toBeVisible();
+    await expect(page.getByText(SYNC_LINE)).toBeVisible();
+    await expect(syncNow).toBeVisible();
+    await expectInsideColumn(syncNow);
+    await expectTouchTarget(syncNow);
   });
   expect(errors).toEqual([]);
 });

@@ -1,9 +1,9 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import type { ConnectErrorCode } from "@/lib/domain/values";
-import { getCreatorForApi } from "@/server/auth/session";
+import { getCreatorForApi, toActor } from "@/server/auth/session";
 import { env } from "@/server/env";
-import { logEvent } from "@/server/log";
+import { errorName, logEvent } from "@/server/log";
 import { AlreadyLinkedError } from "@/server/social/errors";
 import { linkAccount, revokeQuietly } from "@/server/social/link";
 import {
@@ -14,11 +14,15 @@ import {
   stateMatches,
 } from "@/server/social/oauth-state";
 import { getProvider, redirectUriFor } from "@/server/social/registry";
+import { syncSocialAccount } from "@/server/social/sync";
 
 // Connect, step 2 (02 §7.2, 07 D37). A cookie that is missing, tampered, too old, for another provider, another state or
 // another signed-in user lands on Connections with error=state before any token exchange; every later outcome goes back
-// to the returnTo the connect started from, with ?connected= or ?error=. The cookie is deleted on every outcome. Never
-// logs the code, a token or the cookie.
+// to the returnTo the connect started from, with ?connected= or ?error=. A linked account gets its first sync before the
+// redirect (07 D13). The cookie is deleted on every outcome. Never logs the code, a token or the cookie.
+
+/** The first sync (07 D13): up to 50 kept videos within 8 s; Sync now fetches the rest. */
+const FIRST_SYNC = { maxPosts: 50, budgetMs: 8000 } as const;
 
 const callbackQuery = z.object({
   code: z.string().max(2048).nullable(),
@@ -97,20 +101,31 @@ async function landing(request: NextRequest, param: string): Promise<URL> {
 
   const profile = await orNull(() => provider.getProfile(tokens.accessToken));
   if (!profile) return fail("provider_error");
+  let socialAccountId: string;
   try {
-    await linkAccount({
+    ({ socialAccountId } = await linkAccount({
       creatorId: creator.creator.id,
       platform: provider.platform,
       tokens: { ...tokens, scopes },
       profile,
-    });
+    }));
   } catch (err) {
     if (err instanceof AlreadyLinkedError) return refuse("already_linked");
     logEvent("error", "social.connect_failed", {
       provider: provider.platform,
-      reason: err instanceof Error ? err.name : "unknown",
+      reason: errorName(err),
     });
     return fail("provider_error");
+  }
+  // The account is linked whatever the first sync returns: its outcome is on the row (07 D02), and Sync now retries.
+  // The creator actor, not 02 §7.2's system: the session is here, and Actor has no callback source.
+  try {
+    await syncSocialAccount(socialAccountId, toActor(creator), FIRST_SYNC);
+  } catch (err) {
+    logEvent("error", "social.first_sync_failed", {
+      provider: provider.platform,
+      reason: errorName(err),
+    });
   }
   return backTo("connected", provider.platform);
 }
@@ -124,7 +139,7 @@ export async function GET(
     target = await landing(request, (await ctx.params).provider);
   } catch (error) {
     logEvent("error", "social.connect_failed", {
-      reason: error instanceof Error ? error.name : "unknown",
+      reason: errorName(error),
     });
     target = connectionsUrl("provider_error");
   }

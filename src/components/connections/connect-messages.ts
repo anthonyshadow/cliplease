@@ -9,6 +9,7 @@ import {
   type SocialAccountStatus,
   type SocialProviderId,
 } from "@/lib/domain/values";
+import { formatRelative } from "@/lib/format";
 
 /** The line both connect pages show once, above the rows (04 §11.7, §9.17). */
 export const CONNECT_PAGE_LINE = `Your profile and your videos. Read-only. ${APP_NAME} never posts.`;
@@ -67,6 +68,19 @@ export function accountLine(a: {
 }): string {
   const name = a.username ? `@${a.username}` : (a.displayName ?? "");
   return `${name} · ${PLATFORM_LABELS[a.platform]} · ${STATUS_LABELS[a.status]}`;
+}
+
+/**
+ * The sync status under an account (04 §11.8, §9.18): "Synced just now · 24 videos", "Synced 3 min ago · 1 video"
+ * (owner answer Q-16 a). Null before the first sync has finished.
+ */
+export function syncLine(
+  a: { lastSyncedAt: string | null; postCount: number },
+  now: Date,
+): string | null {
+  if (a.lastSyncedAt === null) return null;
+  const videos = `${a.postCount} ${a.postCount === 1 ? "video" : "videos"}`;
+  return `${formatRelative(new Date(a.lastSyncedAt), now)} · ${videos}`;
 }
 
 /** The start route for `platform`, coming back to `returnTo` (encoded once, by URLSearchParams). */

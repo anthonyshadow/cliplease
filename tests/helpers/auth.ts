@@ -4,10 +4,11 @@ import { eq } from "drizzle-orm";
 import { db } from "../../src/db/client";
 import { user } from "../../src/db/schema";
 import { auth } from "../../src/server/auth/auth";
-import { randomHex } from "./factories";
+import { insertCreator, randomHex } from "./factories";
+import { mockNextHeaders } from "./next-headers";
 import { readSignInCode } from "./read-latest-email";
 
-export { mockNextHeaders } from "./next-headers";
+export { mockNextHeaders };
 
 export const SESSION_COOKIE_NAME = "better-auth.session_token";
 
@@ -53,4 +54,21 @@ export async function signInWithOtp(email: string): Promise<string> {
     throw new Error(`sign-in failed with ${response.status}`);
   }
   return sessionCookiesOf(response);
+}
+
+export type SignedInCreator = {
+  session: string;
+  userId: string;
+  creatorId: string;
+};
+
+/** A signed-in creator; the session becomes the request headers the gates read (next/headers is mocked). */
+export async function signedInCreator(): Promise<SignedInCreator> {
+  const email = newCreatorEmail();
+  const session = await signInWithOtp(email);
+  const owner = await userByEmail(email);
+  if (!owner) throw new Error("sign-in made no user");
+  const creator = await insertCreator({ userId: owner.id });
+  mockNextHeaders(session);
+  return { session, userId: owner.id, creatorId: creator.id };
 }

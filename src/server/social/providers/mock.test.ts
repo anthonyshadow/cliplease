@@ -8,6 +8,7 @@ import {
   currentMockScenario,
   mockAccountIdFor,
   mockProvider,
+  mockTokensFor,
   setMockScenarioForTests,
 } from "./mock";
 import { MOCK_POSTS, MOCK_THUMB_TONES, mockThumbnailSvg } from "./mock-data";
@@ -78,6 +79,27 @@ describe("identity (07 D36)", () => {
       displayName: "Demo Creator 2",
       avatarUrl: "mock://avatar/02",
     });
+  });
+
+  it("builds the tokens it issues for a user, which it then accepts", async () => {
+    const seed = mockTokensFor("seed_user_maya", "seed");
+    expect(seed).toMatchObject({
+      accessToken: "mock_access_c4180ab2_seed",
+      refreshToken: "mock_refresh_c4180ab2_seed",
+      scopes: ["mock.read"],
+    });
+    expect(
+      (await mockProvider.getProfile(seed.accessToken)).externalAccountId,
+    ).toBe("mock_acct_c4180ab2");
+    const second = mockTokensFor("user-a", "t1", { second: true });
+    expect(
+      (await mockProvider.getProfile(second.accessToken)).externalAccountId,
+    ).toBe(mockAccountIdFor("user-a", true));
+    const expiry = new Date("2026-01-01T00:00:00Z");
+    expect(
+      mockTokensFor("user-a", "t1", { accessTokenExpiresAt: expiry })
+        .accessTokenExpiresAt,
+    ).toBe(expiry);
   });
 
   it("parses the seed's token values", async () => {

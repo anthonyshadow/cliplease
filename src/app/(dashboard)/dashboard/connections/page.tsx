@@ -4,13 +4,18 @@ import { ConnectSection } from "@/components/connections/connect-section";
 import { requireCreator, toActor } from "@/server/auth/session";
 import { listAccountSummaries } from "@/server/library/queries";
 import { enabledPlatforms } from "@/server/social/registry";
+import { SyncNowForm } from "./sync-now-form";
 
 export const metadata: Metadata = { title: "Connections" };
 
+// Sync now calls the platform from this page's Server Action (02 §6.1, 07 D26; Next sets an action's limit on its page).
+export const maxDuration = 60;
+
 /**
- * S13 (05 §6.2), the P06 frame: the page line, the linked accounts and a ConnectRow per enabled platform, in one
- * max-w-reading column left-aligned with the title at every tier (07 D145). A connect started here comes back here with
- * ?connected= or ?error= (07 D37). P08 designs the full screen (cards, Sync now, Reconnect, Disconnect).
+ * S13 (05 §6.2), the P06 frame: the page line, the linked accounts with their sync status and Sync now (P07), and a
+ * ConnectRow per enabled platform, in one max-w-reading column left-aligned with the title at every tier (07 D145). A
+ * connect started here comes back here with ?connected= or ?error= (07 D37). P08 designs the full screen (cards,
+ * SyncButton, Reconnect, Disconnect).
  */
 export default async function ConnectionsPage({
   searchParams,
@@ -31,6 +36,12 @@ export default async function ConnectionsPage({
         returnTo="/dashboard/connections"
         error={error}
         connected={connected}
+        accountAction={(account, lineId) =>
+          // A needs_reconnect account can't sync (07 D02); P08 gives it Reconnect (04 §9.18).
+          account.status === "connected" ? (
+            <SyncNowForm socialAccountId={account.id} describedBy={lineId} />
+          ) : null
+        }
       />
     </div>
   );

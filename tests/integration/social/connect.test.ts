@@ -1,5 +1,4 @@
-import { and, asc, eq, type SQL } from "drizzle-orm";
-import { NextRequest } from "next/server";
+import { and, asc, eq, sql } from "drizzle-orm";
 import {
   afterAll,
   afterEach,
@@ -9,13 +8,10 @@ import {
   it,
   vi,
 } from "vitest";
-import { GET as callbackGET } from "../../../src/app/api/connect/[provider]/callback/route";
-import { GET as startGET } from "../../../src/app/api/connect/[provider]/start/route";
 import { db } from "../../../src/db/client";
-import { auditEvent, socialAccount } from "../../../src/db/schema";
+import { auditEvent, socialAccount, socialPost } from "../../../src/db/schema";
 import { MINUTE_MS } from "../../../src/lib/time";
 import { decryptSecret } from "../../../src/server/crypto/token-cipher";
-import { env } from "../../../src/server/env";
 import { listAccountSummaries } from "../../../src/server/library/queries";
 import {
   SocialAuthError,
@@ -32,6 +28,7 @@ import {
   setMockScenarioForTests,
 } from "../../../src/server/social/providers/mock";
 import { redirectUriFor } from "../../../src/server/social/registry";
+import { SOCIAL_CACHE_TTL_DAYS } from "../../../src/server/social/sync";
 import {
   accessTokenAad,
   refreshTokenAad,
@@ -39,15 +36,24 @@ import {
 } from "../../../src/server/social/tokens";
 import {
   mockNextHeaders,
-  newCreatorEmail,
-  signInWithOtp,
-  userByEmail,
+  type SignedInCreator,
+  signedInCreator,
 } from "../../helpers/auth";
+import {
+  accountsOf,
+  at,
+  callback,
+  connect,
+  cookieLine,
+  disconnectWhere,
+  FROM_ONBOARDING,
+  location,
+  oauthPair,
+  start,
+} from "../../helpers/connect-flow";
 import { resetDb } from "../../helpers/db";
-import { insertCreator } from "../../helpers/factories";
 
-// The connect round trip (02 §7.2, 07 D37) against the real route handlers: a real session (the gate reads it through
-// next/headers), the sealed cookie carried from start to callback as a browser would, and the mock provider.
+// The connect round trip (02 §7.2, 07 D37) against the real route handlers (tests/helpers/connect-flow.ts).
 vi.mock("next/headers", () => import("../../helpers/next-headers"));
 
 afterAll(resetDb);
@@ -58,75 +64,11 @@ afterEach(() => {
   setMockScenarioForTests(null);
 });
 
-const at = (path: string) => new URL(path, env.APP_URL).href;
-const FROM_ONBOARDING = "?returnTo=%2Fonboarding%3Fstep%3Dconnect";
-const params = (provider: string) => ({
-  params: Promise.resolve({ provider }),
-});
-
-type Creator = { session: string; userId: string; creatorId: string };
-
-/** A signed-in creator; the session becomes the request headers the gates read. */
-async function signedInCreator(): Promise<Creator> {
-  const email = newCreatorEmail();
-  const session = await signInWithOtp(email);
-  const owner = await userByEmail(email);
-  const creator = await insertCreator({ userId: owner.id });
-  mockNextHeaders(session);
-  return { session, userId: owner.id, creatorId: creator.id };
-}
-
-function start(
-  query = "?returnTo=%2Fdashboard%2Fconnections",
-  provider = "mock",
-) {
-  return startGET(
-    new NextRequest(at(`/api/connect/${provider}/start${query}`)),
-    params(provider),
-  );
-}
-
-function callback(url: string, cookie: string | null, provider = "mock") {
-  return callbackGET(
-    new NextRequest(url, cookie ? { headers: { cookie } } : undefined),
-    params(provider),
-  );
-}
-
-/** The response's Set-Cookie line for the oauth cookie. */
-function cookieLine(response: Response): string {
-  const line = response.headers
-    .getSetCookie()
-    .find((l) => l.startsWith(`${OAUTH_COOKIE}=`));
-  if (!line) throw new Error("no oauth Set-Cookie");
-  return line;
-}
-
-/** The `cliplease_oauth=<sealed>` pair a browser sends back. */
-const oauthPair = (response: Response) =>
-  cookieLine(response).split(";")[0] as string;
-
-const location = (response: Response) =>
-  response.headers.get("location") as string;
-
-/** start → callback with the cookie, as the browser follows the mock's redirect. */
-async function connect(query?: string) {
-  const started = await start(query);
-  return callback(location(started), oauthPair(started));
-}
-
 function expectCookieCleared(response: Response) {
   const line = cookieLine(response);
   expect(line).toMatch(/^cliplease_oauth=;/);
   expect(line).toMatch(/Path=\/api\/connect/i);
   expect(line).toMatch(/Expires=Thu, 01 Jan 1970/i);
-}
-
-async function accountsOf(creatorId: string) {
-  return db
-    .select()
-    .from(socialAccount)
-    .where(eq(socialAccount.creatorId, creatorId));
 }
 
 // Bound before any spy, so a second grantScopes still reaches the real exchange.
@@ -137,19 +79,6 @@ function grantScopes(scopes: string[]) {
   return vi
     .spyOn(mockProvider, "exchangeCode")
     .mockImplementation(async (i) => ({ ...(await realExchange(i)), scopes }));
-}
-
-/** Marks the matching rows disconnected, as P08's Disconnect will. */
-function disconnectWhere(where: SQL) {
-  return db
-    .update(socialAccount)
-    .set({
-      status: "disconnected",
-      accessTokenEnc: null,
-      refreshTokenEnc: null,
-      disconnectedAt: new Date(),
-    })
-    .where(where);
 }
 
 async function linkedAudits(socialAccountId: string) {
@@ -587,17 +516,42 @@ describe("listAccountSummaries", () => {
     const other = await signedInCreator();
     await connect();
     const [mine] = await accountsOf(me.creatorId);
-    const actor = (c: Creator) =>
+    const actor = (c: SignedInCreator) =>
       ({ kind: "creator", userId: c.userId, creatorId: c.creatorId }) as const;
+    if (!mine?.lastSyncedAt) throw new Error("the connect didn't sync");
     expect(await listAccountSummaries(actor(me))).toEqual([
       {
-        id: mine?.id,
+        id: mine.id,
         platform: "mock",
         username: "demo.creator",
         displayName: "Demo Creator",
         status: "connected",
+        lastSyncedAt: mine.lastSyncedAt.toISOString(),
+        lastSyncError: null,
+        hasOlder: false,
+        postCount: 24,
       },
     ]);
+
+    // postCount counts what the creator can see (visiblePostsWhere): not a removed post, nor one unseen for 30 days.
+    const [first, second] = await db
+      .select({ id: socialPost.id })
+      .from(socialPost)
+      .where(eq(socialPost.socialAccountId, mine.id))
+      .limit(2);
+    if (!first || !second) throw new Error("no posts");
+    await db
+      .update(socialPost)
+      .set({ status: "removed", removedAt: new Date() })
+      .where(eq(socialPost.id, first.id));
+    await db
+      .update(socialPost)
+      .set({
+        fetchedAt: sql`now() - make_interval(days => ${SOCIAL_CACHE_TTL_DAYS}, mins => 1)`,
+      })
+      .where(eq(socialPost.id, second.id));
+    expect((await listAccountSummaries(actor(me)))[0]?.postCount).toBe(22);
+
     await disconnectWhere(eq(socialAccount.creatorId, me.creatorId));
     expect(await listAccountSummaries(actor(me))).toEqual([]);
     expect(await listAccountSummaries(actor(other))).toHaveLength(1);

@@ -7,6 +7,7 @@ import {
   connectErrorBanner,
   connectedToastMessage,
   connectStartHref,
+  syncLine,
 } from "./connect-messages";
 
 describe("connect messages (05 §6.2, 07 D37)", () => {
@@ -71,5 +72,35 @@ describe("connect messages (05 §6.2, 07 D37)", () => {
     expect(connectStartHref("mock", "/onboarding?step=connect")).toBe(
       "/api/connect/mock/start?returnTo=%2Fonboarding%3Fstep%3Dconnect",
     );
+  });
+});
+
+describe("syncLine (04 §11.8, §9.18; owner answer Q-16 a)", () => {
+  const now = new Date("2026-10-18T12:00:00Z");
+  const ago = (ms: number) => new Date(now.getTime() - ms).toISOString();
+
+  it("reads the time since the sync and the video count", () => {
+    expect(syncLine({ lastSyncedAt: ago(10_000), postCount: 24 }, now)).toBe(
+      "Synced just now · 24 videos",
+    );
+    expect(
+      syncLine({ lastSyncedAt: ago(3 * 60_000), postCount: 24 }, now),
+    ).toBe("Synced 3 min ago · 24 videos");
+    expect(
+      syncLine({ lastSyncedAt: ago(3 * 86_400_000), postCount: 128 }, now),
+    ).toBe("Synced 3 days ago · 128 videos");
+  });
+
+  it("says 1 video, and videos for every other count", () => {
+    expect(syncLine({ lastSyncedAt: ago(0), postCount: 1 }, now)).toBe(
+      "Synced just now · 1 video",
+    );
+    expect(syncLine({ lastSyncedAt: ago(0), postCount: 0 }, now)).toBe(
+      "Synced just now · 0 videos",
+    );
+  });
+
+  it("is null before the first sync has finished", () => {
+    expect(syncLine({ lastSyncedAt: null, postCount: 0 }, now)).toBeNull();
   });
 });
