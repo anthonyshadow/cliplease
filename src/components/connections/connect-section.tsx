@@ -1,71 +1,140 @@
-import type { ReactNode } from "react";
+import { Plus } from "lucide-react";
 import { Banner } from "@/components/ui/banner";
+import { Button } from "@/components/ui/button";
 import { ToastOnMount } from "@/components/ui/toast";
+import { PLATFORM_LABELS } from "@/lib/brand";
 import type { SocialProviderId } from "@/lib/domain/values";
+import { platformMarkFiles } from "@/server/brand-files";
+import type { AccountSummaryDTO } from "@/server/library/queries";
+import { SOCIAL_SYNC_MAX_POSTS } from "@/server/social/sync";
 import {
-  accountLine,
+  accountName,
+  capNote,
+  cardState,
   connectErrorBanner,
   connectedToastMessage,
+  connectStartHref,
+  platformLine,
   syncLine,
 } from "./connect-messages";
 import { ConnectRow } from "./connect-row";
+import {
+  type AccountCardView,
+  ConnectedAccountCard,
+} from "./connected-account-card";
+import { CONNECTIONS_TITLE_ID } from "./connections-header";
+import { StripConnectParams } from "./strip-connect-params";
 
-type Account = Parameters<typeof accountLine>[0] &
-  Parameters<typeof syncLine>[0] & { id: string };
+/** Connections passes each account's live-video count for its Disconnect sheet; onboarding shows no actions. */
+type Variant =
+  | {
+      variant: "connections";
+      accounts: readonly (AccountSummaryDTO & { liveVideoCount: number })[];
+    }
+  | { variant: "onboarding"; accounts: readonly AccountSummaryDTO[] };
 
 /**
- * The connect block shared by onboarding step 2 and Connections (05 §5.2, §6.2): the ?error= Banner, per linked account
- * its line, its sync status and any `accountAction`, a ConnectRow per enabled platform, and the ?connected= toast. P08
- * replaces the account lines with ConnectedAccountCards.
+ * The accounts and connect rows Connections (S13, 05 §6.2) and onboarding step 2 (05 §5.2) share: the ?error= Banner,
+ * then per enabled platform its account cards (and "Connect another …" on Connections) or its ConnectRow, and the
+ * ?connected= toast. Connections has exactly one primary: Reconnect when an account needs it, else the first unlinked
+ * platform's Connect; onboarding has none (Continue is its primary) and shows compact cards.
  */
-export function ConnectSection({
-  platforms,
-  accounts,
-  returnTo,
-  error,
-  connected,
-  accountAction,
-}: {
-  platforms: readonly SocialProviderId[];
-  accounts: readonly Account[];
-  /** Where the connect comes back to: this page. */
-  returnTo: string;
-  error: string | string[] | undefined;
-  connected: string | string[] | undefined;
-  /** A control under the account (Connections: Sync now); `lineId` names the account line it acts on. */
-  accountAction?: (account: Account, lineId: string) => ReactNode;
-}) {
+export function ConnectSection(
+  props: Variant & {
+    platforms: readonly SocialProviderId[];
+    /** Where a connect comes back to: this page. */
+    returnTo: string;
+    error: string | string[] | undefined;
+    connected: string | string[] | undefined;
+  },
+) {
+  const { platforms, returnTo, error, connected } = props;
+  const accounts: readonly (AccountSummaryDTO & { liveVideoCount?: number })[] =
+    props.accounts;
   const banner = connectErrorBanner(error);
   const toast = connectedToastMessage(connected);
+  const marks = platformMarkFiles();
+  const onConnections = props.variant === "connections";
+  const reconnectPrimary = onConnections
+    ? accounts.find(
+        (a) => a.status === "needs_reconnect" && platforms.includes(a.platform),
+      )?.id
+    : undefined;
+  const connectPrimary =
+    onConnections && reconnectPrimary === undefined
+      ? platforms.find((p) => !accounts.some((a) => a.platform === p))
+      : undefined;
   const now = new Date();
+  const view = (
+    a: AccountSummaryDTO & { liveVideoCount?: number },
+  ): AccountCardView => ({
+    id: a.id,
+    platform: a.platform,
+    name: accountName(a),
+    avatarName: a.displayName ?? a.username ?? PLATFORM_LABELS[a.platform],
+    avatarSrc: a.avatarSrc,
+    platformLine: platformLine(a),
+    hasMark: marks[a.platform],
+    state: cardState(a),
+    syncProblem: a.syncProblem,
+    syncText: syncLine(a, now),
+    capNote:
+      a.hasOlder && a.postCount >= SOCIAL_SYNC_MAX_POSTS
+        ? capNote(SOCIAL_SYNC_MAX_POSTS)
+        : null,
+    reconnectHref: connectStartHref(a.platform, returnTo),
+    liveVideoCount: a.liveVideoCount ?? 0,
+    focusAfterRemove: CONNECTIONS_TITLE_ID,
+  });
+
   return (
     <div className="flex flex-col gap-4">
       {banner ? <Banner tone={banner.tone}>{banner.message}</Banner> : null}
-      {accounts.length > 0 ? (
-        <ul className="flex flex-col gap-4">
-          {accounts.map((account) => {
-            const lineId = `account-${account.id}`;
-            const status = syncLine(account, now);
-            return (
-              <li key={account.id} className="flex flex-col items-start gap-1">
-                <span id={lineId} className="text-body text-ink">
-                  {accountLine(account)}
-                </span>
-                {status ? (
-                  <span className="text-footnote text-ink-2 tabular-nums">
-                    {status}
-                  </span>
-                ) : null}
-                {accountAction?.(account, lineId)}
-              </li>
-            );
-          })}
-        </ul>
-      ) : null}
-      {platforms.map((platform) => (
-        <ConnectRow key={platform} platform={platform} returnTo={returnTo} />
-      ))}
+      {platforms.map((platform) => {
+        const own = accounts.filter((a) => a.platform === platform);
+        if (own.length === 0) {
+          return (
+            <ConnectRow
+              key={platform}
+              platform={platform}
+              returnTo={returnTo}
+              primary={platform === connectPrimary}
+              hasMark={marks[platform]}
+            />
+          );
+        }
+        return (
+          <div key={platform} className="flex flex-col gap-4">
+            {own.map((account) => (
+              <ConnectedAccountCard
+                key={account.id}
+                account={view(account)}
+                compact={!onConnections}
+                primary={account.id === reconnectPrimary}
+              />
+            ))}
+            {onConnections ? (
+              <Button
+                asChild
+                variant="tertiary"
+                size="sm"
+                wrap
+                className="self-start"
+              >
+                {/* A full navigation to the start route, never prefetched (07 D41: switch=1 lets the creator pick another account). */}
+                <a
+                  href={connectStartHref(platform, returnTo, { switch: true })}
+                >
+                  <Plus aria-hidden size={16} className="shrink-0" />
+                  Connect another {PLATFORM_LABELS[platform]} account
+                </a>
+              </Button>
+            ) : null}
+          </div>
+        );
+      })}
       {toast ? <ToastOnMount message={toast} /> : null}
+      <StripConnectParams />
     </div>
   );
 }

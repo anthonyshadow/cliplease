@@ -23,6 +23,7 @@ import { isOneOf, SOCIAL_POST_MEDIA_TYPES } from "../../lib/domain/values";
 import { writeAudit } from "../audit";
 import { type Actor, requireCreatorActor } from "../auth/actor";
 import { errorName, logEvent } from "../log";
+import { SYNC_LEASE_MS } from "./connection-state";
 import { SocialAuthError, SocialRateLimitError } from "./errors";
 import { profileColumns } from "./link";
 import { getProvider } from "./registry";
@@ -44,7 +45,7 @@ const OLDER_MAX_POSTS = 50; // Load older videos (07 D13)
 const DEFAULT_BUDGET_MS = 20_000;
 const SYNC_ALL_BUDGET_MS = 25_000;
 const CAPTION_MAX_CHARS = 500;
-const LEASE = sql.raw("interval '2 minutes'");
+const LEASE = sql.raw(`interval '${SYNC_LEASE_MS / 1000} seconds'`);
 const IG_PROFESSIONAL_TYPES = ["Business", "Media_Creator"] as const;
 
 export type SyncMode = "recent" | "older";
@@ -195,7 +196,7 @@ export function visiblePostsWhere(creatorId: string): SQL {
 }
 
 /** A video_posting points at the post: the post is "referenced" (07 D72). Correlated with the outer social_post. */
-const postingOfPost = db
+export const postingOfPost = db
   .select({ one: sql`1` })
   .from(videoPosting)
   .where(eq(videoPosting.socialPostId, socialPost.id));
@@ -213,7 +214,63 @@ type Run = {
   mode: SyncMode;
   maxPosts: number;
   deadline: number;
+  /**
+   * This run's lease. Every write checks the account is still connected and still holds it (owner answer Q-17 a): the
+   * account's own UPDATEs in their WHERE, the post writes under a share lock (whileStillMine).
+   */
+  leasedAt: Date;
 };
+
+/** A run that must stop before writing: the account was disconnected, must reconnect, or another run took over. */
+class RunStopped extends Error {
+  constructor(readonly result: SyncResult) {
+    super("sync_run_stopped");
+    this.name = "RunStopped";
+  }
+}
+
+/** Why the run must stop writing (the account was disconnected, must reconnect, or another run took over), or null. */
+function stopReason(
+  run: Run,
+  row: Pick<SocialAccount, "status" | "syncStartedAt"> | undefined,
+): SyncResult | null {
+  if (!row || row.status === "disconnected") {
+    return { ok: false, reason: "not_found" };
+  }
+  if (row.status === "needs_reconnect") {
+    return { ok: false, reason: "needs_reconnect" };
+  }
+  if (row.syncStartedAt?.getTime() !== run.leasedAt.getTime()) {
+    return { ok: false, reason: "already_syncing" };
+  }
+  return null;
+}
+
+const accountGuard = {
+  status: socialAccount.status,
+  syncStartedAt: socialAccount.syncStartedAt,
+};
+
+/**
+ * Runs the post writes `write` in a transaction that first re-reads the account under a share lock (owner answer Q-17
+ * a): a Disconnect that committed first stops the run before it writes anything back (03 §9.1, §9.3), and one that
+ * comes later waits for this short write and then deletes what it wrote.
+ */
+async function whileStillMine<T>(
+  run: Run,
+  write: (tx: Pick<typeof db, "insert" | "update" | "delete">) => Promise<T>,
+): Promise<T> {
+  return db.transaction(async (tx) => {
+    const [row] = await tx
+      .select(accountGuard)
+      .from(socialAccount)
+      .where(eq(socialAccount.id, run.account.id))
+      .for("share");
+    const stop = stopReason(run, row);
+    if (stop) throw new RunStopped(stop);
+    return write(tx);
+  });
+}
 
 /**
  * Syncs one account (02 §7.5 steps 1–6). A platform failure never throws: it is recorded on the row (07 D02) and
@@ -263,6 +320,7 @@ export async function syncSocialAccount(
         opts.maxPosts ??
         (mode === "older" ? OLDER_MAX_POSTS : SOCIAL_SYNC_MAX_POSTS),
       deadline: Date.now() + (opts.budgetMs ?? DEFAULT_BUDGET_MS),
+      leasedAt,
     });
   } catch (error) {
     result = failure(account, error);
@@ -351,6 +409,7 @@ async function finishRun(
 
 /** 07 D02: an auth failure has marked the account already; a rate limit blocks it; anything else is 'upstream'. */
 function failure(account: SocialAccount, error: unknown): SyncResult {
+  if (error instanceof RunStopped) return error.result;
   if (error instanceof SocialAuthError) {
     return { ok: false, reason: "needs_reconnect" };
   }
@@ -375,10 +434,27 @@ async function runSync(run: Run): Promise<SyncResult> {
   const profile = await withAccessToken(account.id, (token) =>
     provider.getProfile(token),
   );
-  await db
+  // One UPDATE that checks the run may still write (Q-17 a); it waits for a Disconnect in progress like the lock would.
+  const [saved] = await db
     .update(socialAccount)
     .set(profileColumns(profile))
-    .where(eq(socialAccount.id, account.id));
+    .where(
+      and(
+        eq(socialAccount.id, account.id),
+        eq(socialAccount.status, "connected"),
+        eq(socialAccount.syncStartedAt, run.leasedAt),
+      ),
+    )
+    .returning({ id: socialAccount.id });
+  if (!saved) {
+    const [row] = await db
+      .select(accountGuard)
+      .from(socialAccount)
+      .where(eq(socialAccount.id, account.id));
+    throw new RunStopped(
+      stopReason(run, row) ?? { ok: false, reason: "already_syncing" },
+    );
+  }
   if (lostProfessionalAccount(account.provider, profile.accountType)) {
     await markNeedsReconnect(account.id);
     return { ok: false, reason: "needs_reconnect" };
@@ -429,7 +505,12 @@ async function listPages(run: Run, now: Date, before: Date | null) {
     );
     const videos = listing.posts.filter(isKeptVideo);
     const taken = videos.slice(0, run.maxPosts - totals.kept);
-    const written = await upsertPosts(db, account, taken, now);
+    const written =
+      taken.length === 0
+        ? { upserted: 0, added: 0 }
+        : await whileStillMine(run, (tx) =>
+            upsertPosts(tx, account, taken, now),
+          );
     totals.fetched += listing.posts.length;
     totals.kept += taken.length;
     totals.upserted += written.upserted;
@@ -473,16 +554,18 @@ async function sweep(
   );
   // Disjoint sets (unreferenced vs referenced), so the two run together.
   const [deleted, suspects] = await Promise.all([
-    db
-      .delete(socialPost)
-      .where(
-        and(
-          absent,
-          oldestSeen ? gte(socialPost.postedAt, oldestSeen) : undefined,
-          notExists(postingOfPost),
-        ),
-      )
-      .returning({ id: socialPost.id }),
+    whileStillMine(run, (tx) =>
+      tx
+        .delete(socialPost)
+        .where(
+          and(
+            absent,
+            oldestSeen ? gte(socialPost.postedAt, oldestSeen) : undefined,
+            notExists(postingOfPost),
+          ),
+        )
+        .returning({ id: socialPost.id }),
+    ),
     db
       .select({ id: socialPost.id, providerPostId: socialPost.providerPostId })
       .from(socialPost)
@@ -523,7 +606,7 @@ async function isGone(run: Run, providerPostId: string): Promise<boolean> {
 async function markRemoved(run: Run, ids: string[]): Promise<number> {
   if (ids.length === 0) return 0;
   const accountId = run.account.id;
-  return db.transaction(async (tx) => {
+  return whileStillMine(run, async (tx) => {
     const rows = await tx
       .update(socialPost)
       .set({ status: "removed", removedAt: new Date() })

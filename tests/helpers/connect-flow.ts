@@ -3,13 +3,14 @@
 // vi.mock("next/headers", () => import("../../helpers/next-headers"))), with the sealed cookie carried from start to
 // callback as a browser would; or a connected account inserted directly, and the reads around it.
 import { randomUUID } from "node:crypto";
-import { eq, type SQL } from "drizzle-orm";
+import { and, asc, eq, type SQL } from "drizzle-orm";
 import { NextRequest } from "next/server";
 import { GET as callbackGET } from "../../src/app/api/connect/[provider]/callback/route";
 import { GET as startGET } from "../../src/app/api/connect/[provider]/start/route";
 import { db } from "../../src/db/client";
-import { socialAccount } from "../../src/db/schema";
+import { auditEvent, socialAccount, socialPost } from "../../src/db/schema";
 import type { CreatorProfile, SocialAccount } from "../../src/db/schema/types";
+import type { Actor } from "../../src/server/auth/actor";
 import { env } from "../../src/server/env";
 import { OAUTH_COOKIE } from "../../src/server/social/oauth-state";
 import {
@@ -17,7 +18,8 @@ import {
   mockTokensFor,
 } from "../../src/server/social/providers/mock";
 import { sealTokenColumns } from "../../src/server/social/tokens";
-import { insertSocialAccount } from "./factories";
+import { creatorActor } from "./auth";
+import { insertCreator, insertSocialAccount } from "./factories";
 
 export const at = (path: string) => new URL(path, env.APP_URL).href;
 export const FROM_ONBOARDING = "?returnTo=%2Fonboarding%3Fstep%3Dconnect";
@@ -69,18 +71,77 @@ export async function connect(query?: string) {
   return callback(location(started), oauthPair(started));
 }
 
-/** A connected, never-synced Demo account for `creator`, its mock tokens sealed as the callback seals them. */
+type DemoOptions = { second?: boolean; accessTokenExpiresAt?: Date };
+
+/**
+ * A connected, never-synced Demo account for `creator`: the profile the mock reports and its mock tokens, sealed as
+ * the callback seals them.
+ */
 export async function insertDemoAccount(
   creator: Pick<CreatorProfile, "id" | "userId">,
-  opts: { second?: boolean; accessTokenExpiresAt?: Date } = {},
+  opts: DemoOptions = {},
 ): Promise<SocialAccount> {
   const id = randomUUID();
   return insertSocialAccount(creator, {
     id,
     providerAccountId: mockAccountIdFor(creator.userId, opts.second),
-    username: "demo.creator",
+    username: opts.second ? "demo.creator.2" : "demo.creator",
+    displayName: opts.second ? "Demo Creator 2" : "Demo Creator",
+    avatarUrl: opts.second ? "mock://avatar/02" : "mock://avatar/01",
     ...sealTokenColumns(id, mockTokensFor(creator.userId, "t1", opts)),
   });
+}
+
+export type Demo = { account: SocialAccount; actor: Actor; userId: string };
+
+/** A creator (new unless given) with a connected, never-synced Demo account, and the creator's actor. */
+export async function demoAccount(
+  creator?: Pick<CreatorProfile, "id" | "userId">,
+  opts: DemoOptions = {},
+): Promise<Demo> {
+  const owner = creator ?? (await insertCreator());
+  return {
+    account: await insertDemoAccount(owner, opts),
+    actor: creatorActor({ creatorId: owner.id, userId: owner.userId }),
+    userId: owner.userId,
+  };
+}
+
+/** The creator's one Demo account after a connect through the routes (and its first sync). */
+export async function connectedDemo(
+  creatorId: string,
+  query = "?returnTo=%2Fdashboard%2Fconnections",
+): Promise<SocialAccount> {
+  await connect(query);
+  const [account] = await accountsOf(creatorId);
+  if (!account) throw new Error("no account");
+  return account;
+}
+
+export function postsOf(accountId: string) {
+  return db
+    .select()
+    .from(socialPost)
+    .where(eq(socialPost.socialAccountId, accountId))
+    .orderBy(asc(socialPost.providerPostId));
+}
+
+/** The account's post `nn` ("05"). */
+export async function postNumber(accountId: string, nn: string) {
+  const row = (await postsOf(accountId)).find((p) =>
+    p.providerPostId.endsWith(`_${nn}`),
+  );
+  if (!row) throw new Error(`no post ${nn}`);
+  return row;
+}
+
+export function auditsOf(entityId: string, action: string) {
+  return db
+    .select({ data: auditEvent.data, actorType: auditEvent.actorType })
+    .from(auditEvent)
+    .where(
+      and(eq(auditEvent.entityId, entityId), eq(auditEvent.action, action)),
+    );
 }
 
 export async function accountRow(id: string): Promise<SocialAccount> {
@@ -99,7 +160,7 @@ export function accountsOf(creatorId: string): Promise<SocialAccount[]> {
     .where(eq(socialAccount.creatorId, creatorId));
 }
 
-/** Marks the matching accounts disconnected, as P08's Disconnect will. */
+/** Marks the matching accounts disconnected with just what the CHECK needs: quick setup (disconnectSocialAccount is the real one). */
 export function disconnectWhere(where: SQL) {
   return db
     .update(socialAccount)

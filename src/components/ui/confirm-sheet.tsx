@@ -25,8 +25,10 @@ export type ConfirmSheetProps = {
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   title: ReactNode;
-  /** Read before the buttons: linked by aria-describedby. */
-  description: ReactNode;
+  /** Read before the buttons: linked by aria-describedby. Leave it out when the title says everything. */
+  description?: ReactNode;
+  /** Where focus goes when the sheet closes; by default it returns to `trigger`. */
+  onCloseAutoFocus?: (event: Event) => void;
   children?: ReactNode;
   confirmLabel: string;
   confirmVariant?: "destructive" | "primary" | "secondary";
@@ -57,6 +59,7 @@ export function ConfirmSheet({
   onConfirm,
   cancelLabel,
   cancelVariant = "secondary",
+  onCloseAutoFocus,
 }: ConfirmSheetProps) {
   // Two Cancel parts (the close button and the safe button) share Radix's one cancel ref, so the initial focus is
   // set here explicitly rather than left to whichever attached last.
@@ -90,10 +93,13 @@ export function ConfirmSheet({
         <AlertDialog.Overlay className={SCRIM_CLASS} />
         <AlertDialog.Content
           className={SHEET_CLASS}
+          // Radix links a Description when there is one; without one it must be told there is none.
+          {...(description ? {} : { "aria-describedby": undefined })}
           onOpenAutoFocus={(event) => {
             event.preventDefault();
             safeRef.current?.focus({ preventScroll: true });
           }}
+          onCloseAutoFocus={onCloseAutoFocus}
         >
           <Grabber />
           <div className={SHEET_HEADER_CLASS}>
@@ -108,9 +114,11 @@ export function ConfirmSheet({
             </AlertDialog.Cancel>
           </div>
           <div className={SHEET_BODY_CLASS}>
-            <AlertDialog.Description className="text-body text-ink">
-              {description}
-            </AlertDialog.Description>
+            {description ? (
+              <AlertDialog.Description className="text-body text-ink">
+                {description}
+              </AlertDialog.Description>
+            ) : null}
             {children}
           </div>
           <div className={SHEET_FOOTER_CLASS}>

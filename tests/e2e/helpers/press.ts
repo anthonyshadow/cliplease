@@ -13,7 +13,8 @@ export const pressButton = (page: Page, name: string) =>
 export const pressLink = (page: Page, name: string) =>
   pressControl(page, "link", name);
 
-const isServerAction = (request: Request) =>
+/** A Server Action call: a POST with the next-action header. */
+export const isServerAction = (request: Request) =>
   request.method() === "POST" && request.headers()["next-action"] !== undefined;
 
 /**

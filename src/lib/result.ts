@@ -1,3 +1,6 @@
+/** 04 §11.10's generic error: what a Server Action says when the input or the target is wrong. */
+export const GENERIC_ERROR_MESSAGE = "Something went wrong. Try again.";
+
 // Returned by every Server Action (02 §5).
 export type ActionResult<T = undefined> =
   | { ok: true; data: T }

@@ -34,11 +34,7 @@ import {
   refreshTokenAad,
   storeTokens,
 } from "../../../src/server/social/tokens";
-import {
-  mockNextHeaders,
-  type SignedInCreator,
-  signedInCreator,
-} from "../../helpers/auth";
+import { mockNextHeaders, signedInCreator } from "../../helpers/auth";
 import {
   accountsOf,
   at,
@@ -516,20 +512,24 @@ describe("listAccountSummaries", () => {
     const other = await signedInCreator();
     await connect();
     const [mine] = await accountsOf(me.creatorId);
-    const actor = (c: SignedInCreator) =>
-      ({ kind: "creator", userId: c.userId, creatorId: c.creatorId }) as const;
     if (!mine?.lastSyncedAt) throw new Error("the connect didn't sync");
-    expect(await listAccountSummaries(actor(me))).toEqual([
+    expect(await listAccountSummaries(me.actor)).toEqual([
       {
         id: mine.id,
         platform: "mock",
         username: "demo.creator",
         displayName: "Demo Creator",
         status: "connected",
+        avatarSrc: `/api/connections/avatars/${mine.id}`,
         lastSyncedAt: mine.lastSyncedAt.toISOString(),
         lastSyncError: null,
+        syncProblem: false,
         hasOlder: false,
         postCount: 24,
+        accountType: "Media_Creator",
+        connectedAt: mine.connectedAt.toISOString(),
+        syncing: false,
+        blockedMinutes: null,
       },
     ]);
 
@@ -550,10 +550,10 @@ describe("listAccountSummaries", () => {
         fetchedAt: sql`now() - make_interval(days => ${SOCIAL_CACHE_TTL_DAYS}, mins => 1)`,
       })
       .where(eq(socialPost.id, second.id));
-    expect((await listAccountSummaries(actor(me)))[0]?.postCount).toBe(22);
+    expect((await listAccountSummaries(me.actor))[0]?.postCount).toBe(22);
 
     await disconnectWhere(eq(socialAccount.creatorId, me.creatorId));
-    expect(await listAccountSummaries(actor(me))).toEqual([]);
-    expect(await listAccountSummaries(actor(other))).toHaveLength(1);
+    expect(await listAccountSummaries(me.actor)).toEqual([]);
+    expect(await listAccountSummaries(other.actor)).toHaveLength(1);
   });
 });

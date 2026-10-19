@@ -10,7 +10,12 @@ import { uniqueViolationConstraint } from "../db-errors";
 import { errorName, logEvent } from "../log";
 import { AlreadyLinkedError } from "./errors";
 import { sealTokenColumns, tokenUpdateColumns } from "./tokens";
-import type { SocialProfile, SocialProvider, TokenSet } from "./types";
+import type {
+  RevokeOutcome,
+  SocialProfile,
+  SocialProvider,
+  TokenSet,
+} from "./types";
 
 // Linking a platform account to a creator (02 §5.3, §7.2; 03 §5.4, §7.2; 07 D37). The adapter's DTO names map to
 // columns once, here (03 DB1): externalAccountId → provider_account_id.
@@ -136,17 +141,23 @@ function linkOnce({
   });
 }
 
-/** Revokes tokens we won't keep (a refused connect, 07 D37); a failure is logged without token values and swallowed. */
+/**
+ * Revokes tokens we won't keep (a refused connect, 07 D37; a Disconnect, 03 §9.3): best effort, so a failure is logged
+ * by name only (never a token) and reported as `failed`.
+ */
 export async function revokeQuietly(
   provider: SocialProvider,
   tokens: TokenSet,
-): Promise<void> {
+  socialAccountId?: string,
+): Promise<RevokeOutcome> {
   try {
-    await provider.revoke(tokens);
+    return await provider.revoke(tokens);
   } catch (error) {
     logEvent("warn", "social.revoke_failed", {
+      ...(socialAccountId ? { socialAccountId } : {}),
       provider: provider.platform,
       error: errorName(error),
     });
+    return "failed";
   }
 }

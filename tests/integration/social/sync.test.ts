@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, eq, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import {
   afterAll,
   afterEach,
@@ -10,15 +10,8 @@ import {
   vi,
 } from "vitest";
 import { db } from "../../../src/db/client";
-import {
-  auditEvent,
-  socialAccount,
-  socialPost,
-  video,
-} from "../../../src/db/schema";
-import type { SocialAccount } from "../../../src/db/schema/types";
+import { socialAccount, socialPost, video } from "../../../src/db/schema";
 import { MINUTE_MS } from "../../../src/lib/time";
-import type { Actor } from "../../../src/server/auth/actor";
 import {
   SocialAuthError,
   SocialUpstreamError,
@@ -38,14 +31,17 @@ import {
   accountRow,
   accountsOf,
   at,
+  auditsOf,
   connect,
+  type Demo,
+  demoAccount,
   disconnectWhere,
-  insertDemoAccount,
   location,
+  postNumber,
+  postsOf,
 } from "../../helpers/connect-flow";
 import { resetDb } from "../../helpers/db";
 import {
-  insertCreator,
   insertLibraryVideo,
   insertUploadVideo,
   insertVideoPosting,
@@ -63,49 +59,8 @@ afterEach(() => {
   setMockScenarioForTests(null);
 });
 
-type Demo = { account: SocialAccount; actor: Actor; userId: string };
-
-/** A creator with a connected, never-synced Demo account. */
-async function demoAccount(
-  creator?: { id: string; userId: string },
-  second = false,
-): Promise<Demo> {
-  const owner = creator ?? (await insertCreator());
-  return {
-    account: await insertDemoAccount(owner, { second }),
-    actor: { kind: "creator", userId: owner.userId, creatorId: owner.id },
-    userId: owner.userId,
-  };
-}
-
 const sync = (d: Demo, opts?: Parameters<typeof syncSocialAccount>[2]) =>
   syncSocialAccount(d.account.id, d.actor, opts);
-
-async function postsOf(accountId: string) {
-  return db
-    .select()
-    .from(socialPost)
-    .where(eq(socialPost.socialAccountId, accountId))
-    .orderBy(asc(socialPost.providerPostId));
-}
-
-/** The account's post `nn` ("05"). */
-async function postNumber(accountId: string, nn: string) {
-  const row = (await postsOf(accountId)).find((p) =>
-    p.providerPostId.endsWith(`_${nn}`),
-  );
-  if (!row) throw new Error(`no post ${nn}`);
-  return row;
-}
-
-async function auditsFor(entityId: string, action: string) {
-  return db
-    .select({ data: auditEvent.data, actorType: auditEvent.actorType })
-    .from(auditEvent)
-    .where(
-      and(eq(auditEvent.entityId, entityId), eq(auditEvent.action, action)),
-    );
-}
 
 const OK_FULL = {
   ok: true,
@@ -347,7 +302,7 @@ describe("removal sweep (07 D13, D72)", () => {
     expect(after.removedAt).toBeInstanceOf(Date);
     expect(await postsOf(d.account.id)).toHaveLength(24);
     expect(getPost).toHaveBeenCalledTimes(1);
-    expect(await auditsFor(post05.id, "social_post.removed")).toEqual([
+    expect(await auditsOf(post05.id, "social_post.removed")).toEqual([
       {
         actorType: "creator",
         data: { socialPostId: post05.id, socialAccountId: d.account.id },
@@ -402,7 +357,7 @@ describe("removal sweep (07 D13, D72)", () => {
     expect(await postNumber(d.account.id, "24")).toMatchObject({
       status: "available",
     });
-    expect(await auditsFor(post24.id, "social_post.removed")).toEqual([]);
+    expect(await auditsOf(post24.id, "social_post.removed")).toEqual([]);
     expect(await postsOf(d.account.id)).toHaveLength(24);
   });
 
@@ -472,7 +427,7 @@ describe("errors (07 D02)", () => {
     });
     expect(await postsOf(d.account.id)).toHaveLength(24);
     expect(
-      await auditsFor(d.account.id, "social_account.needs_reconnect"),
+      await auditsOf(d.account.id, "social_account.needs_reconnect"),
     ).toEqual([
       {
         actorType: "system",
@@ -637,7 +592,7 @@ describe("the sync actions (02 §6.1)", () => {
     const me = await signedInCreator();
     const owner = { id: me.creatorId, userId: me.userId };
     const first = await demoAccount(owner);
-    const second = await demoAccount(owner, true);
+    const second = await demoAccount(owner, { second: true });
     const result = await syncAllAccounts();
     expect(result.ok).toBe(true);
     if (!result.ok) return;

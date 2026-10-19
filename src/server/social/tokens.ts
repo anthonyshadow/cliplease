@@ -8,6 +8,7 @@ import { DAY_MS, MINUTE_MS } from "../../lib/time";
 import { writeAudit } from "../audit";
 import { decryptSecret, encryptSecret } from "../crypto/token-cipher";
 import { isLockTimeout } from "../db-errors";
+import { errorName, logEvent } from "../log";
 import { SocialAuthError, SocialUpstreamError } from "./errors";
 import { getProvider } from "./registry";
 import type { TokenSet } from "./types";
@@ -123,6 +124,23 @@ const tokenColumns = {
   tokenRefreshedAt: socialAccount.tokenRefreshedAt,
 };
 
+type TokenRow = NonNullable<Awaited<ReturnType<typeof readTokenRow>>>;
+
+/** The row's tokens in the clear: the inverse of sealTokenColumns. The row must hold an access token. */
+function openTokenSet(accountId: string, row: TokenRow): TokenSet {
+  if (row.accessTokenEnc === null) throw new SocialAuthError();
+  return {
+    accessToken: decryptSecret(row.accessTokenEnc, accessTokenAad(accountId)),
+    accessTokenExpiresAt: row.accessTokenExpiresAt,
+    refreshToken:
+      row.refreshTokenEnc === null
+        ? null
+        : decryptSecret(row.refreshTokenEnc, refreshTokenAad(accountId)),
+    refreshTokenExpiresAt: row.refreshTokenExpiresAt,
+    scopes: row.scopes,
+  };
+}
+
 /** The row's access token, or null unless the account is connected. */
 function heldToken(
   accountId: string,
@@ -162,7 +180,9 @@ async function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
  * runs queries: every caller may be holding a pool connection while it waits. The platform call is the only external
  * call allowed inside a transaction (07 D12, D24).
  */
-async function refreshUnderLock(accountId: string): Promise<HeldToken> {
+async function refreshUnderLock(
+  accountId: string,
+): Promise<{ tokens: TokenSet; refreshedAt: Date | null }> {
   try {
     return await db.transaction(async (tx) => {
       await tx.execute(sql`set local lock_timeout = '12s'`);
@@ -172,31 +192,35 @@ async function refreshUnderLock(accountId: string): Promise<HeldToken> {
         .where(eq(socialAccount.id, accountId))
         .for("update");
       const now = new Date();
-      const held = row ? heldToken(accountId, row) : null;
       const decision = row ? refreshDecision(row.provider, row, now) : null;
-      if (!row || !held || decision === "reconnect") {
+      if (row?.status !== "connected" || decision === "reconnect") {
         throw new SocialAuthError();
       }
-      if (decision === "use") return held;
+      const current = openTokenSet(accountId, row);
+      if (decision === "use") {
+        return { tokens: current, refreshedAt: row.tokenRefreshedAt };
+      }
 
       const provider = getProvider(row.provider);
       if (!provider) throw new SocialUpstreamError();
       const next = await withTimeout(
-        provider.refreshToken({
-          accessToken: held.token,
-          accessTokenExpiresAt: row.accessTokenExpiresAt,
-          refreshToken:
-            row.refreshTokenEnc === null
-              ? null
-              : decryptSecret(row.refreshTokenEnc, refreshTokenAad(accountId)),
-          refreshTokenExpiresAt: row.refreshTokenExpiresAt,
-          scopes: row.scopes,
-        }),
+        provider.refreshToken(current),
         REFRESH_TIMEOUT_MS,
       );
-      // The scopes stay those granted at connect (03 §7.2's refresh UPDATE leaves them alone).
-      await storeTokens(tx, accountId, { ...next, scopes: row.scopes }, now);
-      return { token: next.accessToken, refreshedAt: now };
+      // The scopes stay those granted at connect (03 §7.2's refresh UPDATE leaves them alone), and a set without a
+      // refresh token keeps the stored one (storeTokens).
+      const stored: TokenSet = {
+        ...next,
+        ...(next.refreshToken === null
+          ? {
+              refreshToken: current.refreshToken,
+              refreshTokenExpiresAt: current.refreshTokenExpiresAt,
+            }
+          : {}),
+        scopes: row.scopes,
+      };
+      await storeTokens(tx, accountId, stored, now);
+      return { tokens: stored, refreshedAt: now };
     });
   } catch (error) {
     throw isLockTimeout(error) ? new SocialUpstreamError() : error;
@@ -208,7 +232,9 @@ async function freshToken(accountId: string): Promise<HeldToken> {
   const held = row ? heldToken(accountId, row) : null;
   const decision = row ? refreshDecision(row.provider, row, new Date()) : null;
   if (!held || decision === "reconnect") throw new SocialAuthError();
-  return decision === "use" ? held : refreshUnderLock(accountId);
+  if (decision === "use") return held;
+  const { tokens, refreshedAt } = await refreshUnderLock(accountId);
+  return { token: tokens.accessToken, refreshedAt };
 }
 
 /**
@@ -263,6 +289,32 @@ export async function withAccessToken<T>(
       return fn(current.token);
     }
   });
+}
+
+/**
+ * The tokens in the clear for Disconnect's best-effort revoke (03 §9.3 step 1). A connected account's expired access
+ * token is refreshed first, under the lock (07 D12); an expired token on an account that must reconnect can't be.
+ * Null when there is nothing to revoke or anything fails. It never marks the account: Disconnect wipes it next.
+ */
+export async function getTokenSetForRevoke(
+  accountId: string,
+): Promise<TokenSet | null> {
+  try {
+    const row = await readTokenRow(accountId);
+    if (!row?.accessTokenEnc || row.status === "disconnected") return null;
+    const expired =
+      row.accessTokenExpiresAt !== null &&
+      row.accessTokenExpiresAt.getTime() <= Date.now();
+    if (!expired) return openTokenSet(accountId, row);
+    if (row.status !== "connected") return null;
+    return (await refreshUnderLock(accountId)).tokens;
+  } catch (error) {
+    logEvent("warn", "social.revoke_tokens_failed", {
+      socialAccountId: accountId,
+      error: errorName(error),
+    });
+    return null;
+  }
 }
 
 /**

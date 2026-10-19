@@ -2,7 +2,7 @@
 // applies `overrides` last. Unique columns get random values, because rows build up across the tests of one file
 // (resetDb runs once per file). Later prompts reuse these.
 import { randomBytes, randomUUID } from "node:crypto";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import type { PgInsertValue, PgTable } from "drizzle-orm/pg-core";
 import { db } from "../../src/db/client";
 import {
@@ -201,6 +201,34 @@ export async function insertLibraryVideo(
     );
     return { video: row, posting };
   });
+}
+
+/**
+ * Publishes `draft` with every column `video_published_requirements` asks for: a ready original, a poster, the
+ * attestations and the confirmed postings.
+ */
+export async function publishVideo(draft: Video): Promise<Video> {
+  const [live] = await db
+    .update(video)
+    .set({
+      status: "published",
+      originalStatus: "ready",
+      originalObjectKey: `originals/${draft.creatorId}/${draft.id}.mp4`,
+      originalBytes: 1_048_576,
+      originalMime: "video/mp4",
+      posterObjectKey: `posters/${draft.creatorId}/${draft.id}.jpg`,
+      posterOrigin: "frame_capture",
+      rightsAttestedAt: new Date(),
+      attestationVersion: "v1",
+      containsMusic: false,
+      identifiablePeople: false,
+      postingsConfirmedAt: new Date(),
+      publishedAt: new Date(),
+    })
+    .where(eq(video.id, draft.id))
+    .returning();
+  if (!live) throw new Error("no video to publish");
+  return live;
 }
 
 /**

@@ -90,6 +90,72 @@ export async function expectInsideColumn(locator: Locator) {
   expect(box.right).toBeGreaterThanOrEqual(-1);
 }
 
+/**
+ * A settings-like page (07 D145: Settings, Connections): one column of at most 640 px that starts at the content edge
+ * of <main>, level with its h1, and so is not centered once <main> is wider than the column.
+ */
+export async function expectSettingsColumn(page: Page, width: number) {
+  const column = page.locator("main .max-w-reading").first();
+  await expect(column).toHaveCSS("max-width", "640px");
+  const box = await column.evaluate((el) => {
+    const main = el.closest("main") as HTMLElement;
+    const style = getComputedStyle(main);
+    const h1 = el.querySelector("h1") as HTMLElement;
+    return {
+      left: el.getBoundingClientRect().left,
+      right: el.getBoundingClientRect().right,
+      width: el.getBoundingClientRect().width,
+      h1Left: h1.getBoundingClientRect().left,
+      contentLeft:
+        main.getBoundingClientRect().left +
+        Number.parseFloat(style.paddingLeft),
+      clientWidth: document.documentElement.clientWidth,
+    };
+  });
+  expect(box.width).toBeLessThanOrEqual(640);
+  expect(Math.abs(box.left - box.h1Left)).toBeLessThanOrEqual(1);
+  expect(Math.abs(box.left - box.contentLeft)).toBeLessThanOrEqual(1);
+  if (width >= TIERS.desktop) {
+    expect(Math.abs(box.left - (box.clientWidth - box.right))).toBeGreaterThan(
+      1,
+    );
+  }
+}
+
+/**
+ * An open Sheet or ConfirmSheet has its form for `width` (04 §5.2.5, §9.22; 07 D149): a full-width bottom sheet with
+ * 16 px sides below md, a centered dialog of at most 480 px with 32 px sides from md.
+ */
+export async function expectSheetForm(sheet: Locator, width: number) {
+  await expect(sheet).toBeVisible();
+  // Even at 1 ms the entry animation starts below the screen: measure its end state.
+  await sheet.evaluate((el) =>
+    Promise.allSettled(
+      el
+        .getAnimations({ subtree: true })
+        .map((animation) => animation.finished),
+    ),
+  );
+  const box = await sheet.evaluate((el) => {
+    const rect = el.getBoundingClientRect();
+    return {
+      bottom: rect.bottom,
+      width: rect.width,
+      innerHeight: window.innerHeight,
+      clientWidth: document.documentElement.clientWidth,
+    };
+  });
+  const body = sheet.locator(".overflow-y-auto");
+  if (width < TIERS.tablet) {
+    expect(Math.abs(box.bottom - box.innerHeight)).toBeLessThanOrEqual(1);
+    expect(Math.abs(box.width - box.clientWidth)).toBeLessThanOrEqual(1);
+    await expect(body).toHaveCSS("padding-left", "16px");
+  } else {
+    await expectWithinCap(sheet, 480);
+    await expect(body).toHaveCSS("padding-left", "32px");
+  }
+}
+
 /** The app column's cap: 1200 px, 1440 px from XL (07 D145). */
 export const appCap = (width: number) => (tierAt(width) === "xl" ? 1440 : 1200);
 

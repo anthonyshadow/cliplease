@@ -1,6 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { GENERIC_ERROR_MESSAGE } from "@/lib/result";
 import { MessageBody } from "./public-shell";
 
 /**
@@ -10,7 +11,7 @@ import { MessageBody } from "./public-shell";
  */
 export function ErrorBody({ retry }: { retry: () => void }) {
   return (
-    <MessageBody title="Something went wrong. Try again.">
+    <MessageBody title={GENERIC_ERROR_MESSAGE}>
       <Button onClick={() => retry()}>Try again</Button>
     </MessageBody>
   );

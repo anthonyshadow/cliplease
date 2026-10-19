@@ -149,6 +149,7 @@ export default async function OnboardingPage({
     body = (
       <ConnectStep payoutsActive={ctx.creator.payoutsStatus === "active"}>
         <ConnectSection
+          variant="onboarding"
           platforms={enabledPlatforms()}
           accounts={await listAccountSummaries(toActor(ctx))}
           returnTo="/onboarding?step=connect"

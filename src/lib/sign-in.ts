@@ -1,4 +1,5 @@
 // Pure sign-in helpers (P04): client-safe, no process.env. Copy from 04 §11.10 and 05 §5.1.
+import { GENERIC_ERROR_MESSAGE } from "./result";
 import { DAY_MS } from "./time";
 
 const DEFAULT_NEXT = "/dashboard";
@@ -68,7 +69,7 @@ export const SIGN_IN_COPY = {
   tooManyTries: "Too many tries. Wait a minute and try again.",
   invalidEmail: "Enter an email address like name@example.com.",
   offline: "You're offline. Check your connection and try again.",
-  generic: "Something went wrong. Try again.",
+  generic: GENERIC_ERROR_MESSAGE,
 } as const;
 
 export type SignInErrorKey = keyof typeof SIGN_IN_COPY;

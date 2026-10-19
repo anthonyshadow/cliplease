@@ -3,6 +3,7 @@
 import { eq } from "drizzle-orm";
 import { db } from "../../src/db/client";
 import { user } from "../../src/db/schema";
+import type { Actor } from "../../src/server/auth/actor";
 import { auth } from "../../src/server/auth/auth";
 import { insertCreator, randomHex } from "./factories";
 import { mockNextHeaders } from "./next-headers";
@@ -56,10 +57,21 @@ export async function signInWithOtp(email: string): Promise<string> {
   return sessionCookiesOf(response);
 }
 
+/** The actor the session gate builds for a creator (toActor). */
+export const creatorActor = (c: {
+  creatorId: string;
+  userId: string;
+}): Actor => ({
+  kind: "creator",
+  userId: c.userId,
+  creatorId: c.creatorId,
+});
+
 export type SignedInCreator = {
   session: string;
   userId: string;
   creatorId: string;
+  actor: Actor;
 };
 
 /** A signed-in creator; the session becomes the request headers the gates read (next/headers is mocked). */
@@ -70,5 +82,6 @@ export async function signedInCreator(): Promise<SignedInCreator> {
   if (!owner) throw new Error("sign-in made no user");
   const creator = await insertCreator({ userId: owner.id });
   mockNextHeaders(session);
-  return { session, userId: owner.id, creatorId: creator.id };
+  const ids = { userId: owner.id, creatorId: creator.id };
+  return { session, ...ids, actor: creatorActor(ids) };
 }

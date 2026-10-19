@@ -85,6 +85,9 @@ export interface AuthorizeUrlInput {
   mockSubject?: string;
 }
 
+/** What a revoke at the platform came to; `failed` when it was possible but didn't happen. */
+export type RevokeOutcome = "revoked" | "unsupported" | "failed";
+
 export interface SocialProvider {
   readonly platform: SocialProviderId;
   /** "Instagram" | "TikTok" | "YouTube" | "Demo" */

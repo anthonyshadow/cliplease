@@ -5,7 +5,7 @@ import {
   expectCreatorChrome,
   expectPageFrame,
   expectReadingPage,
-  expectWithinCap,
+  expectSheetForm,
   TIERS,
   type Tier,
 } from "./helpers/layout";
@@ -24,41 +24,11 @@ const TIER_LABEL: Record<Tier, string> = {
   xl: "XL",
 };
 
-/**
- * Opens the gallery's Sheet and checks its form for `width` (04 §5.2.5, §9.22): a full-width bottom sheet with 16 px
- * sides below md, a centered dialog of at most 480 px with 32 px sides from md. Opened with the keyboard: below lg a
- * click can land on the fixed TabBar.
- */
+/** Opens the gallery's Sheet with the keyboard (below lg a click can land on the fixed TabBar), checks its form, closes it. */
 async function expectSheet(page: Page, width: number) {
   await pressButton(page, "Open sheet");
   const dialog = page.getByRole("dialog", { name: "Which countries?" });
-  await expect(dialog).toBeVisible();
-  // Even at 1 ms the entry animation starts below the screen: measure its end state.
-  await dialog.evaluate((el) =>
-    Promise.allSettled(
-      el
-        .getAnimations({ subtree: true })
-        .map((animation) => animation.finished),
-    ),
-  );
-  const box = await dialog.evaluate((el) => {
-    const rect = el.getBoundingClientRect();
-    return {
-      bottom: rect.bottom,
-      width: rect.width,
-      innerHeight: window.innerHeight,
-      clientWidth: document.documentElement.clientWidth,
-    };
-  });
-  const body = dialog.locator(".overflow-y-auto");
-  if (width < TIERS.tablet) {
-    expect(Math.abs(box.bottom - box.innerHeight)).toBeLessThanOrEqual(1);
-    expect(Math.abs(box.width - box.clientWidth)).toBeLessThanOrEqual(1);
-    await expect(body).toHaveCSS("padding-left", "16px");
-  } else {
-    await expectWithinCap(dialog, 480);
-    await expect(body).toHaveCSS("padding-left", "32px");
-  }
+  await expectSheetForm(dialog, width);
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
 }

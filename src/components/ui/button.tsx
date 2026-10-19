@@ -3,7 +3,14 @@
 import { cva } from "class-variance-authority";
 import { LoaderCircle } from "lucide-react";
 import { Slot } from "radix-ui";
-import type { ComponentProps, MouseEvent } from "react";
+import {
+  type ComponentProps,
+  cloneElement,
+  isValidElement,
+  type MouseEvent,
+  type ReactElement,
+  type ReactNode,
+} from "react";
 import { cn } from "@/lib/utils";
 
 // 04 §9.2. `border` is always present (transparent when unused) so forced-colors mode keeps the shape. Press feedback
@@ -48,10 +55,16 @@ const buttonVariants = cva(
   },
 );
 
+/** `wrap`: a long label wraps onto more lines instead of running past its column; the size keeps the minimum height. */
+const WRAP_CLASSES = {
+  lg: "h-auto min-h-11 whitespace-normal text-left",
+  sm: "h-auto min-h-9 whitespace-normal text-left",
+} as const;
+
 type Variant = "primary" | "secondary" | "tertiary" | "link" | "destructive";
 
 type BaseProps = Omit<ComponentProps<"button">, "aria-label"> & {
-  /** Renders the single child (a `next/link` <Link>, an <a>) with the button's classes. */
+  /** Renders the single child (a `next/link` <Link>, an <a>) with the button's classes and loading layer. */
   asChild?: boolean;
 };
 
@@ -69,6 +82,8 @@ export type ButtonProps = BaseProps &
         variant?: Variant;
         size?: "lg" | "sm";
         "aria-label"?: string;
+        /** A label long enough to wrap (a long tertiary link), see WRAP_CLASSES. */
+        wrap?: boolean;
       } & ButtonLoadingProps)
     /** An icon-only button keeps its `aria-label` as its name, loading or not. */
     | {
@@ -77,6 +92,7 @@ export type ButtonProps = BaseProps &
         "aria-label": string;
         loading?: boolean;
         loadingLabel?: undefined;
+        wrap?: never;
       }
   );
 
@@ -86,6 +102,7 @@ export function Button({
   asChild = false,
   loading = false,
   loadingLabel,
+  wrap = false,
   className,
   children,
   onClick,
@@ -94,6 +111,7 @@ export function Button({
 }: ButtonProps) {
   const classes = cn(
     buttonVariants({ variant: size === "icon" ? null : variant, size }),
+    wrap && size !== "icon" && WRAP_CLASSES[size],
     className,
   );
   const handleClick = (event: MouseEvent<HTMLButtonElement>) => {
@@ -103,18 +121,14 @@ export function Button({
     }
     onClick?.(event);
   };
-  const busy = {
+  const shared = {
     "aria-busy": loading || undefined,
     "aria-disabled": loading || props["aria-disabled"] || undefined,
+    // Which kind of button this is, for tests and styles that ask "the primary" (05 §6.2: one per view).
+    "data-variant": size === "icon" ? undefined : variant,
+    className: classes,
+    onClick: handleClick,
   };
-  if (asChild) {
-    // The child (a <Link>, an <a>) keeps the click handler and the busy state; it has no spinner layer.
-    return (
-      <Slot.Root {...props} {...busy} className={classes} onClick={handleClick}>
-        {children}
-      </Slot.Root>
-    );
-  }
   const spinner = (
     <LoaderCircle
       aria-hidden
@@ -123,11 +137,12 @@ export function Button({
       className={cn(loading && "animate-spin")}
     />
   );
-  let content = children;
-  if (loadingLabel !== undefined) {
-    // The label and the loading layer (spinner + loadingLabel) share one grid cell, so the width never changes
-    // while loading; the hidden layer is aria-hidden and never repeats the children.
-    content = (
+  // The label and the loading layer (spinner + loadingLabel) share one grid cell, so the width never changes while
+  // loading; the hidden layer is aria-hidden and never repeats the label.
+  const layered = (label: ReactNode) =>
+    loadingLabel === undefined ? (
+      label
+    ) : (
       <span className="inline-grid">
         <span
           className={cn(
@@ -136,7 +151,7 @@ export function Button({
             loading && "invisible",
           )}
         >
-          {children}
+          {label}
         </span>
         <span
           className={cn(
@@ -150,18 +165,26 @@ export function Button({
         </span>
       </span>
     );
-  } else if (loading) {
-    // An icon button is a fixed 44 px circle: the spinner takes the icon's place; `aria-label` stays its name.
-    content = spinner;
+  if (asChild) {
+    // The child (a <Link>, an <a>) keeps the click handler and the busy state; its own label gets the loading layer.
+    const child = isValidElement<{ children?: ReactNode }>(children)
+      ? cloneElement(
+          children as ReactElement<{ children?: ReactNode }>,
+          undefined,
+          layered(children.props.children),
+        )
+      : children;
+    return (
+      <Slot.Root {...props} {...shared}>
+        {child}
+      </Slot.Root>
+    );
   }
+  // An icon button is a fixed 44 px circle: while loading the spinner takes the icon's place; `aria-label` stays its name.
+  const content =
+    loadingLabel === undefined && loading ? spinner : layered(children);
   return (
-    <button
-      {...props}
-      type={type}
-      {...busy}
-      className={classes}
-      onClick={handleClick}
-    >
+    <button {...props} type={type} {...shared}>
       {content}
     </button>
   );
