@@ -3,31 +3,43 @@ import path from "node:path";
 import { expect, type Page, test } from "@playwright/test";
 import { collectConsoleErrors } from "./helpers/console";
 import { signUpCreator } from "./helpers/creator";
-import { pressButton, pressLink, pressLocator } from "./helpers/press";
 import {
+  pressButton,
+  pressLink,
+  pressLocator,
+  waitInPage,
+} from "./helpers/press";
+import {
+  AT_REST,
   attachSample,
   CANT_PREVIEW,
+  cancelAndWaitForAbort,
+  chooseOriginal,
   cleanCreatedVideos,
   coverImage,
   coverInput,
   createDraft,
-  holdPartUrls,
+  DRAFT_TITLE,
+  holdUploadRoute,
+  isOriginalStart,
   leaveIsGuarded,
+  multipartDir,
   NEW_VIDEO,
   originalInput,
   POSTER_JPG,
   SAMPLE_MP4,
   STORAGE_ROOT,
   trackPosterStored,
+  uploadCard,
   uploadRoute,
   waitForAttached,
 } from "./helpers/videos";
 
 // J5's plain upload start (05 §6.5, §6.6; 07 D39, D80) on chromium-desktop and webkit-iphone: the title page, the File
 // step's multipart upload of sample.mp4 through P10a's routes, the cover image (the captured frame where the browser
-// decodes H.264, else poster.jpg through "Choose an image"), Cancel and the interrupted state, the file checks, the
-// leave guard, the floating card that follows an upload to other pages (owner answer Q-42), and Replace keeping a cover
-// the creator chose (owner answer Q-41 a). Each test signs up its own creator.
+// decodes H.264, else poster.jpg through "Choose an image"), Cancel ending the upload on the server (P10c), the file
+// checks, the leave guard, the floating card that follows an upload to other pages (owner answer Q-42), and Replace
+// keeping a cover the creator chose (owner answer Q-41 a). Each test signs up its own creator.
 test.use({ reducedMotion: "reduce" });
 test.afterEach(cleanCreatedVideos);
 
@@ -37,16 +49,13 @@ const BAD_FILE =
   "We couldn't read this file as a video. Export it again as MP4 and retry.";
 const ZERO_PERCENT = /^0% · 0(\.0)? of 0\.2 MB$/;
 const INTERRUPTED = "Upload didn't finish. Choose the file again.";
-const TITLE = "Rooftop storm timelapse";
-
-const uploadCard = (page: Page) => page.locator("[data-upload-card]");
 
 /**
  * On the open File step: chooses sample.mp4 with its part URLs held, then goes to the Library, where the floating card
  * shows the running upload (it is hidden on the video's own page). Returns the hold.
  */
 async function uploadThenLeave(page: Page) {
-  const held = await holdPartUrls(page);
+  const held = await holdUploadRoute(page, "parts");
   await originalInput(page).setInputFiles(SAMPLE_MP4);
   await expect(
     page.getByRole("button", { name: "Cancel", exact: true }),
@@ -54,16 +63,11 @@ async function uploadThenLeave(page: Page) {
   await expect(uploadCard(page)).toHaveCount(0);
   await pressLink(page, "Library");
   await page.waitForURL("/dashboard/library");
-  await expect(uploadCard(page).getByText(`Uploading ${TITLE}`)).toBeVisible();
+  await expect(
+    uploadCard(page).getByText(`Uploading ${DRAFT_TITLE}`),
+  ).toBeVisible();
   return held;
 }
-
-/** A bounded wait inside the page, for "nothing more happens" checks. */
-const waitInPage = (page: Page, ms: number) =>
-  page.evaluate(
-    (delay) => new Promise<void>((resolve) => setTimeout(resolve, delay)),
-    ms,
-  );
 
 test("J5: a title makes a draft, sample.mp4 uploads in parts, the cover is stored, and a reload keeps both", async ({
   page,
@@ -108,18 +112,14 @@ test("J5: a title makes a draft, sample.mp4 uploads in parts, the cover is store
   await expect(page).toHaveURL(fileStep);
 
   // The multipart flow: start says multipart, part 1 goes to the dev storage route, complete sends no ETags.
-  const started = page.waitForResponse(
-    (r) =>
-      uploadRoute(r.request(), "start") &&
-      r.request().postDataJSON()?.kind === "original",
-  );
+  const started = page.waitForResponse((r) => isOriginalStart(r.request()));
   const partPut = page.waitForRequest(
     (r) => r.method() === "PUT" && PART_PUT.test(r.url()),
   );
   const completed = page.waitForRequest(
     (r) => uploadRoute(r, "complete") && r.postDataJSON()?.kind === "original",
   );
-  const held = await holdPartUrls(page);
+  const held = await holdUploadRoute(page, "parts");
   const posterStored = trackPosterStored(page);
   await originalInput(page).setInputFiles(SAMPLE_MP4);
   // Uploading: the file row, the bar, percent and MB, Cancel, and the keep-open line.
@@ -171,9 +171,7 @@ test("J5: a title makes a draft, sample.mp4 uploads in parts, the cover is store
   );
   expect(key).not.toContain("sample");
   expect(existsSync(path.join(STORAGE_ROOT, key))).toBe(true);
-  expect(existsSync(path.join(STORAGE_ROOT, ".multipart", uploadId))).toBe(
-    false,
-  );
+  expect(existsSync(multipartDir(uploadId))).toBe(false);
   expect(readdirSync(path.join(STORAGE_ROOT, "posters", videoId))).toEqual([
     expect.stringMatching(/^[0-9a-f-]{36}\.jpg$/),
   ]);
@@ -211,21 +209,17 @@ test("J5: a title makes a draft, sample.mp4 uploads in parts, the cover is store
   expect(errors).toEqual([]);
 });
 
-test("Cancel stops the upload; a reload then says it didn't finish", async ({
+test("Cancel ends the upload on the server; a reload shows the dropzone at rest", async ({
   page,
 }) => {
   test.setTimeout(90_000);
   const errors = collectConsoleErrors(page);
   await signUpCreator(page, { payouts: false });
   const videoId = await createDraft(page);
-  const held = await holdPartUrls(page);
+  const held = await holdUploadRoute(page, "parts");
   // Mid-upload: start has opened it on the server, the part URLs are asked for and held.
-  const started = page.waitForResponse(
-    (r) => uploadRoute(r.request(), "start") && r.status() === 200,
-  );
   const partsAsked = page.waitForRequest((r) => uploadRoute(r, "parts"));
-  await originalInput(page).setInputFiles(SAMPLE_MP4);
-  await started;
+  const uploadId = await chooseOriginal(page, SAMPLE_MP4);
   await partsAsked;
   await expect(
     page.getByRole("button", { name: "Cancel", exact: true }),
@@ -243,16 +237,11 @@ test("Cancel stops the upload; a reload then says it didn't finish", async ({
       afterCancel.push(`${r.method()} ${pathname}`);
     }
   });
-  // Cancel refetches the page (a Replace's start may have removed the old original); let that finish first.
-  const refreshed = page.waitForResponse(
-    (r) =>
-      r.request().headers().rsc === "1" &&
-      new URL(r.url()).pathname === `/dashboard/videos/${videoId}`,
-  );
-  await pressButton(page, "Cancel");
+  // Cancel aborts the upload on the server (P10c), then refetches the page; let both finish first.
+  const { refreshed } = await cancelAndWaitForAbort(page, videoId, uploadId);
   await refreshed;
   // Back to rest, no message, nothing guarding the tab.
-  await expect(page.getByText("Drop the original file here")).toBeVisible();
+  await expect(page.getByText(AT_REST)).toBeVisible();
   await expect(page.getByText(INTERRUPTED)).toHaveCount(0);
   expect(await leaveIsGuarded(page)).toBe(false);
 
@@ -262,9 +251,12 @@ test("Cancel stops the upload; a reload then says it didn't finish", async ({
   await waitInPage(page, 1_500);
   expect(afterCancel).toEqual([]);
 
+  // The server let go of it: a reload shows the dropzone at rest.
   await page.reload();
   await expect(page).toHaveURL(`/dashboard/videos/${videoId}?step=file`);
-  await expect(page.getByText(INTERRUPTED)).toBeVisible();
+  await expect(page.getByText(AT_REST)).toBeVisible();
+  await expect(page.getByText(INTERRUPTED)).toHaveCount(0);
+  await expect(page.getByText(/Upload paused at/)).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Continue", exact: true }),
   ).toBeDisabled();
@@ -344,12 +336,12 @@ test("Q-42: the upload carries on across pages; the card shows it, Open goes bac
 
   await pressLink(page, "Library");
   await page.waitForURL("/dashboard/library");
-  await expect(card.getByText(`Uploading ${TITLE}`)).toBeVisible();
+  await expect(card.getByText(`Uploading ${DRAFT_TITLE}`)).toBeVisible();
   await held.release();
   await expect(card.getByText("Upload complete")).toBeVisible({
     timeout: 30_000,
   });
-  await expect(card.getByText(TITLE, { exact: true })).toBeVisible();
+  await expect(card.getByText(DRAFT_TITLE, { exact: true })).toBeVisible();
 
   await pressLocator(open);
   await page.waitForURL(fileStep);
@@ -413,7 +405,7 @@ test("Q-42: an upload that fails while away shows Upload didn't finish on the ca
   ).toBeVisible({
     timeout: 30_000,
   });
-  await expect(card.getByText(TITLE, { exact: true })).toBeVisible();
+  await expect(card.getByText(DRAFT_TITLE, { exact: true })).toBeVisible();
   const open = card.getByRole("link", { name: "Open", exact: true });
   await expect(open).toHaveAttribute("href", fileStep);
 

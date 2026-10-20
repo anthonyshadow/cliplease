@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { readFile, rm } from "node:fs/promises";
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { NextRequest } from "next/server";
 import {
   afterAll,
@@ -43,12 +43,16 @@ import {
   publishVideo,
 } from "../helpers/factories";
 import {
+  assembleOnly,
   type Bytes,
+  bytesOf,
   callUploadRoute,
+  captureLogEvents,
   devStorageSegments,
   fixture,
   getSigned,
   listFiles,
+  MiB,
   md5Hex,
   newCreator,
   objectPath,
@@ -60,10 +64,13 @@ import {
   posterKeyOf,
   putSigned,
   rowOf,
+  SMALL,
   sendParts,
   signedIn,
+  startedHoursAgo,
   startOriginal,
   startPoster,
+  TOTAL,
   trackTestStorage,
   UPLOAD_ROUTE_NAMES,
   UUID,
@@ -71,7 +78,6 @@ import {
   uploadOriginal,
   uploadPoster,
   uploadsUnder,
-  videoBytes,
 } from "../helpers/uploads";
 
 // The upload API against the local driver and the test database (P10a; 02 §5.9, §6.2; 07 D09, D51, D61, D80). The
@@ -89,20 +95,8 @@ afterAll(async () => {
 beforeEach(() => mockNextHeaders(null));
 afterEach(() => vi.restoreAllMocks());
 
-const MiB = 1024 ** 2;
-/** The 3-part original: 16 + 16 + 8 MiB. */
-const TOTAL = 41_943_040;
-/** A one-part original. */
-const SMALL = MiB + 3;
 /** A two-part original: 16 MiB + 1 MiB. */
 const TWO_PARTS = PART_BYTES + MiB;
-
-// One random 40 MiB video-looking file, made once; smaller originals are its prefixes (they keep the ftyp box).
-let source: Bytes | undefined;
-const bytesOf = (size: number) => {
-  source ??= videoBytes(TOTAL);
-  return source.subarray(0, size);
-};
 
 const basename = (key: string) => key.slice(key.lastIndexOf("/") + 1);
 
@@ -119,15 +113,6 @@ const DISABLED = {
 } as const;
 const disable = (id: string) =>
   db.update(video).set(DISABLED).where(eq(video.id, id));
-
-/** Moves the upload's start back by `hours`. */
-const startedHoursAgo = (id: string, hours: number) =>
-  db
-    .update(video)
-    .set({
-      originalUploadStartedAt: sql`now() - make_interval(hours => ${hours})`,
-    })
-    .where(eq(video.id, id));
 
 /** The upload columns all cleared (03 §3.6). */
 const NO_UPLOAD = {
@@ -712,13 +697,7 @@ describe("a complete that died after assembling, before its database write", () 
     const bytes = bytesOf(size);
     const upload = await startOriginal(c.actor, videoId, size);
     await sendParts(c.actor, { videoId, uploadId: upload.uploadId, bytes });
-    const parts = await localDriver().listParts(upload);
-    if (parts === "no_such_upload") throw new Error("no upload");
-    await localDriver().completeMultipart({
-      key: upload.key,
-      uploadId: upload.uploadId,
-      parts: parts.map(({ partNumber, etag }) => ({ partNumber, etag })),
-    });
+    await assembleOnly(upload);
     expect(await pathExists(objectPath(upload.key))).toBe(true);
     expect(await pathExists(uploadDirPath(upload.uploadId))).toBe(false);
     expect(await rowOf(videoId)).toMatchObject({
@@ -968,6 +947,56 @@ describe("abortUpload", () => {
       expect(await pathExists(uploadDirPath(upload.uploadId))).toBe(false);
     }
     expect(await pathExists(objectPath(upload.key))).toBe(false);
+  });
+
+  it("named (owner answer Q-50): ends that upload, and leaves a newer one a later start opened in its place", async () => {
+    const me = await signedIn(disk);
+    const v = await newVideo(me.creatorId);
+    const old = await startOriginal(me.actor, v.id, TWO_PARTS);
+    const newer = await startOriginal(me.actor, v.id, TWO_PARTS);
+    await sendParts(me.actor, {
+      videoId: v.id,
+      uploadId: newer.uploadId,
+      bytes: bytesOf(TWO_PARTS),
+      partNumbers: [1],
+    });
+    const open = await rowOf(v.id);
+
+    const late = await callUploadRoute("abort", {
+      videoId: v.id,
+      uploadId: old.uploadId,
+    });
+    expect(late.status).toBe(204);
+    expect(await rowOf(v.id)).toEqual(open);
+    expect(open).toMatchObject({
+      originalStatus: "uploading",
+      originalUploadId: newer.uploadId,
+    });
+    expect(await pathExists(uploadDirPath(newer.uploadId))).toBe(true);
+
+    const named = await callUploadRoute("abort", {
+      videoId: v.id,
+      uploadId: newer.uploadId,
+    });
+    expect(named.status).toBe(204);
+    expect(await rowOf(v.id)).toMatchObject(NO_ORIGINAL);
+    expect(await pathExists(uploadDirPath(newer.uploadId))).toBe(false);
+  });
+
+  it("answers 400 invalid to an empty or overlong upload id", async () => {
+    const me = await signedIn(disk);
+    const v = await newVideo(me.creatorId);
+    await startOriginal(me.actor, v.id, SMALL);
+    const open = await rowOf(v.id);
+
+    for (const uploadId of ["", "u".repeat(1025)]) {
+      await expectJson(
+        await callUploadRoute("abort", { videoId: v.id, uploadId }),
+        400,
+        { code: "invalid" },
+      );
+    }
+    expect(await rowOf(v.id)).toEqual(open);
   });
 
   it("never touches a ready original", async () => {
@@ -1798,6 +1827,7 @@ describe("the four upload routes", () => {
       ["parts", { videoId: v.id, uploadId: upload.uploadId, partNumbers: [1] }],
       ["complete", { kind: "original", videoId: v.id }],
       ["abort", { videoId: v.id }],
+      ["abort", { videoId: v.id, uploadId: upload.uploadId }],
     ] as const) {
       await expectJson(await callUploadRoute(name, body), 404, {
         code: "not_found",
@@ -1850,22 +1880,15 @@ describe("the four upload routes", () => {
     vi.spyOn(localDriver(), "listParts").mockRejectedValueOnce(
       new Error(`ENOENT: no such file or directory, open '${secret}'`),
     );
-    const stderr = vi
-      .spyOn(process.stderr, "write")
-      .mockImplementation(() => true);
+    const logged = captureLogEvents("uploads.route_failed");
 
     const response = await callUploadRoute("complete", {
       kind: "original",
       videoId: v.id,
     });
-    const written = stderr.mock.calls.map(([chunk]) => String(chunk)).join("");
-    stderr.mockRestore();
+    const { written, events } = logged();
     await expectJson(response, 500, { code: "internal" });
-    const failed = written
-      .split("\n")
-      .filter((line) => line.includes('"uploads.route_failed"'))
-      .map((line) => JSON.parse(line) as unknown);
-    expect(failed).toEqual([
+    expect(events).toEqual([
       {
         ts: expect.any(String),
         level: "error",

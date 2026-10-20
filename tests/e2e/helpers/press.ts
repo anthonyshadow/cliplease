@@ -47,3 +47,10 @@ export async function pressAndSettle(page: Page, name: string) {
   await pressButton(page, name);
   await closed;
 }
+
+/** A bounded wait inside the page, for "nothing more happens" checks. */
+export const waitInPage = (page: Page, ms: number) =>
+  page.evaluate(
+    (delay) => new Promise<void>((resolve) => setTimeout(resolve, delay)),
+    ms,
+  );

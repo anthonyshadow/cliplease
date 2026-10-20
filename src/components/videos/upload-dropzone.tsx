@@ -1,8 +1,9 @@
 "use client";
 
-import { Check, Upload } from "lucide-react";
+import { Check, LoaderCircle, Upload } from "lucide-react";
 import {
   type DragEvent,
+  Fragment,
   type KeyboardEvent,
   type ReactNode,
   useRef,
@@ -14,6 +15,8 @@ import { useRefocusOnSwap } from "@/components/ui/use-refocus-on-swap";
 import { ORIGINAL_MIME } from "@/lib/upload/limits";
 import {
   DROPZONE_COPY,
+  pausedLabel,
+  pausedPercent,
   progressLabel,
   splitFileName,
   uploadPercent,
@@ -33,13 +36,17 @@ const DROP_AREA = {
 export type DropzoneView =
   /** At rest: the drop area. */
   | { kind: "rest" }
+  /** `retrying`: a part waits to try again; the bar holds and Cancel stays (one row, so focus never moves). */
   | {
       kind: "uploading";
       fileName: string;
       sent: number;
       total: number;
+      retrying: boolean;
       onCancel: () => void;
     }
+  /** Paused: the bar frozen where the upload stopped; the notice above holds the actions. */
+  | { kind: "paused"; fileName: string; sent: number; total: number }
   | { kind: "checking"; fileName: string }
   /** `canReplace` false while the original is locked (07 D09): no Replace. */
   | { kind: "done"; line: string; canReplace: boolean }
@@ -98,10 +105,19 @@ const FOCUS_ORDER = [
 export function UploadDropzone({
   view,
   onFile,
+  notice,
+  noticeKey = "",
   describedBy,
 }: {
   view: DropzoneView;
   onFile: (file: File) => void;
+  /**
+   * A Banner above the drop area or row (paused, mismatch, didn't finish), given this dropzone's "open the file picker"
+   * for its Choose file: its main action carries data-focus-target.
+   */
+  notice?: (pick: () => void) => ReactNode;
+  /** Changes with the notice, so focus follows a notice's new controls too. */
+  noticeKey?: string;
   /** Lines elsewhere that explain the drop area (the "Upload didn't finish" banner). */
   describedBy?: string;
 }) {
@@ -109,7 +125,10 @@ export function UploadDropzone({
   const [dragDepth, setDragDepth] = useState(0);
   // Each state swaps the controls: focus that fell to the page goes to the new state's control (its own target, else
   // its first button or link, else the row itself).
-  const refocus = useRefocusOnSwap<HTMLDivElement>(view.kind, FOCUS_ORDER);
+  const refocus = useRefocusOnSwap<HTMLDivElement>(
+    `${view.kind}|${noticeKey}`,
+    FOCUS_ORDER,
+  );
   const pick = () => input.current?.click();
 
   const picker = (
@@ -210,6 +229,31 @@ export function UploadDropzone({
             </Button>
           )}
         </div>
+        {view.kind === "uploading" && view.retrying ? (
+          <p className="flex items-center gap-2 text-footnote text-ink-2">
+            <LoaderCircle
+              aria-hidden
+              size={16}
+              strokeWidth={2}
+              className="shrink-0 animate-spin"
+            />
+            {DROPZONE_COPY.retrying}
+          </p>
+        ) : null}
+      </Row>
+    );
+  } else if (view.kind === "paused") {
+    body = (
+      <Row>
+        {picker}
+        <FileName name={view.fileName} />
+        <Progress
+          value={pausedPercent(view.sent, view.total)}
+          label={DROPZONE_COPY.progressLabel}
+        />
+        <p className="text-footnote text-ink-2 tabular-nums">
+          {pausedLabel(view.sent, view.total)}
+        </p>
       </Row>
     );
   } else if (view.kind === "done") {
@@ -262,5 +306,11 @@ export function UploadDropzone({
     );
   }
 
-  return <div {...refocus}>{body}</div>;
+  return (
+    <div {...refocus} className="flex flex-col gap-3">
+      {/* Keyed per state: a box's buttons never turn into another box's under the focus. */}
+      {notice ? <Fragment key={noticeKey}>{notice(pick)}</Fragment> : null}
+      {body}
+    </div>
+  );
 }

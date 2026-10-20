@@ -3,7 +3,7 @@
 import { UPLOAD_ROUTE_CODES, type UploadErrorCode } from "./codes";
 
 export type UploadResult = { ok: true } | { ok: false; code: UploadErrorCode };
-type ApiResult<T> =
+export type ApiResult<T> =
   | { ok: true; data: T }
   | { ok: false; code: UploadErrorCode };
 type PutResult =

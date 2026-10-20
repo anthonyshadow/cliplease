@@ -2,6 +2,7 @@ import Link from "next/link";
 import { READING_COLUMN } from "@/components/layout/gutter";
 import { Button } from "@/components/ui/button";
 import { Stepper } from "@/components/ui/stepper";
+import type { OriginalUploadProgress } from "@/lib/upload/resume";
 import {
   VIDEO_STEP_LABELS,
   VIDEO_STEPS,
@@ -16,7 +17,14 @@ import { FileStepUpload } from "./file-step-upload";
  * D145). The Stepper, "‹ Back" to Videos (owner answer Q-40 a), the upload island, and the upload-only note (01 J5.6,
  * staged here until P11c moves it to Where posted). The page has no visible heading; the title is its h1 for readers.
  */
-export function FileStep({ video }: { video: CreatorVideoDTO }) {
+export function FileStep({
+  video,
+  progress = null,
+}: {
+  video: CreatorVideoDTO;
+  /** The server's resume state of an 'uploading' original (P10c): the upload id and bytes, never a key. */
+  progress?: OriginalUploadProgress;
+}) {
   return (
     <div className={READING_COLUMN}>
       <BackLink href="/dashboard/videos">Back</BackLink>
@@ -40,6 +48,7 @@ export function FileStep({ video }: { video: CreatorVideoDTO }) {
           originalLocked: video.originalLocked,
         }}
         nextHref={videoStepHref(video.id, "rights")}
+        progress={progress}
       />
       <div className="flex flex-col items-start gap-1">
         <p className="text-callout text-ink-2">

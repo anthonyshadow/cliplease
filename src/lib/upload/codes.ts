@@ -18,12 +18,18 @@ export const UPLOAD_ROUTE_CODES = [
 ] as const;
 export type UploadRouteCode = (typeof UPLOAD_ROUTE_CODES)[number];
 
-/** Every way an upload can end without success: the routes' codes plus the browser's own. */
+/**
+ * Every way an upload can end without success: the routes' codes plus the browser's own. `paused`: a part ran out of
+ * retries (the upload and its resume hint stay; P10c). `stale_upload`: a resume found another upload open on the video
+ * than the one this device started, so nothing was sent.
+ */
 export type UploadErrorCode =
   | UploadRouteCode
   | "network"
   | "canceled"
-  | "unauthorized";
+  | "unauthorized"
+  | "paused"
+  | "stale_upload";
 
 /** The codes that mean the server couldn't read the file as the video it was declared to be (01 J5.7). */
 export const isBadFileCode = (code: string | null): boolean =>

@@ -5,8 +5,9 @@
 import { createHash, randomFillSync } from "node:crypto";
 import { readdir, readFile, rm, stat } from "node:fs/promises";
 import path from "node:path";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { NextRequest } from "next/server";
+import { vi } from "vitest";
 import {
   GET as devStorageGET,
   PUT as devStoragePUT,
@@ -20,6 +21,7 @@ import { video } from "../../src/db/schema";
 import type { Video } from "../../src/db/schema/types";
 import type { Actor } from "../../src/server/auth/actor";
 import { env } from "../../src/server/env";
+import { localDriver } from "../../src/server/storage/index";
 import {
   PART_BYTES,
   PART_CONCURRENCY,
@@ -52,6 +54,19 @@ export function videoBytes(size: number): Bytes {
   bytes.set(FTYP_HEADER.slice(0, size));
   return bytes;
 }
+
+export const MiB = 1024 ** 2;
+/** The 3-part original: 16 + 16 + 8 MiB. */
+export const TOTAL = 40 * MiB;
+/** A one-part original. */
+export const SMALL = MiB + 3;
+
+// One random 40 MiB video-looking file, made once; smaller originals are its prefixes (they keep the ftyp box).
+let source: Bytes | undefined;
+export const bytesOf = (size: number) => {
+  source ??= videoBytes(TOTAL);
+  return source.subarray(0, size);
+};
 
 /** A PNG's 8-byte signature followed by random bytes: `size` bytes in all. */
 export function pngBytes(size: number): Bytes {
@@ -207,6 +222,17 @@ export async function sendParts(
   return etags;
 }
 
+/** What a complete that died after assembling leaves: the driver's completeMultipart ran, the row still says uploading. */
+export async function assembleOnly(upload: { key: string; uploadId: string }) {
+  const parts = await localDriver().listParts(upload);
+  if (parts === "no_such_upload") throw new Error("no upload");
+  await localDriver().completeMultipart({
+    key: upload.key,
+    uploadId: upload.uploadId,
+    parts: parts.map(({ partNumber, etag }) => ({ partNumber, etag })),
+  });
+}
+
 /** start → every part → complete; returns the upload and complete's answer. */
 export async function uploadOriginal(
   actor: Actor,
@@ -294,6 +320,27 @@ export function callUploadRoute(
   return UPLOAD_ROUTES[name](request);
 }
 
+// --- What the server logs ----------------------------------------------------------------------------------------------
+
+/**
+ * Silences stderr and records what is written to it from now on. The returned function restores it and gives back all
+ * of it (`written`, for what a log line must not carry) and the lines that log `event`, parsed (`events`).
+ */
+export function captureLogEvents(event: string) {
+  const stderr = vi
+    .spyOn(process.stderr, "write")
+    .mockImplementation(() => true);
+  return () => {
+    const written = stderr.mock.calls.map(([chunk]) => String(chunk)).join("");
+    stderr.mockRestore();
+    const events = written
+      .split("\n")
+      .filter((line) => line.includes(`"${event}"`))
+      .map((line) => JSON.parse(line) as unknown);
+    return { written, events };
+  };
+}
+
 // --- Creators and videos -----------------------------------------------------------------------------------------------
 
 /** A creator (no session) and the actor the session gate would build for it. */
@@ -328,6 +375,15 @@ export async function rowOf(id: string): Promise<Video> {
   if (!row) throw new Error("no video");
   return row;
 }
+
+/** Moves the upload's start back by `hours`, by the database's clock. */
+export const startedHoursAgo = (id: string, hours: number) =>
+  db
+    .update(video)
+    .set({
+      originalUploadStartedAt: sql`now() - make_interval(hours => ${hours})`,
+    })
+    .where(eq(video.id, id));
 
 // --- The disk -----------------------------------------------------------------------------------------------------------
 

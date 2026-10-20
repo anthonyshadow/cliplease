@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, CircleAlert, Upload, X } from "lucide-react";
+import { Check, CircleAlert, Pause, Upload, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -9,6 +9,7 @@ import { Progress } from "@/components/ui/progress";
 import {
   DROPZONE_COPY,
   INDICATOR_COPY,
+  pausedPercent,
   uploadPercent,
 } from "@/lib/upload/messages";
 import {
@@ -25,6 +26,23 @@ import { videoStepHref } from "@/lib/videos/steps";
 const STACK =
   "fixed bottom-[calc(1rem+env(safe-area-inset-bottom)+var(--bar-offset,0px))] left-[max(var(--gutter),env(safe-area-inset-left))] right-[max(var(--gutter),env(safe-area-inset-right))] z-50 flex flex-col gap-2 md:left-auto md:w-88";
 
+/** The card's heading (owner answers Q-42, Q-47 a). */
+function headingOf(entry: OriginalEntry): string {
+  switch (entry.phase) {
+    case "uploading":
+    case "retrying":
+      return INDICATOR_COPY.uploading(entry.title);
+    case "checking":
+      return DROPZONE_COPY.checking;
+    case "paused":
+      return INDICATOR_COPY.paused(pausedPercent(entry.sent, entry.size));
+    case "done":
+      return INDICATOR_COPY.done;
+    default:
+      return INDICATOR_COPY.stopped;
+  }
+}
+
 function UploadCard({ entry }: { entry: OriginalEntry }) {
   const running = isRunning(entry.phase);
   const Icon =
@@ -32,15 +50,10 @@ function UploadCard({ entry }: { entry: OriginalEntry }) {
       ? Check
       : entry.phase === "error"
         ? CircleAlert
-        : Upload;
-  const heading =
-    entry.phase === "uploading"
-      ? INDICATOR_COPY.uploading(entry.title)
-      : entry.phase === "checking"
-        ? DROPZONE_COPY.checking
-        : entry.phase === "done"
-          ? INDICATOR_COPY.done
-          : INDICATOR_COPY.stopped;
+        : entry.phase === "paused"
+          ? Pause
+          : Upload;
+  const heading = headingOf(entry);
   const percent =
     entry.phase === "checking" ? 100 : uploadPercent(entry.sent, entry.size);
   const open = (
@@ -96,6 +109,9 @@ function UploadCard({ entry }: { entry: OriginalEntry }) {
           {open}
         </div>
       ) : null}
+      {entry.phase === "retrying" ? (
+        <p className="text-footnote text-ink-2">{DROPZONE_COPY.retrying}</p>
+      ) : null}
     </li>
   );
 }
@@ -119,8 +135,10 @@ function dismiss(videoId: string) {
 
 /**
  * The floating upload card (owner answer Q-42): while an original uploads and the creator is on another page of the
- * app, a card shows its progress; when it ends it says so until dismissed or seen, and Open goes back to its File step.
- * Hidden on that video's own page, where the dropzone shows the same upload. Screen readers hear the ending only.
+ * app, a card shows its progress (with "Connection lost. Retrying…" while a part waits, Q-47 a); when it pauses or ends
+ * it says so until dismissed or seen, and Open goes back to its File step, which holds Resume and Cancel. An upload
+ * that goes on after a pause shows again. Hidden on that video's own page, where the dropzone shows the same upload.
+ * Screen readers hear a pause and the ending only.
  */
 export function UploadIndicator() {
   const pathname = usePathname();
@@ -130,11 +148,11 @@ export function UploadIndicator() {
     (e) => !e.seen && pathname !== `/dashboard/videos/${e.videoId}`,
   );
   const visible = shown.length > 0;
-  const ended = shown.filter((e) => e.phase === "done" || e.phase === "error");
-  const last = ended.at(-1);
-  const ending = last
-    ? `${last.phase === "done" ? INDICATOR_COPY.done : INDICATOR_COPY.stopped}: ${last.title}`
-    : "";
+  const stopped = shown.filter(
+    (e) => e.phase === "done" || e.phase === "error" || e.phase === "paused",
+  );
+  const last = stopped.at(-1);
+  const ending = last ? `${headingOf(last)}: ${last.title}` : "";
   const [said, setSaid] = useState("");
   useEffect(() => {
     if (ending) setSaid(ending);

@@ -33,7 +33,7 @@
 -->
 
 ## Status
-Current prompt: P10c · Last verified: P10b · Blockers: none
+Current prompt: P11 · Last verified: P10c · Blockers: none
 Gates: A (P22) [ ] · R (P22h) [ ] · B (P25) [ ] · C (P27) [ ] · S12 Stripe renewal sign-off (P25d, not a gate) [ ]
 Later: P34 (USD) not run · P05b (teens) not scheduled
 
@@ -750,13 +750,258 @@ Later: P34 (USD) not run · P05b (teens) not scheduled
   - **Performance:** split `upload-store.ts` so the dashboard layout's card doesn't pull the media and upload modules into every dashboard page (about 10 KB minified).
   - **Dev note:** `next build` (the e2e web server) and `next dev` share `.next/`; restart `bun run dev` after an e2e run if pages or CSS look stale.
 
-### P10c — Resumable original uploads: retry, resume and cancel · [ ] to do
+### P10c — Resumable original uploads: retry, resume and cancel ✅ (2026-10-20)
 > 90 min · Depends on: P10b, P10a · Record: the question 1 answer and jitter formula; offline → Paused; Start again after a reload; which `lastModified` each e2e project reported; status line "Current prompt: P11 · Last verified: P10c"
 - Done:
+  - **Owner answers (in chat, 2026-10-20; Q-45–Q-49 below):**
+    - **Q-45 a (the prompt's question 1):** `PART_MAX_ATTEMPTS = 5` counts retries after the first send, so a part goes up to 6 times. The waits are 1, 2, 4, 8 and 16 s, each plus jitter `base + floor(random() × base × 0.25)` (`retryDelayMs`). Paused comes after about 31–39 s of failures.
+    - **Q-46 a:** two Paused boxes.
+      - Same tab: "Upload paused at {n}%. Check your connection.". An offline pause shows only Cancel and carries on by itself on `online`. A pause after the retries ran out shows Resume + Cancel, and it also carries on by itself once back online.
+      - After a reload or a closed tab: "Upload paused at {n}%. Choose the same file to continue." with Choose file + Cancel.
+    - **Q-47 a:** the floating card.
+      - Retrying keeps "Uploading {title}" and adds "Connection lost. Retrying…".
+      - Paused shows "Upload paused at {n}%" with the title, Open and ×. It goes back to Uploading when the upload carries on.
+      - Screen readers hear "Connection lost. Retrying…" and "Upload paused at {n}%." on the page, and "Upload paused at {n}%: {title}" from the card.
+    - **Q-48 a:** one bigger step.
+    - **Q-49 b** (the owner's pick over the recommended "known limit"): a second tab on the same video shows "This video is uploading in another tab." in place of the drop area, and refreshes when the other tab's upload ends.
+    - **Q-50 b** (asked after the simplify pass; the owner's pick over the recommended follow-up): Cancel's abort names the upload it ends, so a late abort can't end a newer upload, and a start right after a Cancel no longer waits.
+    - **Q-51 b:** delete the 107 orphaned upload folders P10b's runs left in `.data/storage/.multipart/`.
+  - **Pure modules (`src/lib/upload/`):**
+    - `retry.ts`:
+      - `RETRY_DELAYS_MS` and `retryDelayMs`.
+      - `sendPartWithRetry`:
+        - 404 → gone. 400/413 and other 4xx (except 403/408/429) → failed.
+        - Offline spends no retry: it waits for `online`.
+        - One re-sign per part after a network error or a 403.
+      - `withRetries` (part URLs and complete), `wait`, `abortError`, `isAbort`.
+    - `resume.ts`:
+      - The hint `cliplease.upload.<videoId>` (Zod-checked; a bad value is removed).
+      - `matchesResumeHint` (name, size, lastModified), `planResume`, `keepsResumeHint`, `OriginalUploadProgress`.
+    - `wake-lock.ts` `holdScreenWakeLock`.
+    - `device.ts` `isIosDevice`.
+    - `tab-presence.ts`: `announceUploads`, `useUploadElsewhere` and `onOtherTabUploads`, over BroadcastChannel `cliplease.uploads`.
+    - `file-step-state.ts` `deriveFileStep`: the File step's state as one tagged union, table-tested.
+  - **Browser upload:**
+    - `uploadOriginal` keeps its signature and callers. It adds `resume`, `expectedUploadId`, `onStatus`, `onStarted`, `hints` and `network`.
+      - Start is never aborted.
+      - Another upload id than this device's → `stale_upload`.
+      - The hint is written once start answers, unless Cancel came first.
+      - Only the missing parts are sent, and offline workers start no part.
+      - An upload gone at its parts goes straight to complete, which maps the outcome.
+      - `parts_incomplete` gets one repair pass.
+    - `abortOriginalUpload(videoId, uploadId)` sends a `keepalive` POST `/api/uploads/abort` naming the upload (Q-50); Cancel has already cleared the hint when pressed. At its end, `uploadOriginal` clears only its own upload's hint, and none if its start never answered.
+  - **Store (Q-42) and card:**
+    - **Phases and guards:**
+      - The phases gain retrying and paused (`pausedBy` offline · retries), plus `uploadId` and `isLive`.
+      - beforeunload and the Screen Wake Lock are on only while uploading, retrying or checking.
+    - **Restarts:**
+      - Back online resumes an upload whose retries ran out.
+      - Resume resumes the open upload, and so does Try again after `network`, `internal` or `unauthorized`.
+      - A same-tab restart of the same file reuses its metadata read.
+    - **Cancel:**
+      - It shows rest at once and clears the hint.
+      - It waits up to 15 s for a start still answering, then sends `/abort` once, naming the upload (Q-50): this tab's own (even one a start opened after the Cancel), or the one a reload left paused.
+      - A start right after a Cancel waits for the cancelled start's answer, at most 15 s (the abort's own clock). Answering later, that start would replace the new upload on the server. It also waits for the abort, at most 15 s more, but only when the abort went out unnamed. A named abort is never waited on.
+    - **Other tabs:** this tab's ended entry for a video goes when another tab announces that video.
+    - **Card:** shows Retrying and Paused (Q-47).
+  - **Server:**
+    - `getOriginalUploadProgress` is owner-scoped, read-only and selects only the columns it needs:
+      - null unless the row is `uploading` with a key, upload id and size;
+      - `expired` past 24 h;
+      - otherwise the whole parts stored.
+    - It shares `inspectOpenUpload` with P10a's `resumeOriginal`, which covers fresh → parts, assembled or expired.
+    - A storage error → null plus `uploads.progress_failed`.
+    - The video page passes the result to the File step: the upload id and bytes only.
+    - `/api/uploads/abort` takes an optional `uploadId` (1–1024 characters; Q-50). `abortUpload` ends only that upload. If it names an upload that isn't open any more, it answers 204 and changes nothing.
+  - **File step:**
+    - The Retrying line.
+    - Paused here or after a reload: the bar frozen, plus a warning Banner (`PausedBox`).
+    - Mismatch: "This doesn't look like the same file. Start again?" with Start again and Choose another file.
+    - Expired, Not finished and the other-tab line.
+    - The iPhone hint "On iPhone, choose the video from Files for full quality." on iOS.
+    - Milestones at 25/50/75 %, counted from where a resume starts.
+    - The dropzone's notice is a render prop that is given "open the picker".
+  - **Tests:**
+    - unit:
+      - new: retry, resume, wake-lock, device, tab-presence and file-step-state;
+      - `uploadOriginal`, the store and messages extended;
+      - shared fakes in `tests/helpers/upload-fakes.ts`.
+    - [int] `tests/integration/upload-progress.test.ts` (whole parts only, 25 h → expired, aborted, another creator, ready, assembled, gone, storage error).
+    - e2e `tests/e2e/upload-resume.spec.ts` (a 40 MiB file written once per worker):
+      - a part retried through a re-signed URL; reload → paused; a different file → Mismatch; the same file → only part 2 sent → attached;
+      - Cancel while retrying, plus the iPhone hint;
+      - offline;
+      - the Q-47 card;
+      - Q-49's two tabs;
+      - after a reload, Cancel and Start again on the paused box name the paused upload (Q-50).
+    - `upload.spec.ts`: Cancel now ends at rest after a reload.
+    - Shared e2e helpers: `DRAFT_TITLE`, `AT_REST`, `uploadCard`, `cancelAndWaitForAbort`, `abortAnswered`, `multipartDir`, `isPartPutRequest`, `trackPartPuts`, `isOriginalStart`, `chooseOriginal`, `holdUploadRoute` (was `holdPartUrls`). The [int] helpers gained `bytesOf` and `captureLogEvents`.
 - Verified:
-- Decisions:
-- Open questions:
+  - **Pre-commit review (5 lenses: correctness, server-security, spec, UX/a11y, tests; a second agent tried to refute each finding):** 22 findings, 17 confirmed (deduplicated into 9 fixes), 5 refuted. Fixed:
+    - Try again after network/internal/unauthorized resumes instead of starting from 0 %.
+    - Presence asks every second while watched, and a closing tab says so (pagehide), so a hidden uploading tab is not dropped.
+    - A stale entry no longer lifts the other-tab lock.
+    - A hint is kept when the server's progress is unknown.
+    - The offline Cancel's abort is not re-sent later.
+    - A resume's bar starts from the server's bytes, and a pause shows the latest bytes.
+    - Choosing a file for a paused upload checks it first.
+    - Mismatch is keyed, announced, and focuses "Choose another file".
+    - The helper line is hidden while another tab uploads.
+
+    Refuted:
+    - Cancel telling other tabs too early.
+    - The repair pass showing 100 %.
+    - The offline pause dropping beforeunload.
+    - An early Cancel leaving the hint; the simplify pass made it explicit anyway.
+    - Missing tests for File step states; they are now covered by the `deriveFileStep` table.
+  - **Simplify (owner request; 4 reviewers: reuse, simplification, efficiency, altitude; applied in stages on disjoint files, then a before/after behaviour review by 3 finders and 3 skeptics):**
+    - Applied:
+      - One copy of the wait/abort helpers.
+      - `withRetries` moved next to `sendPartWithRetry`; it now also waits for `online` after a retry wait.
+      - The hint rules (`keepsResumeHint`) live in `resume.ts`.
+      - Simpler outcomes in `sendParts`.
+      - The hint is not written back after a Cancel during start.
+      - `inspectOpenUpload` shared, with a narrower progress select.
+      - Presence asks only while a File step watches.
+      - The store drops ended entries on another tab's announce, replacing the File step effect.
+      - `isLive`; one `resume` option; no `guarding` or `pausedSent`.
+      - The metadata read is reused for the same file once it got the video's size.
+      - The File step derivation became the pure `deriveFileStep`.
+      - `PausedBox`, the notice render prop, `pausedPercent` beside `uploadPercent`, and one "Upload paused at" builder.
+      - `useClientValue` (also used by CopyLinkField).
+      - Shared test fakes and e2e/[int] helpers; the 40 MiB file is written once per worker; the iPhone-hint test was folded into the Cancel test; five progress tests store no parts.
+    - The behaviour review confirmed two issues, both fixed:
+      - A Cancel's key could come back after another tab's upload (it now clears on the first server change).
+      - A dropped test row: expired with no hint, and expired before the hint is read.
+    - Skipped:
+      - Per-video store hooks and `memo(PosterPicker)` (a P10b pattern; follow-up).
+      - Web Locks presence (optional; WebKit across pages unproven).
+      - Streaming the progress read (the box would shift).
+      - `uploadErrorLine`'s unreachable `paused` case (kept, like `canceled`, for the exhaustive table).
+  - **Q-50 review (2 finders, 2 skeptics) of the named abort:**
+    - 4 confirmed and fixed:
+      - A start right after a Cancel could race the cancelled start on the server. It now waits for that start's answer (the second simplify pass put this wait on the abort's own 15 s clock).
+      - A fresh run's Cancel could name the page's older paused upload. It now names that upload only when this tab holds none of its own.
+      - A cancelled run's last clean-up could remove a newer upload's hint. It now clears only its own upload's hint.
+      - No e2e covered the paused box's Cancel or Start again. A new test covers both: it holds the Start again abort until the new start has answered, and the new file still uploads to the end.
+    - 2 refuted:
+      - A named abort leaving a failed row as it is: harmless, and now said in the comment.
+      - The 15 s Retrying allowance hiding a product delay: no product delay is involved; the comment was corrected.
+    - Added: a named abort from another creator gets the same 404.
+  - **Second simplify pass (owner request, 4 reviewers: reuse, simplification, efficiency, altitude):**
+    - Applied:
+      - `abortOriginalUpload` is the server call only; its hint clear never removed anything, since Cancel clears the hint when pressed.
+      - A run that never heard back from start leaves the hint alone (it wrote none).
+      - A start after a Cancel now waits on the abort's own clock (15 s) instead of a second 5 s one. It also waits for an unnamed abort, the one abort that could end it.
+      - `within(promise, ms)` clears its timer.
+      - The start is one async function.
+      - One `uploadIdField` for the parts and abort routes.
+      - Duplicate comments trimmed.
+      - e2e:
+        - shared `isOriginalStart`, `chooseOriginal`, `holdUploadRoute` and `abortAnswered`;
+        - the refetch wait is one `expect.poll`;
+        - the Q-50 test pauses at 0 % by failing the part-URL request: no part body sent, about 8 s instead of uploading about 120 MiB;
+        - Cancel-while-retrying uses a 1 MiB file.
+      - Unit fixtures: `saveHint` and a `resume` argument on the store test's `start()`.
+    - Skipped:
+      - A server-side guard on start order (needs a column and API changes; P23 follow-up).
+      - Merging `Runtime.cancelled` into `running` (the explicit field reads clearer).
+      - Returning the upload id from `uploadOriginal` instead of the store's `opened`: it would lose the id on the store's error path.
+  - **Mutation checks** (each rule broken on purpose, then its tests run): 25 of 25 caught. Each of these fails a test:
+    - no re-sign after a network error or 403 (9 failed);
+    - one retry too many, Q-45 (3);
+    - an offline failure spends a retry (4);
+    - another `lastModified` matches (1);
+    - stored parts not counted (6);
+    - paused without this device's hint (3);
+    - a resume sends every part (2);
+    - the hint never cleared (10);
+    - an upload past 24 h resumable ([int], 1);
+    - Cancel never ends the upload on the server (15);
+    - Try again from zero (3);
+    - an ended entry survives another tab's upload (4);
+    - a Cancel during start writes the hint back (1);
+    - the wake lock not asked again (2);
+    - iPadOS desktop mode not iOS (1);
+    - the Q-49 lock never shows (e2e, 2);
+    - Q-50:
+      - Cancel's abort names no upload (10);
+      - a fresh run's abort names the page's older paused upload (1);
+      - a start after a Cancel races the cancelled start (4);
+      - a start after a Cancel doesn't wait for an unnamed abort (2);
+      - a run that never heard back from start clears the video's hint (1);
+      - a run's last clear removes a newer upload's hint (1);
+      - a named abort ends whatever upload is open ([int], 1);
+      - a named clear removes a newer upload's hint (1);
+      - the File step's Cancel and Start again name no upload (e2e, 2).
+  - **Test runs, all ✅:**
+    - `bun run typecheck` (0 errors), `bun run lint` (383 files), `bun run lint:tokens` (prints nothing).
+    - `bun run test`: 63 files, 1,708 tests.
+    - `bun run test:int`: 21 files, 282 tests (`uploads` 56, `upload-progress` 11).
+    - Full `bun run test:e2e`: 169 passed, 3 skipped. The simplify pass folded the iPhone-hint test into the Cancel test, and Q-50 added the paused box's Cancel / Start again test.
+    - `upload.spec.ts` + `upload-resume.spec.ts`: `--repeat-each 2` gave 48 passed, then on a second run 47 passed and 1 WebKit flake (below). After the fix, `--repeat-each 3` gave 72 passed. After Q-50 and its review, `--repeat-each 3` gave 78 passed (the new test included), and 78 again after the second simplify pass.
+    - `upload.responsive.spec.ts` on all four projects: 4 passed.
+  - **Flakes found and fixed:**
+    - In the Cancel tests: once in 48 runs, a WebKit Cancel test reloaded while the router's refetch body was still arriving, and WebKit logged "Failed to fetch RSC payload … Load failed". `cancelAndWaitForAbort` now waits until the page's resource timing shows that fetch ended. In Chromium, Playwright's `response.finished()` never settles for that streamed response and `body()` finds no data. After the fix, the Cancel tests passed `--repeat-each 4` (24 passed), then the full run and the ×3 run above.
+    - In `upload.spec.ts`'s Cancel test on Chromium, the test took the first start to answer as the original's. Sometimes that was the cover frame's own start, which has no upload id. It now waits for the original's start.
+    - On Chromium, with five 40 MiB uploads running in parallel, the first Retrying line sometimes took over 5 s, because the part bodies go through Playwright's interception. The first resume test's Retrying check now allows 15 s (`RETRYING_SHOWS_MS`); a real product delay would still fail. The Cancel-while-retrying test needs no allowance since it uses a 1 MiB file. The ×3 run then passed 72 of 72.
+  - **`lastModified` per e2e project** (the first resume test records it):
+    - chromium-desktop reports the file's exact milliseconds: the first pick, the second pick and the mtime are equal.
+    - webkit-iphone rounds down to the second: both picks are equal, below the mtime by its milliseconds.
+    - Both picks match within each project, so a resume matches.
+  - **Manual checks (dev server):**
+    - Before the simplify pass:
+      - resume after a reload sends only part 2;
+      - Mismatch;
+      - Retrying (part 2 blocked);
+      - an offline pause in the same tab carries on by itself;
+      - Cancel → abort 204 → rest after a reload;
+      - two tabs: the second shows the other-tab line, then "Original attached";
+      - the card goes Paused → complete;
+      - the Paused box at 375 px in dark.
+    - After it: the paused-after-reload box at 375 px dark ("Upload paused at 80%. Choose the same file to continue.", the bar at 80 %, no sideways scroll), and its Choose file opens the picker. The only console error is the pg SSL-mode notice Next forwards from the server.
+    - After Q-50: Cancel on that paused-after-reload box sent the abort, the page went back to rest, the upload's folder was gone, and no video row names it any more.
+    - Not done here:
+      - VoiceOver (the e2e checks the live-region text);
+      - DevTools "Slow 4G" and request blocking (the e2e holds and fails part 2 instead);
+      - the 25 h `psql` update (the [int] suite covers expired).
+  - **Verify:**
+    - `rg` for platform import names prints nothing; `limits.ts` is unchanged; `console.` appears nowhere in the upload code.
+    - `.data/storage/.multipart/` held 109 folders:
+      - 107 were from P10b's runs before Cancel ended uploads on the server. No video row in the dev or the test database names them, and they were deleted (Q-51).
+      - 2 were open, paused uploads left by the manual checks. One was then cancelled from the File step after a reload (below). The other is the only folder left, and its row is still `uploading`.
+    - No folder comes from any of today's e2e runs; J5 and the Cancel tests check on disk that theirs are gone.
+  - **Step 0 (P10b):**
+    - typecheck, lint, tokens;
+    - unit: 57 files, 1,389 tests;
+    - [int]: 20 files, 269 tests;
+    - `upload.spec.ts` + `upload.responsive.spec.ts`: 18 passed.
+  - **Packages:** none added or changed.
+- Decisions: see the Decisions table (2026-10-20, P10c).
+- Open questions: none (Q-45–Q-51 answered in chat).
 - Follow-ups for later prompts:
+  - **P11:**
+    - Step 0 greps the four modules, `upload-progress.test.ts`, `getOriginalUploadProgress` and `abortOriginalUpload`.
+    - The File step's states are `deriveFileStep`'s union: extend it rather than branching in the component.
+    - `startOriginalUpload` takes `resume?: { uploadId, sent }`.
+  - **P11 / P22:** offline words follow Q-46 (same tab vs after a reload).
+  - **P23:**
+    - Prove the same flow on R2 with a file of at least 120 MB.
+    - R2's CORS must allow the part PUTs with progress (no Content-Type) and the keepalive abort is same-origin.
+    - An expired R2 URL is an opaque 403, seen as a network error, which already triggers the re-sign.
+    - Keep `/api/uploads/abort`'s optional `uploadId` (Q-50). R2's upload ids are opaque strings, which the 1–1024 limit (`uploadIdField`) allows.
+    - Optional: a server-side guard on start order (a start that commits after a newer one refuses). It needs a column and API changes. It would cover other devices and the unnamed abort after 15 s, which the tab's own wait can't.
+  - **P31b:** keep `screen-wake-lock` allowed in the Permissions-Policy.
+  - **Performance:**
+    - Per-video store hooks so the cover picker and the card don't re-render on every progress tick.
+    - P10b's split of `upload-store.ts` from the layout's card.
+  - **Later hardening:**
+    - Wipe `cliplease.upload.*` at sign-out (D80 keeps them until the upload ends, is cancelled or expires).
+    - Web Locks for presence, if instant release after a crash matters.
+  - **Known limits:**
+    - Next can't navigate client-side while fully offline (it does a full load), so navigating while offline ends the tab's upload; a reload then offers the paused resume.
+    - An abort that doesn't reach the server is not re-sent; the next start or the 24 h window ends that upload.
+    - A Cancel during a start that hasn't answered within 15 s sends its abort unnamed, which ends whatever upload the video has open.
 
 ### P11 — Make a Library post licensable: Source page and verified File step · [ ] to do
 > 120 min · Depends on: P10c, P10 (P10a + P10b), P09 · Record: question 1 answer ("already licensable"), the fields added to `getLibraryPost`, proposed labels "Post" / "Cover image", how the source posting's `url` is built; status line "Current prompt: P11b · Last verified: P11"
@@ -1356,6 +1601,11 @@ Every judgment call, newest last. Source: an OQ number, a 07 row (Dxx), "owner i
 | 2026-10-20 | P10b | Settled by 07 or the prompt, not asked: three steps (File · Rights · Review) with the J5.6 note on File until P11c installs D69's four (the prompt's "staged on purpose"); D80's multipart and "up to 2 GB" over D10/"1 GB" text; Cancel stops the part XHRs only and the row stays `uploading` until P10c's abort (01 J5.8, 04 §9.26, 05 callout 13, 06 §5, platform-owner-answers §3 staged); complete sends only `{ durationMs, width, height }` (P10a's strict schema over infra §3's VideoMeta); the poster contract is P10a's Q-34 token; P14a adds the public poster branch and its caching (`private, no-store` here); `?v=` is the first 8 hex of sha256(key), built in `queries.ts` until P14a's `posterSrc`; Continue is a link once ready (no form post: the File step saves nothing since D69) and a disabled button before, the File step's own exception to 04 §9.2; the self-attested preview is the line only (no "What does this mean?"); the cover picker takes JPEG/PNG/WebP re-encoded to a JPEG ≤ 1080 px; an `upload_expired` failure shows D80's "This upload expired. Start again.", the other stored failures the bad-file line; the work stays uncommitted until the owner says "commit and push" (the owner's rule over the prompt's Wrap up). | 07 D69, D80; prompt |
 | 2026-10-20 | P10b | Builder choices: the File step's h1 is the title, visually hidden; Rights, Review and non-draft videos render placeholders; error lines follow 04 §11.10 (offline, signed out with a Sign in link, generic) and a bad file hides the cover section; a browser refusal (type, too large) shows under the empty drop area before any request; the too-large line rounds a size just over 2 GiB up ("2.1 GB"); percent never shows 100 before every byte is in; the live region speaks 25/50/75 % and "Original attached" only; `beforeunload` is on while any original's parts or complete run, on any page of the tab; the card hides on its own video's page and drops an ending once the File step showed it; covers go one after another, so the last chosen is the one stored; Cancel drops a frame from the cancelled file (a chosen image stays); Try again reuses the chosen file; slugs retry with `ON CONFLICT DO NOTHING`, up to 3 tries; zero-width and blank-filler characters count as nothing (a title of only those is empty) while ZWJ/ZWNJ and tag characters inside a real title stay (emoji, scripts, flags); PosterFrame small is 64 px tall; `readVideoMetadata` takes an optional `{ poster, onHints }` beside infra's signature so complete never waits for the frame. | agent (stated); review findings |
 | 2026-10-20 | P10b | Shared pieces added: `src/lib/upload/codes.ts` (one error-code list, `upload-http.ts` checks its statuses against it), `isUuid` (`src/lib/validation/uuid.ts`; the image and poster routes and the video page), `notFoundNoStore` (`src/server/http.ts`; the image, poster and dev storage routes), `videoStepHref`, `useRefocusOnSwap`; CSS: the bars set `--bar-offset`, the card `--card-offset` from its measured `--upload-card-h`, one rule derives `--toast-offset` and `scroll-padding-bottom`, and `data-covers-focus` marks what can cover a focused control. e2e: `collectConsoleErrors` also ignores WebKit's cancelled `blob:` loads (the metadata read's detached video) and matches `_rsc` in a page error's URL as text. | simplify; review findings |
+| 2026-10-20 | P10c | Owner answers in chat (Q-45, Q-46, Q-47, Q-48 option a; Q-49 option b): `PART_MAX_ATTEMPTS = 5` is five retries after the first send, waits 1/2/4/8/16 s plus jitter `base + floor(random() × base × 0.25)`; two Paused boxes (same tab "Upload paused at {n}%. Check your connection.": offline shows Cancel only and goes on by itself on `online`, retries ran out shows Resume + Cancel and also goes on once back online; after a reload "Upload paused at {n}%. Choose the same file to continue." with Choose file + Cancel); the card's Retrying line, "Upload paused at {n}%" heading with title, Open and ×, and the screen-reader lines "Connection lost. Retrying…", "Upload paused at {n}%." and "Upload paused at {n}%: {title}"; one bigger step; a second tab on the same video shows "This video is uploading in another tab." (BroadcastChannel) and refreshes when that upload ends. | owner in chat |
+| 2026-10-20 | P10c | Settled by 07, the owner's earlier answers or the prompt, not asked: Q-42 (owner) over the prompt's "no background upload": retry, pause, resume, Cancel, the Wake Lock and beforeunload live in the per-tab store, `uploadOriginal` and the card, with no unmount or navigation abort ("signal aborted → keep the hint" becomes "a page unload keeps the hint"); the keep-open line stays Q-42's; one re-sign per part after a 403 or a network error (D80) over 01 J5.9 / 05 callout 15's "on 403", none after a 5xx; offline → Paused with auto-continue and an online failure → Retrying (the prompt over 06 §5); the constants stay in `limits.ts` (unchanged) and the hint key is `cliplease.upload.<videoId>` (D103), research's 1/3/9 s retries superseded by D80; "Upload didn't finish…" stays (Q-40, Q-42 over 04 §11.10); only the upload id reaches the page (the prompt over P10b's DTO choice; `CreatorVideoDTO` unchanged, progress is a separate prop); 02 has no `getOriginalUploadProgress`, recorded as a read-only addition with no route contract change; beforeunload and the Wake Lock span uploading, retrying and checking; the paused-after-reload look follows 04 (frozen bar, Banner above); `isIosDevice` follows the prompt (D152 allows it, layout never branches on it); a server `not_same_file` shows the Mismatch words; the resume note stays until the upload ends, is cancelled or expires (D80; no wipe at sign-out); the work stays uncommitted until the owner says "commit and push". | 07 D80, D103, D152; prompt; owner answers Q-40, Q-42 |
+| 2026-10-20 | P10c | Builder choices: start is never aborted; a part 404 goes straight to complete, which maps the outcome; Cancel shows rest at once, waits up to 15 s for a start still answering, then sends one keepalive `/abort` naming the upload (Q-50; unnamed only when no start answered in time; an abort that didn't arrive isn't re-sent: the next start or the 24 h window ends it), and a start right after a Cancel waits for the cancelled start's answer and for an unnamed abort (15 s at most each, never for a named abort); the File step marks only done, error and canceled as seen, so a pause shows on the card; the server's progress counts whole parts only, and an assembled-but-uncompleted upload reads as resumable with doneBytes = size (the paused % caps at 99; stated in chat, a deviation from Task 5's text); Start again (Mismatch) after a reload ends the paused upload on the server (Cancel's path) and uploads the chosen file from 0 %, and with no file held (a server `not_same_file` in this tab) starts the tab's file again from 0 %; a file chosen for a paused upload is checked first, and a different one shows Mismatch, announced, with focus on "Choose another file"; the paused and Mismatch Banners are `live={false}` (the File step's polite region speaks once); the iPhone hint shows on iOS in every state; presence heartbeats every 2 s, a watching File step asks every 1 s, a tab silent for 6 s stops counting and a closing tab says so (pagehide); this tab's ended entry goes when another tab announces the same video, the card's unseen ending included; a same-tab restart of the same file reuses its metadata read once that read got the video's size; `lastModified`: chromium-desktop exact ms, webkit-iphone rounded down to the second, both picks equal; known limits: Next can't navigate client-side while fully offline, so navigating offline ends the tab's upload (a reload offers the resume). | agent (stated); review findings |
+| 2026-10-20 | P10c | Shared pieces added: `retry.ts` (`wait`, `abortError`, `isAbort`, `withRetries` beside `sendPartWithRetry`), `keepsResumeHint` and `HintStore` in `resume.ts`, `ApiResult` exported from `http.ts`, `inspectOpenUpload` (shared by `resumeOriginal` and `getOriginalUploadProgress`), `isLive` and one `resume?: { uploadId, sent }` option in the store, `deriveFileStep` (`file-step-state.ts`), `useClientValue` (`src/components/ui/use-client-value.ts`, also CopyLinkField's share check), `pausedPercent` beside `uploadPercent`, `within` (`retry.ts`), `uploadIdField` (`upload-http.ts`, the parts and abort routes); tests: `tests/helpers/upload-fakes.ts`, the [int] `bytesOf`/`captureLogEvents`, the e2e `DRAFT_TITLE`, `AT_REST`, `uploadCard`, `cancelAndWaitForAbort` (checks the abort names the upload, waits for the refetch through resource timing), `multipartDir`, `isPartPutRequest`, `trackPartPuts`, `isOriginalStart`, `chooseOriginal`, `holdUploadRoute`, `abortAnswered`; `collectConsoleErrors` accepts `{ abortedUnder }` for parts a test aborts on purpose. | simplify; review findings |
+| 2026-10-20 | P10c | Owner answers in chat after the simplify pass (Q-50 b, Q-51 b). Q-50: Cancel's abort names its upload. This is a P10a contract change for P23: `/api/uploads/abort` takes `{ videoId, uploadId? }` (`uploadId` 1–1024 characters, else 400 invalid). `abortUpload` ends only that upload, and one that isn't open any more answers 204 and changes nothing. Without `uploadId` the abort behaves as before. On the client, `abortOriginalUpload(videoId, uploadId)` is the server call only. `clearResumeHint(store, videoId, uploadId?)` lets a run clear only its own upload's hint. `uploadOriginal` tells `onStarted` even when a Cancel came while start answered, so that Cancel can name the upload. The store no longer waits for a named abort. A start right after a Cancel waits for the cancelled start's answer (15 s at most), so that start can't replace the new upload. It also waits for an unnamed abort (15 s more at most). A Cancel names the page's paused upload only when this tab holds none of its own. A run cancelled before its start went out ends nothing. Q-51: the 107 orphaned `.multipart` folders were deleted after both databases were checked. | owner in chat |
 
 ## Owner answers (07 §4.1)
 
@@ -1426,7 +1676,7 @@ D107–D131 (07 §9), for OQ-34–OQ-38 and OQ-49–OQ-53 by D132–D143 (07 §1
 
 ## Open questions
 
-None open: every owner question (OQ-01–OQ-57, Q-01–Q-03 from P02, Q-04–Q-05 from P04, Q-06–Q-11 from P05, Q-12–Q-15 from P06, Q-16 from P07, Q-17–Q-24 from P08, Q-25–Q-33 from P09, Q-34–Q-39 from P10a and Q-40–Q-44 from P10b) is answered (07 §4.1, §10; Decisions 2026-10-17 and 2026-10-18). Add new questions below the line with the next free
+None open: every owner question (OQ-01–OQ-57, Q-01–Q-03 from P02, Q-04–Q-05 from P04, Q-06–Q-11 from P05, Q-12–Q-15 from P06, Q-16 from P07, Q-17–Q-24 from P08, Q-25–Q-33 from P09, Q-34–Q-39 from P10a, Q-40–Q-44 from P10b and Q-45–Q-51 from P10c) is answered (07 §4.1, §10; Decisions 2026-10-17 and 2026-10-18). Add new questions below the line with the next free
 number (Q-25, Q-26, …); when one is answered, set its status to "answered (Pxx)" and add the answer to Decisions.
 
 | ID | Question | Default if unanswered | Asked in | Status |
@@ -1476,6 +1726,13 @@ number (Q-25, Q-26, …); when one is answered, set its status to "answered (Pxx
 | Q-42 | Tapping another tab while the video uploads | Ask first ("Leave this page? Your upload will stop.") | P10b | answered (P10b): the owner's own answer: don't stop the upload; it carries on across the app's pages with a floating card (progress, then complete or stopped) whose Open goes back to the File step. Follow-up, both the default: the card floats above the TabBar below lg and bottom-right from md; its words "Uploading {title}", "Checking the file…", "Upload complete", "Upload didn't finish", "Open", and "Keep this tab open until the upload finishes. You can use other pages meanwhile." under the drop area |
 | Q-43 | Odd characters in titles | Tidy them: line breaks and tabs → spaces, runs squeezed, invisible and direction marks removed | P10b | answered (P10b): the default |
 | Q-44 | P10b runs 2–3× its 2-hour estimate | One step with a bigger budget (as P08, P09) | P10b | answered (P10b): the default |
+| Q-45 | What `PART_MAX_ATTEMPTS = 5` counts (the prompt's question 1) | Five retries after the first send, waits 1/2/4/8/16 s plus jitter | P10c | answered (P10c): the default |
+| Q-46 | The words when the connection drops with the page still open | Two boxes: "Check your connection." with Resume in the same tab, "Choose the same file to continue." after a reload | P10c | answered (P10c): the default |
+| Q-47 | The floating card when an upload retries or pauses | "Connection lost. Retrying…" under "Uploading {title}"; "Upload paused at {n}%" with the title, Open and ×; the screen-reader lines | P10c | answered (P10c): the default |
+| Q-48 | P10c runs 2–3× its 90-minute estimate | One step with a bigger budget | P10c | answered (P10c): the default |
+| Q-49 | The same video open in two tabs at once | Accept it as a known limit and write it down | P10c | answered (P10c): option b, detect the other tab and show "This video is uploading in another tab." |
+| Q-50 | Should Cancel's abort name the upload it ends (a late abort can end a newer upload)? | Leave it as a noted follow-up | P10c | answered (P10c): option b, do it now |
+| Q-51 | 109 leftover upload folders (107 orphaned from P10b's runs, 2 paused from manual checks) | Leave them | P10c | answered (P10c): option b, delete the 107 orphaned folders |
 
 ## Prompt map
 

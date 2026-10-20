@@ -1,5 +1,5 @@
 import "server-only";
-import type { z } from "zod";
+import { z } from "zod";
 import type { UploadRouteCode } from "../../lib/upload/codes";
 import type { CreatorContext } from "../auth/session";
 import { getCreatorForApi } from "../auth/session";
@@ -36,6 +36,9 @@ export const uploadOk = (body: unknown) =>
 
 export const uploadNoContent = () =>
   new Response(null, { status: 204, headers: NO_STORE });
+
+/** An open upload's id as the routes take it: opaque (R2's are long strings), so only its length is checked. */
+export const uploadIdField = z.string().min(1).max(1024);
 
 /** A Zod refusal as one of the routes' 400 codes; `codeOf` names the specific ones, anything else is `invalid`. */
 type IssueCode = (issue: z.core.$ZodIssue) => UploadCode | null;

@@ -7,6 +7,9 @@ import {
   DROPZONE_COPY,
   INDICATOR_COPY,
   milestoneAnnouncement,
+  PAUSE_COPY,
+  pausedLabel,
+  pausedPercent,
   progressLabel,
   splitFileName,
   storedFailureLine,
@@ -24,6 +27,7 @@ const BAD_FILE =
   "We couldn't read this file as a video. Export it again as MP4 and retry.";
 const BAD_TYPE = "Upload an MP4 or MOV video.";
 const EXPIRED = "This upload expired. Start again.";
+const INTERRUPTED = "Upload didn't finish. Choose the file again.";
 
 describe("tooLargeMessage (07 D80)", () => {
   it.each([
@@ -106,6 +110,22 @@ describe("uploadPercent", () => {
   });
 });
 
+describe("pausedPercent", () => {
+  const SIZE = 40 * MIB;
+  it.each([
+    [0, SIZE, 0],
+    [32 * MIB, SIZE, 80],
+    [1, 3, 33],
+    [2, 3, 66],
+    [999, 1000, 99],
+    [SIZE, SIZE, 99],
+    [SIZE + 1, SIZE, 99],
+    [0, 0, 0],
+  ])("%i of %i bytes → %i percent", (sent, total, percent) => {
+    expect(pausedPercent(sent, total)).toBe(percent);
+  });
+});
+
 describe("progressLabel (04 §9.26)", () => {
   it.each([
     [312 * MIB, 840 * MIB, "37% · 312 of 840 MB"],
@@ -116,6 +136,19 @@ describe("progressLabel (04 §9.26)", () => {
     [900 * MIB, 840 * MIB, "100% · 840 of 840 MB"],
   ])("%i of %i → %s", (sent, total, label) => {
     expect(progressLabel(sent, total)).toBe(label);
+  });
+});
+
+describe("pausedLabel (owner answer Q-47 a)", () => {
+  it.each([
+    [387 * MIB, 840 * MIB, "46% · 387 of 840 MB"],
+    [0, 840 * MIB, "0% · 0 of 840 MB"],
+    // Never 100 while paused, and never past the file.
+    [840 * MIB, 840 * MIB, "99% · 840 of 840 MB"],
+    [900 * MIB, 840 * MIB, "99% · 840 of 840 MB"],
+    [Math.round(1.2 * GIB), 2 * GIB, "60% · 1.2 of 2 GB"],
+  ])("%i of %i → %s", (sent, total, label) => {
+    expect(pausedLabel(sent, total)).toBe(label);
   });
 });
 
@@ -160,6 +193,12 @@ describe("uploadErrorLine (04 §11.10)", () => {
   // Every code, so a new one doesn't compile until it has a line here.
   const ONLINE: Record<UploadErrorCode, UploadErrorLine | null> = {
     canceled: null,
+    // The Paused box shows instead (owner answer Q-46 a).
+    paused: null,
+    stale_upload: {
+      message: INTERRUPTED,
+      action: { kind: "pick", label: "Try again" },
+    },
     size_mismatch: {
       message: BAD_FILE,
       action: { kind: "pick", label: "Try again" },
@@ -272,11 +311,9 @@ describe("attachedLine", () => {
   });
 });
 
-describe("File step copy (owner answers Q-40, Q-41, Q-42)", () => {
+describe("File step copy (owner answers Q-40, Q-41, Q-42, Q-46, Q-47, Q-49)", () => {
   it("keeps the dropzone strings", () => {
-    expect(DROPZONE_COPY.interrupted).toBe(
-      "Upload didn't finish. Choose the file again.",
-    );
+    expect(DROPZONE_COPY.interrupted).toBe(INTERRUPTED);
     expect(DROPZONE_COPY.keepOpen).toBe(
       "Keep this tab open until the upload finishes. You can use other pages meanwhile.",
     );
@@ -300,8 +337,36 @@ describe("File step copy (owner answers Q-40, Q-41, Q-42)", () => {
     });
   });
 
+  it("keeps the retrying, iPhone and other-tab lines (04 §9.26, owner answer Q-49 b)", () => {
+    expect(DROPZONE_COPY.retrying).toBe("Connection lost. Retrying…");
+    expect(DROPZONE_COPY.iphoneHint).toBe(
+      "On iPhone, choose the video from Files for full quality.",
+    );
+    expect(DROPZONE_COPY.otherTab).toBe(
+      "This video is uploading in another tab.",
+    );
+  });
+
+  it("keeps the paused, mismatch and expired strings (owner answers Q-46 a, Q-47 a)", () => {
+    expect(PAUSE_COPY.pausedHere(46)).toBe(
+      "Upload paused at 46%. Check your connection.",
+    );
+    expect(PAUSE_COPY.pausedAfterReload(80)).toBe(
+      "Upload paused at 80%. Choose the same file to continue.",
+    );
+    expect(PAUSE_COPY.pausedSpoken(46)).toBe("Upload paused at 46%.");
+    expect(PAUSE_COPY.mismatch).toBe(
+      "This doesn't look like the same file. Start again?",
+    );
+    expect(PAUSE_COPY.startAgain).toBe("Start again");
+    expect(PAUSE_COPY.chooseAnother).toBe("Choose another file");
+    expect(PAUSE_COPY.resume).toBe("Resume");
+    expect(PAUSE_COPY.chooseFile).toBe("Choose file");
+  });
+
   it("keeps the upload indicator strings", () => {
     expect(INDICATOR_COPY.uploading("First snow")).toBe("Uploading First snow");
+    expect(INDICATOR_COPY.paused(46)).toBe("Upload paused at 46%");
     expect(INDICATOR_COPY.done).toBe("Upload complete");
     expect(INDICATOR_COPY.stopped).toBe("Upload didn't finish");
     expect(INDICATOR_COPY.open).toBe("Open");

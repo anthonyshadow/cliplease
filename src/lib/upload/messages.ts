@@ -1,4 +1,5 @@
-// The File step's words and the pure rules behind them (04 §9.26, §11.10; 07 D80; owner answers Q-40, Q-42). Client-safe.
+// The File step's words and the pure rules behind them (04 §9.26, §11.10; 07 D80; owner answers Q-40, Q-42, Q-46,
+// Q-47, Q-49). Client-safe.
 import { formatBytes } from "../format";
 import { GENERIC_ERROR_MESSAGE } from "../result";
 import { SIGN_IN_COPY } from "../sign-in";
@@ -25,6 +26,31 @@ export const DROPZONE_COPY = {
   interrupted: "Upload didn't finish. Choose the file again.",
   continueHelper: "Choose the original file to continue.",
   progressLabel: "Upload progress",
+  // 04 §9.26 / §11.10 (07 D80).
+  retrying: "Connection lost. Retrying…",
+  iphoneHint: "On iPhone, choose the video from Files for full quality.",
+  // Owner answer Q-49 b (proposed copy): the same video open in another tab.
+  otherTab: "This video is uploading in another tab.",
+} as const;
+
+/** "Upload paused at 46%": the paused boxes, the live region and the floating card all say it. */
+const pausedAt = (percent: number) => `Upload paused at ${percent}%`;
+
+/** The paused, mismatch and expired boxes (04 §9.26, §11.10; owner answer Q-46 a: two Paused boxes). */
+export const PAUSE_COPY = {
+  /** Same tab: offline, or a part ran out of retries; it goes on by itself when the browser is back online. */
+  pausedHere: (percent: number) =>
+    `${pausedAt(percent)}. Check your connection.`,
+  resume: "Resume",
+  /** After a reload or a closed tab: the browser no longer holds the file. */
+  pausedAfterReload: (percent: number) =>
+    `${pausedAt(percent)}. Choose the same file to continue.`,
+  chooseFile: "Choose file",
+  mismatch: "This doesn't look like the same file. Start again?",
+  startAgain: "Start again",
+  chooseAnother: "Choose another file",
+  /** The live region's word for a pause (owner answer Q-47 a). */
+  pausedSpoken: (percent: number) => `${pausedAt(percent)}.`,
 } as const;
 
 export const COVER_COPY = {
@@ -42,6 +68,8 @@ export const COVER_COPY = {
 /** The floating upload card on the app's other pages (owner answer Q-42 and its follow-up; proposed copy). */
 export const INDICATOR_COPY = {
   uploading: (title: string) => `Uploading ${title}`,
+  // Owner answer Q-47 a.
+  paused: pausedAt,
   done: "Upload complete",
   stopped: "Upload didn't finish",
   open: "Open",
@@ -93,9 +121,23 @@ export function uploadPercent(sent: number, total: number): number {
   return sent >= total ? 100 : Math.min(99, Math.floor((sent / total) * 100));
 }
 
+/** The percent a paused upload shows: never 100 before the upload is complete. */
+export const pausedPercent = (sent: number, total: number) =>
+  Math.min(99, uploadPercent(sent, total));
+
+/** A row's line under its bar: the percent, then the bytes in (never past the file). */
+function barLabel(percent: number, sent: number, total: number): string {
+  return `${percent}% · ${formatBytes(Math.min(sent, total), total)}`;
+}
+
 /** "37% · 312 of 840 MB" (04 §9.26); "1.2 of 2 GB" above 1 GB. */
 export function progressLabel(sent: number, total: number): string {
-  return `${uploadPercent(sent, total)}% · ${formatBytes(Math.min(sent, total), total)}`;
+  return barLabel(uploadPercent(sent, total), sent, total);
+}
+
+/** A paused row's line: the paused percent (never 100) and the bytes stored, "46% · 386 of 840 MB". */
+export function pausedLabel(sent: number, total: number): string {
+  return barLabel(pausedPercent(sent, total), sent, total);
 }
 
 const MILESTONES = [25, 50, 75] as const;
@@ -133,7 +175,13 @@ export function uploadErrorLine(
   if (isBadFileCode(code)) return BAD_FILE_LINE;
   switch (code) {
     case "canceled":
+    case "paused":
       return null;
+    case "stale_upload":
+      return {
+        message: DROPZONE_COPY.interrupted,
+        action: { kind: "pick", label: TRY_AGAIN },
+      };
     case "too_large":
       return { message: tooLargeMessage(size), action: null };
     case "bad_type":

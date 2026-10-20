@@ -1,20 +1,9 @@
 "use client";
 
 import { Check, Copy, Share } from "lucide-react";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
-
-const noop = () => () => {};
-
-// Read browser capabilities only after hydration: Node also has a global `navigator`, so a check during render
-// would differ between the server and some browsers (a hydration mismatch).
-function useCanShare() {
-  return useSyncExternalStore(
-    noop,
-    () => typeof navigator.share === "function",
-    () => false,
-  );
-}
+import { useClientValue } from "./use-client-value";
 
 const PILL =
   "hit-44 inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-transparent bg-surface px-4 text-callout font-semibold text-ink active:opacity-70";
@@ -34,7 +23,12 @@ export function CopyLinkField({
   label: string;
   className?: string;
 }) {
-  const canShare = useCanShare();
+  // Read after hydration: Node also has a global `navigator`, so a check during render would differ between the server
+  // and some browsers (a hydration mismatch).
+  const canShare = useClientValue(
+    () => typeof navigator.share === "function",
+    false,
+  );
   // "copied" for 2 s after a copy; "manual" when there is no clipboard and the text is selected instead. `id`
   // changes on every press, so a second copy restarts the 2 s and is announced again.
   const [status, setStatus] = useState<{

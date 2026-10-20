@@ -3,6 +3,7 @@ import { PART_URL_BATCH } from "@/lib/upload/limits";
 import { toActor } from "@/server/auth/session";
 import {
   uploadError,
+  uploadIdField,
   uploadOk,
   uploadRoute,
 } from "@/server/storage/upload-http";
@@ -12,7 +13,7 @@ import { presignParts } from "@/server/storage/uploads";
 
 const partsInput = z.strictObject({
   videoId: z.uuid(),
-  uploadId: z.string().min(1).max(1024),
+  uploadId: uploadIdField,
   partNumbers: z.array(z.int().positive()).min(1).max(PART_URL_BATCH),
 });
 

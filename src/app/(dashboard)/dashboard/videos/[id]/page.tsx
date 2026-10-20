@@ -12,6 +12,7 @@ import {
   requireCreator,
   toActor,
 } from "@/server/auth/session";
+import { getOriginalUploadProgress } from "@/server/storage/uploads";
 import { getVideoForCreator } from "@/server/videos/queries";
 
 export async function generateMetadata({
@@ -48,9 +49,13 @@ export default async function VideoPage({
     typeof step === "string" ? step : undefined,
   );
   if (route.kind === "redirect") redirect(videoStepHref(video.id, route.step));
-  return route.step === "file" ? (
-    <FileStep video={video} />
-  ) : (
-    <StepPlaceholder videoId={video.id} step={route.step} />
-  );
+  if (route.step !== "file") {
+    return <StepPlaceholder videoId={video.id} step={route.step} />;
+  }
+  // The paused percent after a reload (P10c): only an unfinished upload has one.
+  const progress =
+    video.originalStatus === "uploading"
+      ? await getOriginalUploadProgress(toActor(ctx), { videoId: video.id })
+      : null;
+  return <FileStep video={video} progress={progress} />;
 }

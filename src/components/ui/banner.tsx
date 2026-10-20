@@ -18,23 +18,28 @@ const TONES = {
   },
 } as const;
 
-/** Status line (04 §9.21): `role="status"`, or `role="alert"` for errors. There is no success banner. */
+/**
+ * Status line (04 §9.21): `role="status"`, or `role="alert"` for errors. There is no success banner. `live={false}` drops
+ * the role where the page announces the same words itself (the File step's paused box).
+ */
 export function Banner({
   tone = "info",
   action,
+  live = true,
   className,
   children,
 }: {
   tone?: BannerTone;
-  /** An optional `Button variant="link"`. */
+  /** An optional `Button variant="link"`, or the box's own buttons. */
   action?: ReactNode;
+  live?: boolean;
   className?: string;
   children: ReactNode;
 }) {
   const { box, icon: Icon, iconClass } = TONES[tone];
   return (
     <div
-      role={tone === "error" ? "alert" : "status"}
+      role={live ? (tone === "error" ? "alert" : "status") : undefined}
       className={cn(
         "flex items-start gap-2 rounded-md border border-transparent px-4 py-3 text-callout text-ink",
         box,

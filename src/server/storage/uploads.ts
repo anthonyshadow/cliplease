@@ -3,6 +3,8 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../../db/client";
 import { license, licenseRequest, video } from "../../db/schema";
 import type { PosterOrigin } from "../../lib/domain/values";
+import type { OriginalUploadProgress } from "../../lib/upload/resume";
+import { isUuid } from "../../lib/validation/uuid";
 import { type Actor, requireCreatorActor } from "../auth/actor";
 import { deriveSubkey } from "../crypto/token-cipher";
 import { errorName, logEvent } from "../log";
@@ -153,7 +155,10 @@ export async function isOriginalLocked(
   return !row || lockedBy(row);
 }
 
-/** The creator's video with its upload columns and lock flags; `uploadFresh` by the database's clock. */
+/** Whether the open upload started inside the resume window (07 D80), by the database's clock. */
+const uploadFresh = sql<boolean>`coalesce(${video.originalUploadStartedAt} > now() - make_interval(secs => ${WINDOW_S}), false)`;
+
+/** The creator's video with its upload columns and lock flags. */
 async function ownVideo(creatorId: string, videoId: string) {
   const [row] = await db
     .select({
@@ -168,7 +173,7 @@ async function ownVideo(creatorId: string, videoId: string) {
       originalError: video.originalError,
       posterObjectKey: video.posterObjectKey,
       ...lockFlags(db),
-      uploadFresh: sql<boolean>`coalesce(${video.originalUploadStartedAt} > now() - make_interval(secs => ${WINDOW_S}), false)`,
+      uploadFresh,
     })
     .from(video)
     .where(and(eq(video.id, videoId), eq(video.creatorId, creatorId)));
@@ -408,31 +413,60 @@ async function resumeOriginal(
     partSize,
     partCount: count,
   };
-  const open = { videoId: row.id, key, uploadId, size: i.size };
-  if (!row.uploadFresh) {
+  const stored = await inspectOpenUpload({
+    fresh: row.uploadFresh,
+    key,
+    uploadId,
+    size: i.size,
+    partSize,
+  });
+  if (stored.state === "expired") {
+    const open = { videoId: row.id, key, uploadId, size: i.size };
     await settle(open, { expired: true });
     return fail("upload_expired");
   }
-  const parts = await storage().listParts({ key, uploadId });
-  if (parts === "no_such_upload") {
-    // Already assembled (a complete is running, or died after assembling): every part is in, and the client's complete
-    // finishes it as a retried complete would.
-    if (await storage().head(key)) {
-      const doneParts = Array.from({ length: count }, (_, n) => n + 1);
-      return { ok: true as const, upload: { ...upload, doneParts } };
-    }
-    await settle(open, { expired: true });
-    return fail("upload_expired");
-  }
-  // Only whole parts count: a short part is sent again.
-  const doneParts = parts
-    .filter(
-      (p) =>
-        p.partNumber <= count &&
-        p.size === expectedPartSize(p.partNumber, { size: i.size, partSize }),
-    )
-    .map((p) => p.partNumber);
+  // Assembled: every part is in, and the client's complete finishes it as a retried complete would.
+  const doneParts =
+    stored.state === "assembled"
+      ? Array.from({ length: count }, (_, n) => n + 1)
+      : stored.parts.map((p) => p.partNumber);
   return { ok: true as const, upload: { ...upload, doneParts } };
+}
+
+/**
+ * Where an open upload stands, read-only: expired once the resume window is over or its parts are gone with nothing at
+ * the key; assembled when the parts went into the file at the key (a complete is running, or died before its write);
+ * otherwise the whole parts stored so far.
+ */
+async function inspectOpenUpload(u: {
+  fresh: boolean;
+  key: string;
+  uploadId: string;
+  size: number;
+  partSize: number;
+}) {
+  if (!u.fresh) return { state: "expired" } as const;
+  const parts = await storage().listParts({ key: u.key, uploadId: u.uploadId });
+  if (parts === "no_such_upload") {
+    return (await storage().head(u.key))
+      ? ({ state: "assembled" } as const)
+      : ({ state: "expired" } as const);
+  }
+  return { state: "parts", parts: wholeParts(parts, u) } as const;
+}
+
+/** The stored parts a resume skips: numbered 1…partCount and whole under R2's rule (a short part is sent again). */
+function wholeParts<P extends { partNumber: number; size: number }>(
+  parts: readonly P[],
+  file: { size: number; partSize: number },
+): P[] {
+  const count = partCount(file.size, file.partSize);
+  return parts.filter(
+    (p) =>
+      p.partNumber >= 1 &&
+      p.partNumber <= count &&
+      p.size === expectedPartSize(p.partNumber, file),
+  );
 }
 
 async function startPoster(
@@ -622,11 +656,12 @@ async function completePoster(
 
 /**
  * Cancel on the File step (P10c): ends an open or failed upload and clears the file columns. A ready or empty original is
- * left as it is. Allowed on a disabled video, so nothing is left behind (owner answer Q-38 a).
+ * left as it is. Allowed on a disabled video, so nothing is left behind (owner answer Q-38 a). With `uploadId`, only that
+ * upload while it is the open one (owner answer Q-50): a failed row has none left to name, so a named abort leaves it.
  */
 export async function abortUpload(
   a: Actor,
-  i: { videoId: string },
+  i: { videoId: string; uploadId?: string },
 ): Promise<{ ok: true } | Fail<"not_found">> {
   const { creatorId } = requireCreatorActor(a);
   const ended = await db.transaction(async (tx) => {
@@ -640,7 +675,10 @@ export async function abortUpload(
       .where(and(eq(video.id, i.videoId), eq(video.creatorId, creatorId)))
       .for("update");
     if (!locked) return null;
-    if (locked.status !== "uploading" && locked.status !== "failed") {
+    if (
+      (locked.status !== "uploading" && locked.status !== "failed") ||
+      (i.uploadId !== undefined && locked.uploadId !== i.uploadId)
+    ) {
       return { key: null, uploadId: null };
     }
     await tx
@@ -667,6 +705,56 @@ export async function abortUpload(
     ]);
   }
   return { ok: true };
+}
+
+/**
+ * The paused percent after a reload (P10c): the open upload's id, its size and the bytes of the whole parts a resume
+ * would skip, or expired once the 24 h window is over or the parts are gone without a file. Read-only: the row turns
+ * failed at the next start or complete. null for anything else, and on a storage error (logged by video id and class).
+ */
+export async function getOriginalUploadProgress(
+  a: Actor,
+  i: { videoId: string },
+): Promise<OriginalUploadProgress> {
+  const { creatorId } = requireCreatorActor(a);
+  if (!isUuid(i.videoId)) return null;
+  const [row] = await db
+    .select({
+      id: video.id,
+      status: video.originalStatus,
+      key: video.originalObjectKey,
+      uploadId: video.originalUploadId,
+      size: video.originalBytes,
+      partBytes: video.originalPartBytes,
+      fresh: uploadFresh,
+    })
+    .from(video)
+    .where(and(eq(video.id, i.videoId), eq(video.creatorId, creatorId)));
+  if (row?.status !== "uploading") return null;
+  const { key, uploadId, size } = row;
+  if (!key || !uploadId || !size) return null;
+  try {
+    const stored = await inspectOpenUpload({
+      fresh: row.fresh,
+      key,
+      uploadId,
+      size,
+      partSize: row.partBytes ?? PART_BYTES,
+    });
+    if (stored.state === "expired") return { state: "expired" };
+    // Assembled: every part is in, as resumeOriginal reports.
+    const doneBytes =
+      stored.state === "assembled"
+        ? size
+        : stored.parts.reduce((sum, p) => sum + p.size, 0);
+    return { state: "resumable", uploadId, size, doneBytes };
+  } catch (error) {
+    logEvent("warn", "uploads.progress_failed", {
+      videoId: row.id,
+      error: errorName(error),
+    });
+    return null;
+  }
 }
 
 /** A signed, 5-minute download URL with the file's name (07 D61; P20's downloads). */

@@ -1,9 +1,16 @@
 import { expect, type Page } from "@playwright/test";
 
-/** A failed response the page is expected to log, e.g. a document 404 or the 400 from a wrong sign-in code. */
-export type ExpectedFailure = { status: number; pathname: string };
+/**
+ * A failed response the page is expected to log, e.g. a document 404 or the 400 from a wrong sign-in code; or, with
+ * `abortedUnder`, the requests under that path a test cut off with route.abort('failed') (Chromium logs each one;
+ * WebKit logs none).
+ */
+export type ExpectedFailure =
+  | { status: number; pathname: string }
+  | { abortedUnder: string };
 
 const FAILED_RESOURCE = /^Failed to load resource: .*status of (\d{3})\b/;
+const ROUTE_ABORTED = "Failed to load resource: net::ERR_FAILED";
 // WebKit reports a fetch that a navigation cancels as a page error ("<url> due to access control checks."). Next's
 // background RSC prefetches hit it whenever a test leaves a page right after loading it (seen in 14 of 40 probe runs);
 // Chromium stays quiet. For a router RSC fetch it is not an app error.
@@ -58,13 +65,15 @@ export function collectConsoleErrors(
     const text = message.text();
     const status = FAILED_RESOURCE.exec(text)?.[1];
     const url = message.location().url;
+    const pathname = URL.canParse(url) ? new URL(url).pathname : null;
     const isExpected =
-      (status !== undefined &&
-        URL.canParse(url) &&
-        expected.some(
-          (failure) =>
-            String(failure.status) === status &&
-            new URL(url).pathname === failure.pathname,
+      (pathname !== null &&
+        expected.some((failure) =>
+          "abortedUnder" in failure
+            ? text === ROUTE_ABORTED &&
+              pathname.startsWith(failure.abortedUnder)
+            : String(failure.status) === status &&
+              pathname === failure.pathname,
         )) ||
       (url.startsWith("blob:") && text.endsWith(CANCELLED_BLOB_LOAD));
     if (!isExpected) errors.push(text);
