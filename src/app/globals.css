@@ -316,22 +316,19 @@
   .frosted { background-color: Canvas; -webkit-backdrop-filter: none; backdrop-filter: none; }
 }
 
-/* Sticky bars must never hide the focused element (WCAG 2.2 SC 2.4.11) and toasts sit above them. */
-:root:has([data-tabbar]) {
-  scroll-padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 1rem);
-  --toast-offset: var(--tabbar-h);
-}
-:root:has([data-pricebar]) {
-  scroll-padding-bottom: calc(var(--pricebar-h) + env(safe-area-inset-bottom) + 1rem);
-  --toast-offset: var(--pricebar-h);
-}
+/* Sticky bars must never hide the focused element (WCAG 2.2 SC 2.4.11) and toasts sit above them. The bottom stack:
+   a bar (--bar-offset), then the floating upload card on it (owner answer Q-42; --upload-card-h is its measured height,
+   UploadIndicator). */
+:root:has([data-tabbar]) { --bar-offset: var(--tabbar-h); }
+:root:has([data-pricebar]) { --bar-offset: var(--pricebar-h); }
+:root:has([data-upload-card]) { --card-offset: calc(var(--upload-card-h, 0px) + 0.5rem); }
 @media (min-width: 64rem) {   /* Desktop (lg): the bars move up or go away */
-  :root:has([data-tabbar]) { scroll-padding-bottom: 1rem; --toast-offset: 0px; }
-  :root:has([data-pricebar]) {
-    scroll-padding-top: calc(var(--nav-h) + var(--pricebar-h) + 1rem);
-    scroll-padding-bottom: 1rem;
-    --toast-offset: 0px;
-  }
+  :root:has([data-tabbar], [data-pricebar]) { --bar-offset: 0px; }
+  :root:has([data-pricebar]) { scroll-padding-top: calc(var(--nav-h) + var(--pricebar-h) + 1rem); }
+}
+:root:has([data-tabbar], [data-pricebar], [data-upload-card]) {
+  --toast-offset: calc(var(--bar-offset, 0px) + var(--card-offset, 0px));
+  scroll-padding-bottom: calc(var(--toast-offset) + env(safe-area-inset-bottom) + 1rem);
 }
 
 /* Reduced motion: everything lands in its final state. Spinners stop (labels say "…ing"). */

@@ -108,7 +108,7 @@ const posterTokenKey = () => deriveSubkey(POSTER_TOKEN_SUBKEY);
 type Exec = Pick<typeof db, "select">;
 
 /** What the D09 lock reads besides the video's status: an open request, and any license. */
-const lockFlags = (exec: Exec) => ({
+export const lockFlags = (exec: Exec) => ({
   openRequest: sql<boolean>`exists (${exec
     .select({ one: sql`1` })
     .from(licenseRequest)
@@ -127,7 +127,8 @@ const lockFlags = (exec: Exec) => ({
     .where(eq(license.videoId, video.id))})`,
 });
 
-const lockedBy = (row: {
+/** The D09 lock (isOriginalLocked) on a row selected with its status and lockFlags. */
+export const lockedBy = (row: {
   status: string;
   openRequest: boolean;
   licensed: boolean;

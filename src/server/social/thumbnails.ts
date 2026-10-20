@@ -4,7 +4,7 @@ import { db } from "../../db/client";
 import { socialAccount, socialPost } from "../../db/schema";
 import { THUMBNAIL_FALLBACK } from "../../lib/library/post";
 import { type Actor, requireCreatorActor } from "../auth/actor";
-import { NO_STORE } from "../http";
+import { notFoundNoStore } from "../http";
 import { mockThumbnailSvg } from "./providers/mock-data";
 
 // The authenticated image proxy (02 §7.6, 07 D42): the creator's browser never loads a platform URL itself. P08 built
@@ -36,10 +36,6 @@ const MOCK_IMAGE_HEADERS = {
   "X-Content-Type-Options": "nosniff",
   "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'",
 };
-
-/** Not cached: a thumbnail that failed comes back after a sync stores its URL again. */
-export const imageNotFound = () =>
-  new Response(null, { status: 404, headers: NO_STORE });
 
 /** Mock tile `n`, drawn `width` × `height`. */
 type MockImage = { n: number; width: number; height: number };
@@ -100,7 +96,10 @@ async function thumbnailImage(
   };
 }
 
-/** The image for the creator's own account or post, or a 404 Response for anything else; never throws to the route. */
+/**
+ * The image for the creator's own account or post, or an uncached 404 for anything else (a thumbnail that failed comes
+ * back after a sync stores its URL again); never throws to the route.
+ */
 export async function streamPlatformImage(
   i:
     | { kind: "avatar"; accountId: string }
@@ -113,12 +112,12 @@ export async function streamPlatformImage(
       i.kind === "avatar"
         ? await avatarImage(i.accountId, creatorId)
         : await thumbnailImage(i.postId, creatorId);
-    if (!image) return imageNotFound();
+    if (!image) return notFoundNoStore();
     return new Response(mockThumbnailSvg(image.n, image.width, image.height), {
       headers: MOCK_IMAGE_HEADERS,
     });
   } catch {
     // Also a size mockThumbnailSvg refuses (RangeError).
-    return imageNotFound();
+    return notFoundNoStore();
   }
 }

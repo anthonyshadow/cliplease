@@ -1,6 +1,6 @@
 import "server-only";
 import { type Env, isDevAppEnv } from "../env";
-import { NO_STORE } from "../http";
+import { NO_STORE, notFoundNoStore } from "../http";
 import { errorName, logEvent } from "../log";
 import { localDriver } from "./index";
 import { isStorageKey, isUploadId } from "./local";
@@ -92,7 +92,7 @@ export async function handleDevStorage(
   segments: readonly string[],
   nowS = Math.floor(Date.now() / 1000),
 ): Promise<Response> {
-  if (!isDevStorageEnabled(e)) return status(404);
+  if (!isDevStorageEnabled(e)) return notFoundNoStore();
   const method = request.method === "GET" ? "GET" : "PUT";
   const parsed = parseDevStorageRequest(
     method,
@@ -109,7 +109,7 @@ export async function handleDevStorage(
   try {
     if ("cd" in r) {
       const object = await localDriver().getStream(r.key);
-      if (!object) return status(404);
+      if (!object) return notFoundNoStore();
       return new Response(object.body, {
         headers: {
           ...NO_STORE,
@@ -122,7 +122,7 @@ export async function handleDevStorage(
     if (!request.body) return status(400);
     if ("uploadId" in r) {
       const part = await localDriver().receivePart(r, request.body);
-      if (part === "no_such_upload") return status(404);
+      if (part === "no_such_upload") return notFoundNoStore();
       if (part === "too_large") return status(413);
       return new Response(null, {
         headers: { ...NO_STORE, ETag: part.etag },

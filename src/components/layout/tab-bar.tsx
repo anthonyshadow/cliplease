@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { type ReactNode, type RefObject, useEffect, useRef } from "react";
+import { type ReactNode, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import {
   CREATOR_NAV,
@@ -48,10 +48,11 @@ function CurrentBar() {
 
 /**
  * The root's scroll-padding-bottom (globals.css) keeps focus clear of the bar, but WebKit's focus scrolling can
- * still leave a field a few px under it. After each focus move, if the bar covers the focused element's bottom
- * edge, scroll it clear (WCAG 2.2 SC 2.4.11). A sheet above the bar, or the bar hidden at lg, covers nothing.
+ * still leave a field a few px under it. After each focus move, if something marked `data-covers-focus` (the bar, the
+ * floating upload card) covers the focused element's bottom edge, scroll it clear (WCAG 2.2 SC 2.4.11). A sheet above
+ * the bar, or the bar hidden at lg, covers nothing.
  */
-function useKeepFocusAboveBar(bar: RefObject<HTMLElement | null>) {
+function useKeepFocusAboveBar() {
   useEffect(() => {
     const onFocusIn = (event: FocusEvent) => {
       const target = event.target;
@@ -62,20 +63,15 @@ function useKeepFocusAboveBar(bar: RefObject<HTMLElement | null>) {
           rect.left + rect.width / 2,
           Math.min(rect.bottom, window.innerHeight) - 1,
         );
-        const node = bar.current;
-        if (
-          node &&
-          covering &&
-          node.contains(covering) &&
-          !node.contains(target)
-        ) {
+        const cover = covering?.closest("[data-covers-focus]");
+        if (cover && !cover.contains(target)) {
           target.scrollIntoView({ block: "nearest" });
         }
       });
     };
     document.addEventListener("focusin", onFocusIn);
     return () => document.removeEventListener("focusin", onFocusIn);
-  }, [bar]);
+  }, []);
 }
 
 /**
@@ -93,14 +89,13 @@ export function TabBar({
   signOut?: ReactNode;
 }) {
   const pathname = usePathname();
-  const barRef = useRef<HTMLElement>(null);
-  useKeepFocusAboveBar(barRef);
+  useKeepFocusAboveBar();
   const active = current ?? currentNavKey(pathname);
   const moreActive = MORE_SHEET_KEYS.some((key) => key === active);
   return (
     <nav
-      ref={barRef}
       data-tabbar
+      data-covers-focus
       className={cn(
         "fixed inset-x-0 bottom-0 z-40 border-t border-hairline frosted safe-area-bar lg:hidden",
         BAR_HEIGHT,

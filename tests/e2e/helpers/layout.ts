@@ -181,12 +181,17 @@ export async function expectPageFrame(
   }
 }
 
-/** A reading page (04 §5.2.3): the frame, one centered 640 px column, and no TabBar at any tier. */
-export async function expectReadingPage(page: Page, width: number) {
-  await expectPageFrame(page, width, { banner: true });
+/** One centered reading column of at most 640 px in <main> (04 §5.2.3, `.max-w-reading`). */
+export async function expectReadingColumn(page: Page) {
   const column = page.locator("main .max-w-reading").first();
   await expect(column).toHaveCSS("max-width", "640px");
   await expectWithinCap(column, 640);
+}
+
+/** A reading page (04 §5.2.3): the frame, one centered 640 px column, and no TabBar at any tier. */
+export async function expectReadingPage(page: Page, width: number) {
+  await expectPageFrame(page, width, { banner: true });
+  await expectReadingColumn(page);
   await expect(page.locator("[data-tabbar]")).toHaveCount(0);
 }
 

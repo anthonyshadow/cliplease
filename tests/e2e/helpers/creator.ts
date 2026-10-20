@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { expect, type Page, type TestInfo, test } from "@playwright/test";
+import { linkDemoAccount } from "./connections";
 import { signInWithEmail, uniqueEmail } from "./sign-in";
 
 // One letter per Playwright project (07 D154), the letters P22's run ids use: c chromium-desktop, w webkit-iphone,
@@ -45,21 +46,24 @@ export async function completeProfileStep(page: Page, handle: string) {
 }
 
 /**
- * Signs a run-unique email up as a creator: sign-in, the profile step (with `handle`, or a run-unique one), the
- * connect step's Continue, then payout setup (`payouts: true`, the default; it lands on Settings with payouts on) or
- * "Skip for now" (it lands on the Library). Later prompts extend this helper rather than forking it.
+ * Signs a run-unique email up as a creator: sign-in, the profile step (with `handle`, or a run-unique one), Connect
+ * Demo on the connect step when `connectDemo` (P10b; M3's specs), the connect step's Continue, then payout setup
+ * (`payouts: true`, the default; it lands on Settings with payouts on) or "Skip for now" (it lands on the Library).
+ * Later prompts extend this helper rather than forking it.
  */
 export async function signUpCreator(
   page: Page,
   {
     payouts = true,
     handle = uniqueHandle(test.info()),
-  }: { payouts?: boolean; handle?: string } = {},
+    connectDemo = false,
+  }: { payouts?: boolean; handle?: string; connectDemo?: boolean } = {},
 ): Promise<{ email: string; handle: string }> {
   const email = uniqueEmail(test.info());
   await signInWithEmail(page, email, "/onboarding");
   await expect(page).toHaveURL("/onboarding?step=profile");
   await completeProfileStep(page, handle);
+  if (connectDemo) await linkDemoAccount(page, "/onboarding?step=connect");
   await page.getByRole("link", { name: "Continue" }).click();
   await page.waitForURL("/onboarding?step=payouts");
   if (payouts) {

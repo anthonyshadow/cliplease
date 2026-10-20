@@ -33,7 +33,7 @@
 -->
 
 ## Status
-Current prompt: P10b · Last verified: P10a · Blockers: none
+Current prompt: P10c · Last verified: P10b · Blockers: none
 Gates: A (P22) [ ] · R (P22h) [ ] · B (P25) [ ] · C (P27) [ ] · S12 Stripe renewal sign-off (P25d, not a gate) [ ]
 Later: P34 (USD) not run · P05b (teens) not scheduled
 
@@ -644,13 +644,111 @@ Later: P34 (USD) not run · P05b (teens) not scheduled
   - **P31b:** the `poster-upload` subkey's tokens live 75 minutes; key rotation must accept the previous key for that long.
   - **Tests:** P07's `refresh-lock` concurrency test failed once in a full [int] run (it relies on ten calls overlapping a 300 ms refresh); make it deterministic (a barrier instead of a delay) if it shows up again.
 
-### P10b — Plain upload: title page, File step and poster · [ ] to do
+### P10b — Plain upload: title page, File step and poster ✅ (2026-10-20)
 > 120 min · Depends on: P10a · Record: proposed copy used, Back target, which poster path each e2e project took; set the Status line to "Current prompt: P10c · Last verified: P10b"
 - Done:
+  - **Owner answers (in chat, 2026-10-19/20; Q-40–Q-44 below):** Q-40 a, the proposed copy ships as written (title errors "Add a title." · "Keep it to 100 characters."; the File step's "‹ Back" → `/dashboard/videos`; "Choose the original file to continue."; the live region's "25% uploaded" · "50% uploaded" · "75% uploaded" · "Original attached"; the cover's alt "Cover image for {title}"; "Upload didn't finish. Choose the file again."; "Add a cover image for buyers." + "Choose an image"; "Choose a JPEG, PNG or WebP image." · "This image is too large. Choose a smaller one."). Q-41 a, Replace keeps a cover the creator chose; a new frame is taken only when there is no cover or the cover is a frame. Q-42, the owner's own answer: leaving through an in-app link does not stop the upload; it carries on, and a floating card shows its progress and its ending with Open back to the File step; the follow-up chose the card's place (above the TabBar below lg, bottom-right from md) and its words ("Uploading {title}", "Checking the file…", "Upload complete", "Upload didn't finish", "Open", and "Keep this tab open until the upload finishes. You can use other pages meanwhile." under the drop area, replacing D80's "Keep this page open…"). Q-43 a, titles are tidied before they are stored. Q-44 a, one step with a bigger budget. **Recorded answers, not asked:** OQ-10 (2 GB multipart), OQ-04 (never import from a platform), P10a's Q-34 (the poster's upload token).
+  - **Pure modules:** `src/lib/videos/slug.ts` (`slugFromTitle`, `withSlugSuffix`, on P05's `SLUG_RE`/`SLUG_MAX_LENGTH`), `title.ts` (`TITLE_MAX`, `TITLE_COPY`, `tidyTitle`, `titleMessage`), `steps.ts` (`VIDEO_STEPS = ['file','rights','review']`, `VIDEO_STEP_LABELS`, `resolveStep`, `videoStepHref`); `src/lib/validation/{video,uuid}.ts` (`titleField`, `createVideoSchema`, `isUuid`); `src/lib/upload/plan.ts` (`planParts`), `codes.ts` (the routes' error codes, shared with P10a's `upload-http.ts`, and `isBadFileCode`), `messages.ts` (the File step's words, `checkOriginalFile`, `tooLargeMessage`, `progressLabel`, `milestoneAnnouncement`, `uploadErrorLine`, `storedFailureLine`, `attachedLine`, `splitFileName`); `src/lib/media/frame.ts` (`seekTime`, `fitLongEdge`, `samplePoints`, `isBlankFrame`, `encodeWithin`).
+  - **Server:** `src/server/videos/create.ts` `createVideoFromUpload` (re-checks the title; `source 'upload'`, `ownership 'self_attested'`, `draft`, `original_status 'none'`, audit `video.created` by id only), `slug.ts` (`uniqueSlugForCreator`, `insertVideoWithUniqueSlug`: `ON CONFLICT (creator_id, slug) DO NOTHING`, a lost slug picked again, up to 3 tries; P11's `createVideoFromPost` reuses it), `queries.ts` `getVideoForCreator` (owner-scoped DTO with no object key, upload id or creator id; the D09 lock flags in the same select; `posterSrc` = `/api/media/posters/<id>?v=<first 8 hex of sha256(key)>`), `poster.ts` + `src/app/api/media/posters/[videoId]/route.ts` (the owner or an admin gets the JPEG with `image/jpeg`, `private, no-store`, `nosniff`; everyone else, a bad id, no poster or a missing object get the same empty 404). P10a's `lockFlags`/`lockedBy` are exported for it.
+  - **Pages:** `/dashboard/videos/new` (S18: "‹ Videos", two-tone "New video." / "From your Library or a file.", Title, Continue with "Continuing…", "Buyers will see:" + `UserRound` "Self-attested by the creator"; `?post=` → 404 until P11), its action (`requireCreator`, Zod, redirect to `?step=file`; a refused title focuses the field and is announced), `/dashboard/videos` (placeholder "Videos. Ready to license." + "Upload a file"), `/dashboard/videos/[id]` (not a uuid or not yours → 404; a draft renders `?step=` when every earlier step is complete, else redirects to the first incomplete one; Rights/Review and non-draft placeholders). One centered `max-w-reading` column at every tier.
+  - **File step:** `file-step.tsx` (Stepper File · Rights · Review, "‹ Back", a visually hidden h1 with the title, the J5.6 note + "Connect an account"), `file-step-upload.tsx` (the island), `upload-dropzone.tsx` (04 §9.26: a label over a hidden input, Enter opens it in WebKit too; at rest `min-h-40 md:min-h-50`; drag over; uploading with the 4 px bar, "37% · 312 of 840 MB" and Cancel; checking; done "Original attached · 0:14 · 720 × 1280" with Replace unless locked; error lines with their button, never a red bar; focus follows the state's control), `poster-picker.tsx` (frame capture or "Choose an image"; local preview at once, the stored poster after a reload), `PosterFrame` (`src/components/license/poster-frame.tsx`, 04 §9.20; small 64 px, large `max-h-[60svh]` keeping its aspect), `back-link.tsx`, `step-placeholder.tsx`, `src/components/ui/use-refocus-on-swap.ts`. Continue is a disabled button with the helper until the original is ready, then a link to `?step=rights`.
+  - **Browser upload:** `src/lib/upload/http.ts` (JSON POSTs, progress PUTs with XHR), `upload-original.ts` `uploadOriginal` (start → part URLs 20 at a time → 4 part PUTs at once with no Content-Type → complete with no ETags; a failed part fails it with `network`), `upload-file.ts` `uploadFile` (start → one PUT with the signed headers, 412 accepted → complete with the upload token), `src/lib/media/read-video-metadata.ts` (infra §3, plus an optional `{ poster, onHints }`: complete waits only for the hints, never for the frame), `encode-image.ts` (JPEG/PNG/WebP → JPEG ≤ 1080 px at 0.82 then 0.7, else too large), `canvas.ts`.
+  - **Background uploads (Q-42):** `src/lib/upload/upload-store.ts`, one store per tab: the original's phases (uploading · checking · done · error · canceled, plus `seen`), the cover (capturing · uploading · done · error; one owner token; covers go one after another so the last one chosen is the one stored), Cancel (stops the parts; a frame from the cancelled file goes too, a chosen image stays), Try again with the same file, and `beforeunload` only while an original runs. `upload-indicator.tsx` in the dashboard layout: the floating card, hidden on the video's own page, announcing endings only; the card's height feeds `--upload-card-h`, so toasts and focus scrolling clear it (`globals.css`: the bars set `--bar-offset`, one rule derives `--toast-offset` and `scroll-padding-bottom`; anything that can cover a focused control carries `data-covers-focus`, which the TabBar's focus helper reads).
+  - **Tests:** unit (slug, title, steps, plan, messages, frame, `uploadOriginal` with fake fetch/XHR, the store with mocked uploads, `readVideoMetadata` with a fake video), [int] `tests/integration/videos-create.test.ts` (row fields, `-2`/`-3`, three parallel creates, 60-character slugs, refused titles, the action's redirect and field errors, the tidy-up, the DTO's keys, the lock flag, `posterSrc`, a real sample.mp4 + poster.jpg upload) and `poster-route.test.ts` (owner and admin 200, every 404), e2e `tests/e2e/upload.spec.ts` (J5 end to end, Cancel, the browser and server file checks, the Q-42 card's states, ×, the error card, Q-41 Replace) and `upload.responsive.spec.ts` (G.6, four projects). `signUpCreator(page, { connectDemo })` added; the shared integration helpers moved into `tests/helpers/uploads.ts`; the upload specs remove the storage their own drafts made.
 - Verified:
-- Decisions:
-- Open questions:
+  - **Pre-commit review (5 lenses: security, correctness, spec, UX/a11y, tests; each lens's findings checked by a second agent that tried to refute them):** 21 findings, 16 confirmed and fixed. Fixes:
+    - a title of only blank-looking characters (U+3164, U+2800, variation selectors) passed: now empty;
+    - browser Back after an upload finished away showed stale cover props: the store keeps the stored cover's preview and origin, never settling against props;
+    - a refused image pick overwrote a frame cover still uploading;
+    - the large PosterFrame lost its aspect under `max-h`;
+    - a browser refusal left an older error row;
+    - repeated live-region text wasn't announced again, and a failed upload wasn't announced;
+    - the card could hide the focused control, and toasts drew over it;
+    - focus fell to the page at every state change;
+    - the hidden picker was an unlabeled tab stop in the done and error rows;
+    - five test gaps: Cancel proven by no part PUT or complete after it; multi-part `uploadOriginal` unit tests; the card's running, Open and error states; the store's Q-41 and retry rules; the start body and hints.
+
+    Refuted:
+    - a cancelled file's frame becoming the cover (then made explicit: Cancel drops a frame on its way);
+    - a failed Replace start hiding a ready original (the honest result of the creator's action);
+    - an older pick's slow encode winning (needs a second picker round trip inside one encode);
+    - `seekTime` 0 for an infinite duration (deliberate);
+    - no drag-and-drop e2e (the prompt prescribes `setInputFiles`; dropping is a manual check).
+  - **Simplify (owner request, 4 reviewers: reuse, simplification, efficiency, altitude; applied by three agents on disjoint files):**
+    - One error-code list for server and browser.
+    - Complete no longer waits for the frame capture.
+    - The capture is skipped when the creator chose the cover, and on a retry after a stored frame.
+    - The blank check does one pixel read.
+    - The poster route makes one fewer query (creator join).
+    - `getVideoForCreator` makes one query (lock flags in the select).
+    - The slug retry uses `ON CONFLICT DO NOTHING` instead of a savepoint.
+    - A single cover token, which also aborts an old frame's upload on Replace.
+    - Shared `isUuid`, `notFoundNoStore`, `videoStepHref`, `useRefocusOnSwap`, `pressLocator`/`requestEnded`, `expectReadingColumn` and the integration helpers.
+    - The dropzone's one wrapper, row and error button.
+    - The File step's view derived in one place.
+    - The CSS bottom stack.
+    - The unused DTO fields (`source`, `ownership`, `originalBytes`) and duplicate tests are gone.
+
+    Skipped:
+    - The "up to 2 GB" literal stays in `upload-dropzone.tsx` (P10c's grep).
+    - `posterError` and `connectDemo` stay (the prompt and infra §3 name them).
+    - Splitting the store so dashboard pages don't load the upload code: about 10 KB minified, follow-up below.
+    - A shared sha256-prefix helper: it would mean touching token-cipher and the mock provider.
+  - **Mutation checks** (each rule broken on purpose, then its tests run): 13 of 13 caught. Each of these fails a test:
+    - the poster route's owner check (2 failed);
+    - the DTO's creator scope (1);
+    - `resolveStep`'s gate (5);
+    - the title tidy-up (7);
+    - the taken-slug check (3);
+    - the conflict retry (1);
+    - a `?v=` naming the key (2);
+    - Cancel's abort (1);
+    - the leave guard (3);
+    - an ETag in complete (2);
+    - a Content-Type on part PUTs (1);
+    - Q-41's chosen cover (2, e2e);
+    - Q-42's card on its own page (2, e2e).
+  - **Test runs, all ✅:**
+    - `bun run typecheck` (0 errors);
+    - `bun run lint`;
+    - `bun run lint:tokens` (prints nothing);
+    - `bun run test` (57 files, 1,389 tests);
+    - `bun run test:int` (20 files, 269 tests; `videos-create` 18, `poster-route` 9, `uploads` 54);
+    - full `bun run test:e2e` (157 passed, 3 skipped);
+    - `upload.spec.ts` + `upload.responsive.spec.ts` with `--repeat-each 3` (54 passed) and after the storage clean-up `--repeat-each 2` (36 passed).
+  - **Flakes seen once each and not reproduced:**
+    - The P09 Library spec's "Demo chip, caption search and Clear search" on WebKit failed once under a heavy repeated run; it then passed 6 of 6 alone and in the final full run.
+    - The Cancel test once saw no stored upload on Chromium before the WebKit blob fix; it has passed every run since, more than 50.
+  - **Poster path per e2e project:**
+    - chromium-desktop: `frame_capture`. Playwright's Chromium decoded sample.mp4, against the prompt's expectation.
+    - webkit-iphone: `creator_image` (poster.jpg through "Choose an image"). The J5 test records it as an annotation.
+  - **Manual checks** (dev server, mobile 375 and desktop 1280, light and dark):
+    - S18's error, draft and redirect;
+    - a 20 MB two-part upload (start → parts → 2 part PUTs → complete);
+    - the interrupted banner after a reload;
+    - the card on the Library while uploading, then "Upload complete", Open back to "Original attached";
+    - a picked PNG cover shown at once, then from the poster route after a reload (owner 200 `image/jpeg` `private, no-store`; signed out 404);
+    - keyboard: Tab from Back lands on the drop area with the 2 px ring, and Enter opens the picker;
+    - the card's measured height feeding the toast offset (90 px card → `calc(3.5rem + 90px + .5rem)`).
+    - Not done here: VoiceOver and real Safari frame capture (WebKit's e2e took the "Choose an image" path); throttled "Slow 4G" (the e2e holds the part URLs instead).
+  - **Verify:** `find .data/storage -type f | head` lists `posters/<videoId>/<uuid>.jpg` files and originals under `originals/<creatorId>/<videoId>/`. No `.tmp` file. J5 checks on disk that its upload left no `.multipart/<uploadId>/`. Uploads cancelled or failed away stay open until P10c's abort, and earlier runs' leftovers remain in the git-ignored folder. `console.` appears nowhere in the new source.
+  - **Step 0 (P10a):**
+    - typecheck, lint, 1,035 unit, 242 [int] and `uploads` 54;
+    - the 12 files, the 5 exports and the 4 constants;
+    - `ffprobe` 14.000000; poster.jpg 35,095 B; the 8 P02 primitives;
+    - with `bun run dev`: the unsigned PUT → 403 and the four signed-out POSTs → 401.
+  - **Packages:** none added or changed.
+- Decisions: see the Decisions table (2026-10-20, P10b).
+- Open questions: none (Q-40–Q-44 answered in chat).
 - Follow-ups for later prompts:
+  - **P10c:** Cancel calls `/api/uploads/abort` (and clears what the store holds); per-part retry and re-sign, offline pause and resume replace "Upload didn't finish. Choose the file again." where a hint exists; Screen Wake Lock; the store's phases grow Retrying/Paused and the floating card shows them (it reads `isRunning` and `seen`); `uploadOriginal` keeps its signature and callers.
+  - **P11:** `createVideoFromPost` uses `insertVideoWithUniqueSlug`/`uniqueSlugForCreator`; extend `getVideoForCreator` additively; swap `VerifiedOwnerBadge` into the title page's "Buyers will see:"; `signUpCreator(page, { connectDemo: true })` and `createDraft`/`attachSample` in `tests/e2e/helpers/videos.ts` are ready (call `cleanCreatedVideos` after each test).
+  - **P11c:** `VIDEO_STEPS` gains `postings`; move the J5.6 note to Where posted; `videoStepHref` covers the new step.
+  - **P13:** the Review row reuses `PosterPicker` (it works without a capture); Rights and Review replace the placeholders.
+  - **P14a:** `posterSrc` in `src/server/videos/visibility.ts` replaces `ownerPosterSrc` in `queries.ts`; the public poster branch; the Videos list replaces the placeholder.
+  - **P23 / P30:** the CSP's `img-src` and `media-src` need `blob:` (the cover preview and the metadata read); R2's CORS must allow the XHR PUTs with upload progress (no Content-Type on parts, the signed Content-Type on the poster).
+  - **Performance:** split `upload-store.ts` so the dashboard layout's card doesn't pull the media and upload modules into every dashboard page (about 10 KB minified).
+  - **Dev note:** `next build` (the e2e web server) and `next dev` share `.next/`; restart `bun run dev` after an e2e run if pages or CSS look stale.
 
 ### P10c — Resumable original uploads: retry, resume and cancel · [ ] to do
 > 90 min · Depends on: P10b, P10a · Record: the question 1 answer and jitter formula; offline → Paused; Start again after a reload; which `lastModified` each e2e project reported; status line "Current prompt: P11 · Last verified: P10c"
@@ -1254,6 +1352,10 @@ Every judgment call, newest last. Source: an OQ number, a 07 row (Dxx), "owner i
 | 2026-10-19 | P10a | Contract changes to record for P10b, P10c and P23: `presignPut` takes `contentLength` (Q-36); the poster's start input takes `posterOrigin` and its result and complete body carry `uploadToken` (Q-34); `presignUpload`'s errors include `not_found`; `abortUpload` returns `{ ok } \| { ok: false, code: 'not_found' }`; upload errors answer `{ code }` with 400 · 404 · 409 · 410 · 422 and an unexpected error 500 `{ code: "internal" }`, while 401 keeps `{ error: { code: "unauthorized" } }`; `listParts` signals a missing, foreign or 24-hour-old upload with `'no_such_upload'`; part ETags are quoted MD5 (`"<hex>"`, as on R2) and compared unquoted; no `Access-Control-Expose-Headers` (same origin; P23's CORS exposes ETag). | 02 §5.9, §6.2; owner answers Q-34, Q-36 |
 | 2026-10-19 | P10a | Upload lifecycle choices: a start may begin from none, failed, uploading or ready (subject to D09) and clears the old file's display hints; resume needs the same size and type (the key's extension depends on the type) and counts only whole parts; complete is idempotent, fenced on status + upload id + key, and parallel completes settle on one answer (the local driver queues completes of one upload; a call that finds the parts gone finishes an assembled file or reports the stored failure); a resume or a complete that finds the file already assembled (a complete died after assembling) finishes it instead of expiring; expiry, abort and a fence miss delete any file left at the key; a ready or empty original is untouched by abort; failures keep `original_filename`, `original_bytes` and `original_mime` and clear the key. The poster path is allowed on draft, unpublished and published videos (01 J5.19) and refused on disabled ones; a retried poster complete never deletes the live poster. | 07 D09, D80; 02 §9.10; review findings |
 | 2026-10-19 | P10a | Dev-only behaviour: the local driver's `process.cwd()` paths make Turbopack trace `.data/` into every route that reaches it (a warning, and 4,424 traced files, already true of the email driver); left as is in dev/test, with a deploy follow-up to exclude `.data/**`. The dev route logs only `storage.dev_route_failed` with the error class; signed URLs stay out of `next dev`'s request log (`logging.incomingRequests.ignore`). | Next 16 docs (logging, output tracing); agent (stated) |
+| 2026-10-20 | P10b | Owner answers in chat (Q-40, Q-41, Q-43, Q-44 option a; Q-42 the owner's own answer plus a follow-up, both options a): the proposed copy ships; Replace keeps a chosen cover; uploads carry on across the app's pages with a floating card (above the TabBar below lg, bottom-right from md) and the keep-open line becomes "Keep this tab open until the upload finishes. You can use other pages meanwhile."; titles are tidied; one bigger step. Q-42 pulls in-app background upload forward from the prompt's Out of scope; `original_pending_key` (replacing a live original) stays [H3]. Recorded answers, not asked: OQ-10, OQ-04, Q-34. | owner in chat |
+| 2026-10-20 | P10b | Settled by 07 or the prompt, not asked: three steps (File · Rights · Review) with the J5.6 note on File until P11c installs D69's four (the prompt's "staged on purpose"); D80's multipart and "up to 2 GB" over D10/"1 GB" text; Cancel stops the part XHRs only and the row stays `uploading` until P10c's abort (01 J5.8, 04 §9.26, 05 callout 13, 06 §5, platform-owner-answers §3 staged); complete sends only `{ durationMs, width, height }` (P10a's strict schema over infra §3's VideoMeta); the poster contract is P10a's Q-34 token; P14a adds the public poster branch and its caching (`private, no-store` here); `?v=` is the first 8 hex of sha256(key), built in `queries.ts` until P14a's `posterSrc`; Continue is a link once ready (no form post: the File step saves nothing since D69) and a disabled button before, the File step's own exception to 04 §9.2; the self-attested preview is the line only (no "What does this mean?"); the cover picker takes JPEG/PNG/WebP re-encoded to a JPEG ≤ 1080 px; an `upload_expired` failure shows D80's "This upload expired. Start again.", the other stored failures the bad-file line; the work stays uncommitted until the owner says "commit and push" (the owner's rule over the prompt's Wrap up). | 07 D69, D80; prompt |
+| 2026-10-20 | P10b | Builder choices: the File step's h1 is the title, visually hidden; Rights, Review and non-draft videos render placeholders; error lines follow 04 §11.10 (offline, signed out with a Sign in link, generic) and a bad file hides the cover section; a browser refusal (type, too large) shows under the empty drop area before any request; the too-large line rounds a size just over 2 GiB up ("2.1 GB"); percent never shows 100 before every byte is in; the live region speaks 25/50/75 % and "Original attached" only; `beforeunload` is on while any original's parts or complete run, on any page of the tab; the card hides on its own video's page and drops an ending once the File step showed it; covers go one after another, so the last chosen is the one stored; Cancel drops a frame from the cancelled file (a chosen image stays); Try again reuses the chosen file; slugs retry with `ON CONFLICT DO NOTHING`, up to 3 tries; zero-width and blank-filler characters count as nothing (a title of only those is empty) while ZWJ/ZWNJ and tag characters inside a real title stay (emoji, scripts, flags); PosterFrame small is 64 px tall; `readVideoMetadata` takes an optional `{ poster, onHints }` beside infra's signature so complete never waits for the frame. | agent (stated); review findings |
+| 2026-10-20 | P10b | Shared pieces added: `src/lib/upload/codes.ts` (one error-code list, `upload-http.ts` checks its statuses against it), `isUuid` (`src/lib/validation/uuid.ts`; the image and poster routes and the video page), `notFoundNoStore` (`src/server/http.ts`; the image, poster and dev storage routes), `videoStepHref`, `useRefocusOnSwap`; CSS: the bars set `--bar-offset`, the card `--card-offset` from its measured `--upload-card-h`, one rule derives `--toast-offset` and `scroll-padding-bottom`, and `data-covers-focus` marks what can cover a focused control. e2e: `collectConsoleErrors` also ignores WebKit's cancelled `blob:` loads (the metadata read's detached video) and matches `_rsc` in a page error's URL as text. | simplify; review findings |
 
 ## Owner answers (07 §4.1)
 
@@ -1324,7 +1426,7 @@ D107–D131 (07 §9), for OQ-34–OQ-38 and OQ-49–OQ-53 by D132–D143 (07 §1
 
 ## Open questions
 
-None open: every owner question (OQ-01–OQ-57, Q-01–Q-03 from P02, Q-04–Q-05 from P04, Q-06–Q-11 from P05, Q-12–Q-15 from P06, Q-16 from P07 and Q-17–Q-24 from P08) is answered (07 §4.1, §10; Decisions 2026-10-17 and 2026-10-18). Add new questions below the line with the next free
+None open: every owner question (OQ-01–OQ-57, Q-01–Q-03 from P02, Q-04–Q-05 from P04, Q-06–Q-11 from P05, Q-12–Q-15 from P06, Q-16 from P07, Q-17–Q-24 from P08, Q-25–Q-33 from P09, Q-34–Q-39 from P10a and Q-40–Q-44 from P10b) is answered (07 §4.1, §10; Decisions 2026-10-17 and 2026-10-18). Add new questions below the line with the next free
 number (Q-25, Q-26, …); when one is answered, set its status to "answered (Pxx)" and add the answer to Decisions.
 
 | ID | Question | Default if unanswered | Asked in | Status |
@@ -1369,6 +1471,11 @@ number (Q-25, Q-26, …); when one is answered, set its status to "answered (Pxx
 | Q-37 | Two Step 0 checks that fail only by wording (a comment naming `original_pending_key`; `STORAGE_DRIVER`'s default lives in `.env.example`) | Continue and record them; no code change | P10a | answered (P10a): the default |
 | Q-38 | A video disabled while its file uploads | Refuse parts and complete (404); abort still allowed | P10a | answered (P10a): the default |
 | Q-39 | An expired checkout that never got its expiry notice and the original lock | Still locks (D09 literal) until the clean-up job arrives | P10a | answered (P10a): the default |
+| Q-40 | New copy for the title page and the File step (title errors, Back target, helper, live-region words, cover alt text, "Upload didn't finish…", "Add a cover image for buyers.", two cover-picture errors) | Use them as written, recorded as proposed copy | P10b | answered (P10b): the default |
+| Q-41 | Replace when the creator chose their own cover | Keep the chosen cover; take a new frame only when there is no cover or it is a frame | P10b | answered (P10b): the default |
+| Q-42 | Tapping another tab while the video uploads | Ask first ("Leave this page? Your upload will stop.") | P10b | answered (P10b): the owner's own answer: don't stop the upload; it carries on across the app's pages with a floating card (progress, then complete or stopped) whose Open goes back to the File step. Follow-up, both the default: the card floats above the TabBar below lg and bottom-right from md; its words "Uploading {title}", "Checking the file…", "Upload complete", "Upload didn't finish", "Open", and "Keep this tab open until the upload finishes. You can use other pages meanwhile." under the drop area |
+| Q-43 | Odd characters in titles | Tidy them: line breaks and tabs → spaces, runs squeezed, invisible and direction marks removed | P10b | answered (P10b): the default |
+| Q-44 | P10b runs 2–3× its 2-hour estimate | One step with a bigger budget (as P08, P09) | P10b | answered (P10b): the default |
 
 ## Prompt map
 

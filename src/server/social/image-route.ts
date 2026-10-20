@@ -1,10 +1,8 @@
 import "server-only";
-import { z } from "zod";
+import { isUuid } from "../../lib/validation/uuid";
 import { getCreatorForApi, toActor } from "../auth/session";
-import { unauthorizedJson } from "../http";
-import { imageNotFound, streamPlatformImage } from "./thumbnails";
-
-const imageIdSchema = z.uuid();
+import { notFoundNoStore, unauthorizedJson } from "../http";
+import { streamPlatformImage } from "./thumbnails";
 
 /**
  * The image proxies' routes (02 §6.2, §7.6, 07 D42): no creator session → 401 JSON; an id that isn't a uuid → 404;
@@ -16,7 +14,7 @@ export async function imageRouteResponse(
 ): Promise<Response> {
   const creator = await getCreatorForApi();
   if (!creator) return unauthorizedJson();
-  if (!imageIdSchema.safeParse(id).success) return imageNotFound();
+  if (!isUuid(id)) return notFoundNoStore();
   return streamPlatformImage(
     kind === "avatar" ? { kind, accountId: id } : { kind, postId: id },
     toActor(creator),

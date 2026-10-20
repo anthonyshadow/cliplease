@@ -1,10 +1,11 @@
-// Upload [int] helpers (P10a; P10c reuses them): the browser's half of an upload against the local driver. Part and poster
-// PUTs go through the dev storage route's real handlers with the signed URLs the server hands out, the four upload routes
-// are called with `new Request()`, and the on-disk paths are read under .data/storage. `trackTestStorage` removes only
-// what one test file made: the dev server shares the folder.
+// Upload [int] helpers (P10a; P10b and P10c reuse them): the browser's half of an upload against the local driver. Part and
+// poster PUTs go through the dev storage route's real handlers with the signed URLs the server hands out, the four upload
+// routes are called with `new Request()`, and the on-disk paths are read under .data/storage. `trackTestStorage` removes
+// only what one test file made (the dev server shares the folder); newCreator, signedIn and newDraft record theirs in it.
 import { createHash, randomFillSync } from "node:crypto";
 import { readdir, readFile, rm, stat } from "node:fs/promises";
 import path from "node:path";
+import { eq } from "drizzle-orm";
 import { NextRequest } from "next/server";
 import {
   GET as devStorageGET,
@@ -14,6 +15,9 @@ import { POST as abortPOST } from "../../src/app/api/uploads/abort/route";
 import { POST as completePOST } from "../../src/app/api/uploads/complete/route";
 import { POST as partsPOST } from "../../src/app/api/uploads/parts/route";
 import { POST as startPOST } from "../../src/app/api/uploads/start/route";
+import { db } from "../../src/db/client";
+import { video } from "../../src/db/schema";
+import type { Video } from "../../src/db/schema/types";
 import type { Actor } from "../../src/server/auth/actor";
 import { env } from "../../src/server/env";
 import {
@@ -30,6 +34,9 @@ import {
   type StartUploadInput,
   type StartUploadResult,
 } from "../../src/server/storage/uploads";
+import { createVideoFromUpload } from "../../src/server/videos/create";
+import { creatorActor, type SignedInCreator, signedInCreator } from "./auth";
+import { insertCreator } from "./factories";
 
 export type Bytes = Uint8Array<ArrayBuffer>;
 
@@ -56,6 +63,29 @@ export function pngBytes(size: number): Bytes {
 
 export const md5Hex = (bytes: Uint8Array) =>
   createHash("md5").update(bytes).digest("hex");
+
+/** A file under tests/fixtures (sample.mp4, poster.jpg). */
+export const fixture = async (name: string): Promise<Bytes> =>
+  new Uint8Array(
+    await readFile(path.join(process.cwd(), "tests/fixtures", name)),
+  );
+
+const UUID_SOURCE =
+  "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+
+/** A lowercase uuid, the whole string. */
+export const UUID = new RegExp(`^${UUID_SOURCE}$`);
+
+/** An original's whole key: originals/<creatorId>/<videoId>/<uuid>.<ext>. */
+export const originalKeyOf = (
+  creatorId: string,
+  videoId: string,
+  ext = "mp4",
+) => new RegExp(`^originals/${creatorId}/${videoId}/${UUID_SOURCE}\\.${ext}$`);
+
+/** A poster's whole key: posters/<videoId>/<uuid>.jpg. */
+export const posterKeyOf = (videoId: string) =>
+  new RegExp(`^posters/${videoId}/${UUID_SOURCE}\\.jpg$`);
 
 /** Part `partNumber` (1-based) of `bytes` cut into `partSize` parts; the last part is the remainder. */
 export const partOf = (
@@ -264,7 +294,40 @@ export function callUploadRoute(
   return UPLOAD_ROUTES[name](request);
 }
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+// --- Creators and videos -----------------------------------------------------------------------------------------------
+
+/** A creator (no session) and the actor the session gate would build for it. */
+export async function newCreator(disk: TestStorage) {
+  const c = await insertCreator();
+  disk.creator(c.id);
+  const ids = { creatorId: c.id, userId: c.userId };
+  return { ...ids, actor: creatorActor(ids) };
+}
+
+/** A signed-in creator: the mocked next/headers now carries its session. */
+export async function signedIn(disk: TestStorage): Promise<SignedInCreator> {
+  const me = await signedInCreator();
+  disk.creator(me.creatorId);
+  return me;
+}
+
+/** A plain-upload draft (createVideoFromUpload) of `c`'s; returns its id. */
+export async function newDraft(
+  disk: TestStorage,
+  c: { actor: Actor },
+  title = "Beach day",
+): Promise<string> {
+  const { videoId } = await createVideoFromUpload(c.actor, { title });
+  disk.video(videoId);
+  return videoId;
+}
+
+/** The video's row, failing the setup when there is none. */
+export async function rowOf(id: string): Promise<Video> {
+  const [row] = await db.select().from(video).where(eq(video.id, id));
+  if (!row) throw new Error("no video");
+  return row;
+}
 
 // --- The disk -----------------------------------------------------------------------------------------------------------
 
@@ -330,6 +393,8 @@ export async function uploadsUnder(...prefixes: string[]): Promise<string[]> {
  * any open upload whose manifest names one of its creators' keys. `clean` removes exactly those, never the whole folder
  * (the dev server shares it).
  */
+export type TestStorage = ReturnType<typeof trackTestStorage>;
+
 export function trackTestStorage() {
   const creators = new Set<string>();
   const videos = new Set<string>();

@@ -2,6 +2,7 @@ import { AppShell } from "@/components/layout/app-shell";
 import { NavBar } from "@/components/layout/nav-bar";
 import { SignOutButton, SignOutMenuItem } from "@/components/layout/sign-out";
 import { TabBar } from "@/components/layout/tab-bar";
+import { UploadIndicator } from "@/components/videos/upload-indicator";
 import { getCreatorForApi } from "@/server/auth/session";
 
 // The creator shell (04 §9.30): NavBar, one <main>, and the TabBar below lg. UX only (02 §4): it never redirects. Each
@@ -21,7 +22,12 @@ export default async function DashboardLayout({
           signOut={<SignOutMenuItem />}
         />
       }
-      after={<TabBar signOut={<SignOutButton />} />}
+      after={
+        <>
+          <UploadIndicator />
+          <TabBar signOut={<SignOutButton />} />
+        </>
+      }
     >
       {children}
     </AppShell>

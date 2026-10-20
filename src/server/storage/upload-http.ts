@@ -1,5 +1,6 @@
 import "server-only";
 import type { z } from "zod";
+import type { UploadRouteCode } from "../../lib/upload/codes";
 import type { CreatorContext } from "../auth/session";
 import { getCreatorForApi } from "../auth/session";
 import { NO_STORE, unauthorizedJson } from "../http";
@@ -24,7 +25,7 @@ const STATUS = {
   parts_incomplete: 422,
   bad_signature_bytes: 422,
   internal: 500,
-} as const;
+} as const satisfies Record<UploadRouteCode, number>;
 export type UploadCode = keyof typeof STATUS;
 
 export const uploadError = (code: UploadCode) =>

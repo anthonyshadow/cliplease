@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { readFile, rm } from "node:fs/promises";
-import path from "node:path";
 import { eq, sql } from "drizzle-orm";
 import { NextRequest } from "next/server";
 import {
@@ -35,14 +34,9 @@ import {
   presignParts,
   presignUpload,
 } from "../../src/server/storage/uploads";
-import {
-  creatorActor,
-  mockNextHeaders,
-  signedInCreator,
-} from "../helpers/auth";
+import { mockNextHeaders } from "../helpers/auth";
 import { resetDb } from "../helpers/db";
 import {
-  insertCreator,
   insertLicense,
   insertLicenseRequest,
   insertUploadVideo,
@@ -52,20 +46,27 @@ import {
   type Bytes,
   callUploadRoute,
   devStorageSegments,
+  fixture,
   getSigned,
   listFiles,
   md5Hex,
+  newCreator,
   objectPath,
+  originalKeyOf,
   originalStart,
   partOf,
   pathExists,
   pngBytes,
+  posterKeyOf,
   putSigned,
+  rowOf,
   sendParts,
+  signedIn,
   startOriginal,
   startPoster,
   trackTestStorage,
   UPLOAD_ROUTE_NAMES,
+  UUID,
   uploadDirPath,
   uploadOriginal,
   uploadPoster,
@@ -103,46 +104,12 @@ const bytesOf = (size: number) => {
   return source.subarray(0, size);
 };
 
-let poster: Bytes | undefined;
-async function posterJpeg(): Promise<Bytes> {
-  poster ??= new Uint8Array(
-    await readFile(path.join(process.cwd(), "tests/fixtures/poster.jpg")),
-  );
-  return poster;
-}
-
-const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
-const originalKeyOf = (creatorId: string, videoId: string, ext = "mp4") =>
-  new RegExp(`^originals/${creatorId}/${videoId}/${UUID}\\.${ext}$`);
-const posterKeyOf = (videoId: string) =>
-  new RegExp(`^posters/${videoId}/${UUID}\\.jpg$`);
 const basename = (key: string) => key.slice(key.lastIndexOf("/") + 1);
-
-/** A creator (no session) and the actor the session gate would build for it. */
-async function newCreator() {
-  const c = await insertCreator();
-  disk.creator(c.id);
-  const ids = { creatorId: c.id, userId: c.userId };
-  return { ...ids, actor: creatorActor(ids) };
-}
-
-/** A signed-in creator: the mocked next/headers now carries its session. */
-async function signedIn() {
-  const me = await signedInCreator();
-  disk.creator(me.creatorId);
-  return me;
-}
 
 async function newVideo(creatorId: string, overrides: Partial<NewVideo> = {}) {
   const v = await insertUploadVideo({ id: creatorId }, overrides);
   disk.video(v.id);
   return v;
-}
-
-async function rowOf(id: string): Promise<Video> {
-  const [row] = await db.select().from(video).where(eq(video.id, id));
-  if (!row) throw new Error("no video");
-  return row;
 }
 
 const DISABLED = {
@@ -188,7 +155,7 @@ async function expectJson(response: Response, status: number, body: unknown) {
 
 describe("a 3-part original (16 + 16 + 8 MiB) through the routes and the dev storage route", () => {
   it("lands exactly one object at originals/<creatorId>/<videoId>/<uuid>.mp4 and ends ready with the meta", async () => {
-    const me = await signedIn();
+    const me = await signedIn(disk);
     const v = await newVideo(me.creatorId);
     const bytes = bytesOf(TOTAL);
 
@@ -205,7 +172,7 @@ describe("a 3-part original (16 + 16 + 8 MiB) through the routes and the dev sto
     expect(upload).toEqual({
       mode: "multipart",
       key: expect.stringMatching(originalKeyOf(me.creatorId, v.id)),
-      uploadId: expect.stringMatching(new RegExp(`^${UUID}$`)),
+      uploadId: expect.stringMatching(UUID),
       partSize: PART_BYTES,
       partCount: 3,
       doneParts: [],
@@ -293,7 +260,7 @@ describe("a 3-part original (16 + 16 + 8 MiB) through the routes and the dev sto
 
 describe("completeUpload (original)", () => {
   it("refuses a body carrying ETags or parts (400 invalid) and completes with the server's own ETags", async () => {
-    const me = await signedIn();
+    const me = await signedIn(disk);
     const v = await newVideo(me.creatorId);
     const bytes = bytesOf(TWO_PARTS);
     const upload = await startOriginal(me.actor, v.id, TWO_PARTS);
@@ -344,7 +311,7 @@ describe("completeUpload (original)", () => {
   });
 
   it("answers parts_incomplete to a missing or short middle part and keeps the upload open to send it again (Q-35 a)", async () => {
-    const c = await newCreator();
+    const c = await newCreator(disk);
     const v = await newVideo(c.creatorId);
     const bytes = bytesOf(TOTAL);
     const upload = await startOriginal(c.actor, v.id, TOTAL);
@@ -408,7 +375,7 @@ describe("completeUpload (original)", () => {
   });
 
   it("ends failed / size_mismatch and deletes the object when the assembled size differs", async () => {
-    const c = await newCreator();
+    const c = await newCreator(disk);
     const v = await newVideo(c.creatorId);
     const upload = await startOriginal(c.actor, v.id, SMALL);
     await sendParts(c.actor, {
@@ -438,7 +405,7 @@ describe("completeUpload (original)", () => {
   });
 
   it("ends failed / bad_signature_bytes and deletes the object for zero-filled parts; abort then clears it", async () => {
-    const c = await newCreator();
+    const c = await newCreator(disk);
     const v = await newVideo(c.creatorId);
     const zeros = new Uint8Array(TWO_PARTS);
     const upload = await startOriginal(c.actor, v.id, TWO_PARTS);
@@ -466,7 +433,7 @@ describe("completeUpload (original)", () => {
   });
 
   it("answers ok to a second complete on a ready original and changes nothing", async () => {
-    const c = await newCreator();
+    const c = await newCreator(disk);
     const v = await newVideo(c.creatorId);
     const { upload, result } = await uploadOriginal(
       c.actor,
@@ -496,7 +463,7 @@ describe("completeUpload (original)", () => {
   ])(
     "ends ready with exactly one object after %s in parallel",
     async (_, size, calls) => {
-      const c = await newCreator();
+      const c = await newCreator(disk);
       const v = await newVideo(c.creatorId);
       const bytes = bytesOf(size);
       const upload = await startOriginal(c.actor, v.id, size);
@@ -529,7 +496,7 @@ describe("completeUpload (original)", () => {
   );
 
   it("keeps the new upload when a start lands between assembly and finish, and the old file goes (fence)", async () => {
-    const c = await newCreator();
+    const c = await newCreator(disk);
     const v = await newVideo(c.creatorId);
     const old = await startOriginal(c.actor, v.id, SMALL);
     await sendParts(c.actor, {
@@ -577,7 +544,7 @@ describe("completeUpload (original)", () => {
   });
 
   it("deletes the assembled file when an abort lands between assembly and finish (fence)", async () => {
-    const c = await newCreator();
+    const c = await newCreator(disk);
     const v = await newVideo(c.creatorId);
     const upload = await startOriginal(c.actor, v.id, SMALL);
     await sendParts(c.actor, {
@@ -604,7 +571,7 @@ describe("completeUpload (original)", () => {
 
 describe("completeUpload (original): races", () => {
   it("answers bad_signature_bytes to both of two parallel completes of a zero-filled original and leaves no object", async () => {
-    const c = await newCreator();
+    const c = await newCreator(disk);
     const v = await newVideo(c.creatorId);
     const upload = await startOriginal(c.actor, v.id, TWO_PARTS);
     await sendParts(c.actor, {
@@ -631,7 +598,7 @@ describe("completeUpload (original): races", () => {
   });
 
   it("answers bad_signature_bytes to a complete that finds the parts gone just before the other one fails the file", async () => {
-    const c = await newCreator();
+    const c = await newCreator(disk);
     const v = await newVideo(c.creatorId);
     const upload = await startOriginal(c.actor, v.id, TWO_PARTS);
     await sendParts(c.actor, {
@@ -683,7 +650,7 @@ describe("completeUpload (original): races", () => {
   });
 
   it("reports every part done to a resume that lands while a complete verifies, and the complete still ends ready", async () => {
-    const c = await newCreator();
+    const c = await newCreator(disk);
     const v = await newVideo(c.creatorId);
     const bytes = bytesOf(TOTAL);
     const upload = await startOriginal(c.actor, v.id, TOTAL);
@@ -762,7 +729,7 @@ describe("a complete that died after assembling, before its database write", () 
   }
 
   it("resume reports every part done on the same upload; complete then ends ready", async () => {
-    const c = await newCreator();
+    const c = await newCreator(disk);
     const v = await newVideo(c.creatorId);
     const { upload, bytes } = await crashedAfterAssembly(c, v.id);
     const open = await rowOf(v.id);
@@ -799,7 +766,7 @@ describe("a complete that died after assembling, before its database write", () 
   });
 
   it("abort answers 204, empties the row and leaves no object at the key", async () => {
-    const me = await signedIn();
+    const me = await signedIn(disk);
     const v = await newVideo(me.creatorId);
     const { upload } = await crashedAfterAssembly(me, v.id, SMALL);
 
@@ -813,7 +780,7 @@ describe("a complete that died after assembling, before its database write", () 
   });
 
   it("a resume 25 h later answers 410 upload_expired and leaves no object at the key", async () => {
-    const me = await signedIn();
+    const me = await signedIn(disk);
     const v = await newVideo(me.creatorId);
     const { upload } = await crashedAfterAssembly(me, v.id, SMALL);
     await startedHoursAgo(v.id, 25);
@@ -841,7 +808,7 @@ describe("a complete that died after assembling, before its database write", () 
 
 describe("resume and expiry (07 D80)", () => {
   it("resumes the open upload with the parts already stored; another size or type is not_same_file", async () => {
-    const c = await newCreator();
+    const c = await newCreator(disk);
     const v = await newVideo(c.creatorId);
     const bytes = bytesOf(TOTAL);
     const upload = await startOriginal(c.actor, v.id, TOTAL);
@@ -892,7 +859,7 @@ describe("resume and expiry (07 D80)", () => {
   });
 
   it("has nothing to resume on a video without an open upload (upload_expired)", async () => {
-    const c = await newCreator();
+    const c = await newCreator(disk);
     const v = await newVideo(c.creatorId);
     expect(
       await presignUpload(
@@ -904,7 +871,7 @@ describe("resume and expiry (07 D80)", () => {
   });
 
   it("expires an upload started 25 h ago on resume: failed / upload_expired, upload columns cleared, parts gone", async () => {
-    const c = await newCreator();
+    const c = await newCreator(disk);
     const v = await newVideo(c.creatorId);
     const upload = await startOriginal(c.actor, v.id, SMALL);
     await sendParts(c.actor, {
@@ -934,7 +901,7 @@ describe("resume and expiry (07 D80)", () => {
   });
 
   it("expires an upload started 25 h ago on complete, even with every part stored", async () => {
-    const c = await newCreator();
+    const c = await newCreator(disk);
     const v = await newVideo(c.creatorId);
     const upload = await startOriginal(c.actor, v.id, SMALL);
     await sendParts(c.actor, {
@@ -958,7 +925,7 @@ describe("resume and expiry (07 D80)", () => {
   });
 
   it("expires an upload whose parts are gone from storage, on resume and on complete", async () => {
-    const c = await newCreator();
+    const c = await newCreator(disk);
     for (const call of ["resume", "complete"] as const) {
       const v = await newVideo(c.creatorId);
       const upload = await startOriginal(c.actor, v.id, SMALL);
@@ -982,7 +949,7 @@ describe("resume and expiry (07 D80)", () => {
 
 describe("abortUpload", () => {
   it("answers 204, empties the row and removes the upload directory; a second abort is a no-op", async () => {
-    const me = await signedIn();
+    const me = await signedIn(disk);
     const v = await newVideo(me.creatorId);
     const upload = await startOriginal(me.actor, v.id, TWO_PARTS);
     await sendParts(me.actor, {
@@ -1004,7 +971,7 @@ describe("abortUpload", () => {
   });
 
   it("never touches a ready original", async () => {
-    const c = await newCreator();
+    const c = await newCreator(disk);
     const v = await newVideo(c.creatorId);
     const { upload } = await uploadOriginal(c.actor, v.id, bytesOf(SMALL));
     const ready = await rowOf(v.id);
@@ -1019,7 +986,7 @@ describe("abortUpload", () => {
   });
 
   it("still works on a disabled video (Q-38 a)", async () => {
-    const c = await newCreator();
+    const c = await newCreator(disk);
     const v = await newVideo(c.creatorId);
     const upload = await startOriginal(c.actor, v.id, SMALL);
     await sendParts(c.actor, {
@@ -1090,7 +1057,7 @@ describe("the original lock (07 D09, Q-39 a)", () => {
   ];
 
   it.each(LOCKED)("is original_locked for %s", async (_, setup) => {
-    const c = await newCreator();
+    const c = await newCreator(disk);
     const v = await setup(c.creatorId);
     const before = await rowOf(v.id);
 
@@ -1123,7 +1090,7 @@ describe("the original lock (07 D09, Q-39 a)", () => {
   ];
 
   it.each(ALLOWED)("allows a new original for %s", async (_, setup) => {
-    const c = await newCreator();
+    const c = await newCreator(disk);
     const v = await setup(c.creatorId);
 
     expect(await isOriginalLocked(v.id)).toBe(false);
@@ -1148,7 +1115,7 @@ describe("presignUpload (original): the lock read again under the row lock (07 D
   }
 
   it("answers original_locked and aborts the new multipart upload", async () => {
-    const c = await newCreator();
+    const c = await newCreator(disk);
     const v = await newVideo(c.creatorId, { status: "unpublished" });
     const before = await rowOf(v.id);
     const created = checkoutDuringStart(v);
@@ -1164,7 +1131,7 @@ describe("presignUpload (original): the lock read again under the row lock (07 D
   });
 
   it("keeps an open first upload when the second start is locked", async () => {
-    const c = await newCreator();
+    const c = await newCreator(disk);
     const v = await newVideo(c.creatorId);
     const first = await startOriginal(c.actor, v.id, TWO_PARTS);
     await sendParts(c.actor, {
@@ -1194,7 +1161,7 @@ describe("presignUpload (original): the lock read again under the row lock (07 D
 
 describe("presignUpload (original): a new start", () => {
   it("deletes a ready draft original's previous object and drops an open upload's parts", async () => {
-    const c = await newCreator();
+    const c = await newCreator(disk);
     const v = await newVideo(c.creatorId);
     const first = await uploadOriginal(c.actor, v.id, bytesOf(SMALL));
     expect(first.result).toEqual({ ok: true });
@@ -1242,7 +1209,7 @@ describe("presignUpload (original): a new start", () => {
 
 describe("presignParts", () => {
   it("refuses another upload id, part 0, a part beyond partCount, 21 numbers and a disabled video", async () => {
-    const me = await signedIn();
+    const me = await signedIn(disk);
     const v = await newVideo(me.creatorId);
     const upload = await startOriginal(me.actor, v.id, TOTAL);
     const parts = (uploadId: string, partNumbers: number[]) =>
@@ -1286,7 +1253,7 @@ describe("presignParts", () => {
   });
 
   it("refuses a video whose original isn't uploading", async () => {
-    const c = await newCreator();
+    const c = await newCreator(disk);
     const v = await newVideo(c.creatorId);
     const { upload } = await uploadOriginal(c.actor, v.id, bytesOf(SMALL));
     expect(
@@ -1301,8 +1268,8 @@ describe("presignParts", () => {
 
 describe("another creator's video", () => {
   it("is not_found on start, parts, complete and abort, and the owner's upload goes on", async () => {
-    const owner = await newCreator();
-    const other = await newCreator();
+    const owner = await newCreator(disk);
+    const other = await newCreator(disk);
     const v = await newVideo(owner.creatorId);
     const upload = await startOriginal(owner.actor, v.id, SMALL);
     await sendParts(owner.actor, {
@@ -1353,9 +1320,9 @@ describe("another creator's video", () => {
 
 describe("posters (Q-34 a, Q-36 a)", () => {
   it("start → signed PUT → complete sets the key and origin; again is ok; a new poster replaces and deletes the old one", async () => {
-    const c = await newCreator();
+    const c = await newCreator(disk);
     const v = await newVideo(c.creatorId);
-    const jpeg = await posterJpeg();
+    const jpeg = await fixture("poster.jpg");
 
     const start = await presignUpload(c.actor, {
       kind: "poster",
@@ -1412,9 +1379,9 @@ describe("posters (Q-34 a, Q-36 a)", () => {
   });
 
   it("refuses a PNG or a JPEG-sized file without the JPEG bytes (bad_signature_bytes) and deletes it; the poster stays", async () => {
-    const c = await newCreator();
+    const c = await newCreator(disk);
     const v = await newVideo(c.creatorId);
-    const jpeg = await posterJpeg();
+    const jpeg = await fixture("poster.jpg");
     const current = await uploadPoster(c.actor, v.id, jpeg);
     expect(current.result).toEqual({ ok: true });
 
@@ -1433,10 +1400,10 @@ describe("posters (Q-34 a, Q-36 a)", () => {
   });
 
   it("refuses a tampered, expired or other video's upload token (not_found)", async () => {
-    const c = await newCreator();
+    const c = await newCreator(disk);
     const v = await newVideo(c.creatorId);
     const otherVideo = await newVideo(c.creatorId);
-    const jpeg = await posterJpeg();
+    const jpeg = await fixture("poster.jpg");
     const upload = await startPoster(c.actor, v.id, jpeg.length);
     expect((await putSigned(upload.url, jpeg, upload.headers)).status).toBe(
       200,
@@ -1497,9 +1464,9 @@ describe("posters (Q-34 a, Q-36 a)", () => {
   });
 
   it("refuses a PUT with another Content-Type (403) or length (413 / 400), and a second PUT to the URL (412)", async () => {
-    const c = await newCreator();
+    const c = await newCreator(disk);
     const v = await newVideo(c.creatorId);
-    const jpeg = await posterJpeg();
+    const jpeg = await fixture("poster.jpg");
     const upload = await startPoster(c.actor, v.id, jpeg.length);
     const longer = new Uint8Array(jpeg.length + 1);
     longer.set(jpeg);
@@ -1534,9 +1501,9 @@ describe("posters (Q-34 a, Q-36 a)", () => {
   });
 
   it("can change on a published video but not on a disabled one", async () => {
-    const c = await newCreator();
+    const c = await newCreator(disk);
     const live = await publishVideo(await newVideo(c.creatorId));
-    const jpeg = await posterJpeg();
+    const jpeg = await fixture("poster.jpg");
     const replaced = await uploadPoster(c.actor, live.id, jpeg);
     expect(replaced.result).toEqual({ ok: true });
     expect((await rowOf(live.id)).posterObjectKey).toBe(replaced.upload.key);
@@ -1588,9 +1555,9 @@ describe("the dev storage route (07 D51, D80)", () => {
   };
 
   it("answers 403 to unsigned, tampered or expired object, part and download URLs", async () => {
-    const c = await newCreator();
+    const c = await newCreator(disk);
     const v = await newVideo(c.creatorId);
-    const jpeg = await posterJpeg();
+    const jpeg = await fixture("poster.jpg");
     const posterPut = await startPoster(c.actor, v.id, jpeg.length);
     const original = await startOriginal(c.actor, v.id, SMALL);
     const signed = await presignParts(c.actor, {
@@ -1686,9 +1653,9 @@ describe("the dev storage route (07 D51, D80)", () => {
   });
 
   it("answers 404 with APP_ENV=production or preview, or STORAGE_DRIVER=r2, even to a valid signed URL", async () => {
-    const c = await newCreator();
+    const c = await newCreator(disk);
     const v = await newVideo(c.creatorId);
-    const jpeg = await posterJpeg();
+    const jpeg = await fixture("poster.jpg");
     const upload = await startPoster(c.actor, v.id, jpeg.length);
 
     for (const e of [
@@ -1710,9 +1677,9 @@ describe("the dev storage route (07 D51, D80)", () => {
   });
 
   it("streams a signed download with its Content-Disposition and no-store; a missing object is 404", async () => {
-    const c = await newCreator();
+    const c = await newCreator(disk);
     const v = await newVideo(c.creatorId);
-    const jpeg = await posterJpeg();
+    const jpeg = await fixture("poster.jpg");
     const { upload } = await uploadPoster(c.actor, v.id, jpeg);
     const filename = 'Café "clip".jpg';
 
@@ -1743,7 +1710,7 @@ describe("the dev storage route (07 D51, D80)", () => {
   });
 
   it("answers 404 to a part PUT for an unknown or ended upload, and 413 to a part over PART_BYTES", async () => {
-    const c = await newCreator();
+    const c = await newCreator(disk);
     const v = await newVideo(c.creatorId);
     const bytes = bytesOf(TOTAL);
     const unknown = await localDriver().presignPart({
@@ -1788,7 +1755,7 @@ describe("the four upload routes", () => {
   });
 
   it("answer 400 invalid to a body that isn't JSON, and to a client-chosen key", async () => {
-    const me = await signedIn();
+    const me = await signedIn(disk);
     const v = await newVideo(me.creatorId);
     const valid = {
       start: originalStart(v.id, SMALL),
@@ -1820,11 +1787,11 @@ describe("the four upload routes", () => {
   });
 
   it("answer 404 for another creator's video on all four", async () => {
-    const owner = await newCreator();
+    const owner = await newCreator(disk);
     const v = await newVideo(owner.creatorId);
     const upload = await startOriginal(owner.actor, v.id, SMALL);
     const open = await rowOf(v.id);
-    await signedIn();
+    await signedIn(disk);
 
     for (const [name, body] of [
       ["start", originalStart(v.id, SMALL)],
@@ -1841,7 +1808,7 @@ describe("the four upload routes", () => {
   });
 
   it("answer 409 original_locked and not_same_file, 410 upload_expired and 422 parts_incomplete", async () => {
-    const me = await signedIn();
+    const me = await signedIn(disk);
     const live = await publishVideo(await newVideo(me.creatorId));
     await expectJson(
       await callUploadRoute("start", originalStart(live.id, SMALL)),
@@ -1876,7 +1843,7 @@ describe("the four upload routes", () => {
   });
 
   it("answer 500 internal when the domain call throws, and log the error class only", async () => {
-    const me = await signedIn();
+    const me = await signedIn(disk);
     const v = await newVideo(me.creatorId);
     const upload = await startOriginal(me.actor, v.id, SMALL);
     const secret = `originals/${me.creatorId}/${v.id}/leaked-key.mp4`;
