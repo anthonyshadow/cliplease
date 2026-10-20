@@ -48,6 +48,11 @@ const nextConfig: NextConfig = {
   async rewrites() {
     return [{ source: "/@:handle", destination: "/u/:handle" }];
   },
+  // The dev storage route's signed URLs carry object keys, upload ids and signatures: keep them out of `next dev`'s
+  // request log (P10a: never log them). Development only; production never serves the route (07 D51).
+  logging: {
+    incomingRequests: { ignore: [/\/api\/dev\/storage\//] },
+  },
   experimental: {
     serverActions: {
       bodySizeLimit: "1mb",

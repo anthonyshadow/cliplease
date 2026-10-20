@@ -1,6 +1,7 @@
 import "server-only";
 import { z } from "zod";
 import { getCreatorForApi, toActor } from "../auth/session";
+import { unauthorizedJson } from "../http";
 import { imageNotFound, streamPlatformImage } from "./thumbnails";
 
 const imageIdSchema = z.uuid();
@@ -14,12 +15,7 @@ export async function imageRouteResponse(
   id: string,
 ): Promise<Response> {
   const creator = await getCreatorForApi();
-  if (!creator) {
-    return Response.json(
-      { error: { code: "unauthorized" } },
-      { status: 401, headers: { "Cache-Control": "no-store" } },
-    );
-  }
+  if (!creator) return unauthorizedJson();
   if (!imageIdSchema.safeParse(id).success) return imageNotFound();
   return streamPlatformImage(
     kind === "avatar" ? { kind, accountId: id } : { kind, postId: id },
