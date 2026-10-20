@@ -112,8 +112,11 @@ export function cardState(a: {
 export const reconnectMessage = (platform: SocialProviderId) =>
   `${PLATFORM_LABELS[platform]} signed you out. Reconnect to keep syncing.`;
 export const SYNC_PROBLEM_MESSAGE = "Couldn't sync. Try again or reconnect.";
-export const rateLimitMessage = (platform: SocialProviderId, minutes: number) =>
-  `${PLATFORM_LABELS[platform]} asked us to slow down. Try again in ${minutes} min.`;
+/** "Try again in 15 min." (04 §9.15): the helper under a disabled sync button, and the end of the rate-limit line. */
+export const tryAgainIn = (minutes: number) => `Try again in ${minutes} min.`;
+/** `label` is the platform word, or @username where two Library accounts share a platform. */
+export const rateLimitMessage = (label: string, minutes: number) =>
+  `${label} asked us to slow down. ${tryAgainIn(minutes)}`;
 
 /** The cap note under the sync line (04 §11.8, 01 J3.11); `max` is SOCIAL_SYNC_MAX_POSTS, passed in from the server. */
 export const capNote = (max: number) => `Showing your newest ${max} videos.`;

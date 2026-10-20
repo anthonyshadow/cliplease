@@ -138,7 +138,8 @@ export function Button({
     />
   );
   // The label and the loading layer (spinner + loadingLabel) share one grid cell, so the width never changes while
-  // loading; the hidden layer is aria-hidden and never repeats the label.
+  // loading; the hidden layer is aria-hidden and never repeats the label. A link's text starts where its line does.
+  const align = variant === "link" ? "justify-start" : "justify-center";
   const layered = (label: ReactNode) =>
     loadingLabel === undefined ? (
       label
@@ -146,7 +147,8 @@ export function Button({
       <span className="inline-grid">
         <span
           className={cn(
-            "col-start-1 row-start-1 inline-flex items-center justify-center",
+            "col-start-1 row-start-1 inline-flex items-center",
+            align,
             size === "sm" ? "gap-1.5" : "gap-2",
             loading && "invisible",
           )}
@@ -155,7 +157,8 @@ export function Button({
         </span>
         <span
           className={cn(
-            "col-start-1 row-start-1 inline-flex items-center justify-center gap-1.5",
+            "col-start-1 row-start-1 inline-flex items-center gap-1.5",
+            align,
             !loading && "invisible",
           )}
           aria-hidden={!loading}

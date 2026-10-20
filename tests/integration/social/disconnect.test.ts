@@ -35,6 +35,7 @@ import {
 } from "../../helpers/connect-flow";
 import { resetDb } from "../../helpers/db";
 import { insertLibraryVideo, publishVideo } from "../../helpers/factories";
+import { syncedDemo } from "../../helpers/library";
 
 // Disconnect (02 §7.8, 03 §9.3, 07 D72; owner answer Q-17 a) against the test database.
 vi.mock("next/headers", () => import("../../helpers/next-headers"));
@@ -46,14 +47,6 @@ afterEach(() => {
   vi.restoreAllMocks();
   setMockScenarioForTests(null);
 });
-
-/** A creator's Demo account after a sync: 24 available posts, for the tests that look at posts. */
-async function syncedDemo(): Promise<Demo> {
-  const d = await demoAccount();
-  const result = await syncSocialAccount(d.account.id, d.actor);
-  if (!result.ok) throw new Error(`setup sync failed: ${result.reason}`);
-  return { ...d, account: await accountRow(d.account.id) };
-}
 
 /** A Demo account whose access token expired a minute ago. */
 const expiredDemo = () =>

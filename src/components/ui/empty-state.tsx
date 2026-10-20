@@ -22,7 +22,7 @@ export function EmptyState({
   return (
     <div
       className={cn(
-        "mx-auto flex max-w-[26rem] flex-col items-center gap-3 py-16 text-center",
+        "mx-auto flex w-full max-w-[26rem] flex-col items-center gap-3 py-16 text-center",
         className,
       )}
     >
@@ -31,7 +31,10 @@ export function EmptyState({
         <p className="text-callout text-ink-2">{description}</p>
       ) : null}
       {actions ? (
-        <div className="mt-3 flex flex-col items-center gap-2">{actions}</div>
+        // Full width so a phone's primary can span it (07 D149); other actions keep their own width, centered.
+        <div className="mt-3 flex w-full flex-col items-center gap-2">
+          {actions}
+        </div>
       ) : null}
     </div>
   );

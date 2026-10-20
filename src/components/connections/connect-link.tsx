@@ -22,7 +22,8 @@ export function ConnectLink({
   label: string;
   /** The accessible name before it is pressed, e.g. "Connect Demo"; pressed, it is "Connecting…". */
   ariaLabel?: string;
-  variant: "primary" | "secondary";
+  /** `link`: the action of a Banner (the Library's Reconnect, 04 §9.21). */
+  variant: "primary" | "secondary" | "link";
 }) {
   const [pressed, setPressed] = useState(false);
   useEffect(() => {

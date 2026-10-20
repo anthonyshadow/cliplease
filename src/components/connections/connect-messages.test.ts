@@ -133,7 +133,7 @@ describe("the account card (04 §9.18, §11.7, §11.8; 07 D43)", () => {
     expect(reconnectMessage("mock")).toBe(
       "Demo signed you out. Reconnect to keep syncing.",
     );
-    expect(rateLimitMessage("mock", 15)).toBe(
+    expect(rateLimitMessage("Demo", 15)).toBe(
       "Demo asked us to slow down. Try again in 15 min.",
     );
   });

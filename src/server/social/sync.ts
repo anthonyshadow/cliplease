@@ -46,6 +46,7 @@ const DEFAULT_BUDGET_MS = 20_000;
 const SYNC_ALL_BUDGET_MS = 25_000;
 const CAPTION_MAX_CHARS = 500;
 const LEASE = sql.raw(`interval '${SYNC_LEASE_MS / 1000} seconds'`);
+const CACHE_TTL = sql.raw(`interval '${SOCIAL_CACHE_TTL_DAYS} days'`);
 const IG_PROFESSIONAL_TYPES = ["Business", "Media_Creator"] as const;
 
 export type SyncMode = "recent" | "older";
@@ -190,10 +191,19 @@ export async function upsertPosts(
   };
 }
 
-/** The posts a creator can see: available and seen by a sync within SOCIAL_CACHE_TTL_DAYS (07 D13). */
-export function visiblePostsWhere(creatorId: string): SQL {
-  return sql`${socialPost.creatorId} = ${creatorId} and ${socialPost.status} = 'available' and ${socialPost.fetchedAt} > now() - ${sql.raw(`interval '${SOCIAL_CACHE_TTL_DAYS} days'`)}`;
+/** A creator's available posts, split by the 30-day rule (07 D13): seen by a sync within SOCIAL_CACHE_TTL_DAYS or not. */
+function availablePostsWhere(creatorId: string, fresh: boolean): SQL {
+  const seen = sql`${socialPost.fetchedAt} > now() - ${CACHE_TTL}`;
+  return sql`${socialPost.creatorId} = ${creatorId} and ${socialPost.status} = 'available' and ${fresh ? seen : sql`not (${seen})`}`;
 }
+
+/** The posts a creator can see: available and seen by a sync within SOCIAL_CACHE_TTL_DAYS (07 D13). */
+export const visiblePostsWhere = (creatorId: string) =>
+  availablePostsWhere(creatorId, true);
+
+/** The available posts the 30-day rule hides (the Library's "saved list expired"). */
+export const expiredPostsWhere = (creatorId: string) =>
+  availablePostsWhere(creatorId, false);
 
 /** A video_posting points at the post: the post is "referenced" (07 D72). Correlated with the outer social_post. */
 export const postingOfPost = db

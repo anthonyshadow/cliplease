@@ -530,6 +530,7 @@ describe("listAccountSummaries", () => {
         connectedAt: mine.connectedAt.toISOString(),
         syncing: false,
         blockedMinutes: null,
+        stale: false,
       },
     ]);
 

@@ -13,6 +13,7 @@ import { ConfirmSheet } from "@/components/ui/confirm-sheet";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
 import { StatusPill } from "@/components/ui/status-pill";
 import { toast } from "@/components/ui/toast";
+import { PLATFORM_LABELS } from "@/lib/brand";
 import type { SocialProviderId } from "@/lib/domain/values";
 import { ConnectLink } from "./connect-link";
 import {
@@ -150,7 +151,7 @@ function CardActions({
       message = (
         <p id={messageId} className="text-callout text-ink">
           {state.kind === "rate_limited"
-            ? rateLimitMessage(account.platform, state.minutes)
+            ? rateLimitMessage(PLATFORM_LABELS[account.platform], state.minutes)
             : SYNC_PROBLEM_MESSAGE}
         </p>
       );
