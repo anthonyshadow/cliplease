@@ -28,13 +28,13 @@ import { SYNC_LEASE_MS } from "./connection-state";
 import { SocialAuthError, SocialRateLimitError } from "./errors";
 import { profileColumns } from "./link";
 import { getProvider } from "./registry";
-import { hasNul, urlWithoutNul, withoutNul } from "./text";
 import { markNeedsReconnect, withAccessToken } from "./tokens";
 import type { SocialPost, SocialProvider } from "./types";
 
 // On-demand sync into social_post (02 §7.5; 03 §7.2 "Sync writes"; 06 §3; 07 D02, D13, D68, D72). Nothing calls it on
 // page open: the OAuth callback, Sync now, Sync all and Load older videos do. The adapter's DTO names map to columns
-// here only (03 DB1). Relative imports: the P09 seed loads upsertPosts under tsx.
+// here only (03 DB1), from the posts the registry has cleaned (text.ts). Relative imports: the P09 seed loads
+// upsertPosts under tsx.
 
 /** The newest kept videos one account holds (owner answer OQ-16). */
 export const SOCIAL_SYNC_MAX_POSTS = 200;
@@ -54,7 +54,8 @@ const IG_PROFESSIONAL_TYPES = ["Business", "Media_Creator"] as const;
 export type SyncMode = "recent" | "older";
 
 /**
- * 02 §5.3, plus `added` (rows new to the cache: P09's "3 new"). fetched = items the platform listed; kept = videos counted
+ * 02 §5.3, plus `added` (rows new to the cache: P09's "3 new"). fetched = usable items the platform listed (the registry
+ * drops a post whose ids hold a NUL, so it never counts, takes a maxPosts slot or bounds the sweep); kept = videos counted
  * toward maxPosts; upserted = rows written; removed = rows deleted or marked removed by the sweep.
  */
 export type SyncResult =
@@ -86,7 +87,6 @@ export function toSocialPostRow(
   post: SocialPost,
   now: Date,
 ): NewSocialPostRow {
-  const caption = withoutNul(post.caption);
   return {
     socialAccountId: account.id,
     creatorId: account.creatorId,
@@ -95,13 +95,13 @@ export function toSocialPostRow(
     linkKey: post.linkKey,
     mediaType: post.kind,
     visibility: post.visibility,
-    title: withoutNul(post.title),
+    title: post.title,
     caption:
-      caption === null
+      post.caption === null
         ? null
-        : Array.from(caption).slice(0, CAPTION_MAX_CHARS).join(""),
+        : Array.from(post.caption).slice(0, CAPTION_MAX_CHARS).join(""),
     permalink: post.permalink,
-    thumbnailUrl: urlWithoutNul(post.thumbnailUrl),
+    thumbnailUrl: post.thumbnailUrl,
     thumbnailExpiresAt: post.thumbnailExpiresAt,
     thumbnailFetchedAt: now,
     postedAt: post.publishedAt,
@@ -163,8 +163,7 @@ const UPSERT_SET = {
 
 /**
  * Writes posts by (social_account_id, provider_post_id) (03 §7.2); a removed post that is listed again is available
- * again. `added` counts the rows that are new (xmax = 0). A post listed twice in one batch is written once. A post whose
- * id, link key or permalink holds a NUL can't be stored or matched: it is left out and logged, so the rest still land.
+ * again. `added` counts the rows that are new (xmax = 0). A post listed twice in one batch is written once.
  */
 export async function upsertPosts(
   exec: Pick<typeof db, "insert">,
@@ -172,21 +171,9 @@ export async function upsertPosts(
   posts: readonly SocialPost[],
   now: Date,
 ): Promise<{ upserted: number; added: number }> {
-  const usable = posts.filter(
-    (post) =>
-      !hasNul(post.externalId) &&
-      !hasNul(post.linkKey) &&
-      !hasNul(post.permalink),
-  );
-  if (usable.length < posts.length) {
-    logEvent("warn", "social.post_skipped", {
-      socialAccountId: account.id,
-      count: posts.length - usable.length,
-    });
-  }
   const rows = [
     ...new Map(
-      usable.map((post) => [
+      posts.map((post) => [
         post.externalId,
         toSocialPostRow(account, post, now),
       ]),

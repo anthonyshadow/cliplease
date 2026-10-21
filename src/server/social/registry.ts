@@ -5,16 +5,18 @@ import {
 } from "../../lib/domain/values";
 import { type Env, env } from "../env";
 import { mockProvider } from "./providers/mock";
+import { withCleanReads } from "./text";
 import type { SocialProvider } from "./types";
 
 // The enabled providers (02 §5.3), parsed once from ENABLED_SOCIAL_PROVIDERS. Only the mock has an adapter until the real
 // platforms arrive (YouTube P27, Instagram P28, TikTok P29); enabling one sooner fails at the first import. The
-// per-platform *_REDIRECT_URI overrides are Phase C env vars that those prompts add.
+// per-platform *_REDIRECT_URI overrides are Phase C env vars that those prompts add. Each adapter is handed out with its
+// reads cleaned (text.ts): this is where platform data enters the app.
 
 export type SocialRegistry = {
   /** Enabled platforms in the UI order (Instagram · TikTok · YouTube · Demo), whatever the env order. */
   enabledPlatforms(): readonly SocialProviderId[];
-  /** The adapter, or null when `platform` isn't a provider or isn't enabled (routes answer 404). */
+  /** The adapter (its reads cleaned), or null when `platform` isn't a provider or isn't enabled (routes answer 404). */
   getProvider(platform: string): SocialProvider | null;
   redirectUriFor(p: SocialProviderId): string;
 };
@@ -38,7 +40,7 @@ export function createSocialRegistry(
         `ENABLED_SOCIAL_PROVIDERS: ${p} adapter not built yet (P27–P29)`,
       );
     }
-    byPlatform.set(p, adapter);
+    byPlatform.set(p, withCleanReads(adapter));
   }
   return {
     enabledPlatforms: () => enabled,

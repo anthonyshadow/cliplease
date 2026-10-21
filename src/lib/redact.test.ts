@@ -93,6 +93,11 @@ describe("redactText", () => {
     ],
     ["GET /library/v1", "GET /library/v1"],
     ["GET /dashboard/l/x", "GET /dashboard/l/x"],
+    ["GET /api/licenses failed", "GET /api/licenses failed"],
+    [
+      "at fetchJson (/var/task/.next/server/chunks/1.js:1:2)",
+      "at fetchJson (/var/task/.next/server/chunks/1.js:1:2)",
+    ],
   ])("keeps any other path in %j", (text, want) => {
     expect(redactText(text)).toBe(want);
   });
@@ -131,12 +136,50 @@ describe("redact", () => {
     });
   });
 
+  it.each([
+    "api_key",
+    "API-KEY",
+    "Api-Key",
+    "x_api_key",
+    "PRIVATE-KEY",
+    "Private_Key",
+    "to_ken",
+    "e-mail",
+    "client-secret",
+    "Proxy-Authorization",
+    "proxy_authorization",
+    "proxyAuthorization",
+    "_code",
+    "OTP",
+  ])("redacts %s whatever its case or - and _ separators", (key) => {
+    expect(redact({ [key]: "sensitive-value" })).toEqual({
+      [key]: "[redacted]",
+    });
+  });
+
+  it("keeps every spelling of a whole key listed in keepKeys", () => {
+    expect(
+      redact(
+        { Code: "CL-1", _code: "CL-2", "co-de": "CL-3", otp: "1" },
+        { keepKeys: ["code"] },
+      ),
+    ).toEqual({
+      Code: "CL-1",
+      _code: "CL-2",
+      "co-de": "CL-3",
+      otp: "[redacted]",
+    });
+  });
+
   it("keeps ids and names that only look close to a secret key", () => {
     const fields = {
       videoId: "v1",
       accountId: "a1",
       kind: "original",
       authorizationId: "auth_1",
+      authorization_id: "auth_2",
+      "payment-authorization": "auth_3",
+      codec: "h264",
       reason: "bad_signature_bytes",
     };
     expect(redact(fields)).toEqual(fields);

@@ -1,4 +1,5 @@
 import "server-only";
+import { readCapped } from "./read-capped";
 
 // Shared pieces of the API routes' responses.
 
@@ -28,20 +29,12 @@ export async function readJsonCapped(
     return { ok: false };
   }
   if (!request.body) return { ok: false };
-  const reader = request.body.getReader();
   const chunks: Uint8Array[] = [];
-  let bytes = 0;
   try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      bytes += value.byteLength;
-      if (bytes > maxBytes) {
-        await reader.cancel();
-        return { ok: false };
-      }
-      chunks.push(value);
-    }
+    const bytes = await readCapped(request.body, maxBytes, (chunk) => {
+      chunks.push(chunk);
+    });
+    if (bytes === null) return { ok: false };
     const text = new TextDecoder("utf-8", { fatal: true }).decode(
       Buffer.concat(chunks),
     );

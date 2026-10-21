@@ -145,6 +145,7 @@ describe("default", () => {
 
   it("stores platform text without NUL bytes, and leaves out a post whose id holds one", async () => {
     const d = await demoAccount();
+    // The spies sit under the registry's cleaning (text.ts), as a real adapter's answers would.
     const realProfile = mockProvider.getProfile.bind(mockProvider);
     vi.spyOn(mockProvider, "getProfile").mockImplementation(async (token) => ({
       ...(await realProfile(token)),
@@ -174,13 +175,14 @@ describe("default", () => {
     const logs = captureLogEvents("social.post_skipped");
     const result = await sync(d);
     const { events } = logs();
-    expect(result).toMatchObject({ ok: true, kept: 24, upserted: 23 });
+    expect(result).toMatchObject({
+      ok: true,
+      fetched: 23,
+      kept: 23,
+      upserted: 23,
+    });
     expect(events).toEqual([
-      expect.objectContaining({
-        level: "warn",
-        socialAccountId: d.account.id,
-        count: 1,
-      }),
+      expect.objectContaining({ level: "warn", provider: "mock", count: 1 }),
     ]);
     expect(await accountRow(d.account.id)).toMatchObject({
       username: "democreator",
@@ -432,6 +434,32 @@ describe("removal sweep (07 D13, D72)", () => {
       status: "available",
     });
     expect((await accountRow(d.account.id)).lastSyncError).toBeNull();
+  });
+
+  it("keeps a referenced post when getPost answers it with a NUL in its permalink: a failed check, never gone", async () => {
+    const d = await demoAccount();
+    await sync(d);
+    const post24 = await postNumber(d.account.id, "24");
+    await insertLibraryVideo(d.account, post24);
+    const realGet = mockProvider.getPost.bind(mockProvider);
+    vi.spyOn(mockProvider, "getPost").mockImplementation(async (...args) => {
+      const post = await realGet(...args);
+      return post && { ...post, permalink: `${post.permalink}\u0000` };
+    });
+    setMockScenarioForTests("pinned_old_post");
+    const logs = captureLogEvents("social.sweep_check_failed");
+    expect(await sync(d)).toMatchObject({ ok: true, removed: 0 });
+    expect(logs().events).toEqual([
+      expect.objectContaining({
+        level: "warn",
+        socialAccountId: d.account.id,
+        error: "SocialUpstreamError",
+      }),
+    ]);
+    expect(await postNumber(d.account.id, "24")).toMatchObject({
+      status: "available",
+    });
+    expect(await auditsOf(post24.id, "social_post.removed")).toEqual([]);
   });
 
   it("empty after a sync: unreferenced posts deleted, the account still connected", async () => {

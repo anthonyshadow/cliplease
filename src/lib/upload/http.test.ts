@@ -1,45 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fakeXhr } from "../../../tests/helpers/upload-fakes";
 import { putWithProgress } from "./http";
 import { PUT_STALL_MS } from "./limits";
 
-/** An XMLHttpRequest the test drives: progress, the body sent, an answer or an error, each when the test says. */
-class FakeXhr {
-  static last: FakeXhr | null = null;
-  status = 0;
-  aborted = false;
-  upload: {
-    onprogress: ((event: { loaded: number }) => void) | null;
-    onload: (() => void) | null;
-  } = { onprogress: null, onload: null };
-  onload: (() => void) | null = null;
-  onerror: (() => void) | null = null;
-  onabort: (() => void) | null = null;
-
-  open() {}
-  setRequestHeader() {}
-  send() {
-    FakeXhr.last = this;
-  }
-  abort() {
-    this.aborted = true;
-    this.onabort?.();
-  }
-  progress(loaded: number) {
-    this.upload.onprogress?.({ loaded });
-  }
-  sent() {
-    this.upload.onload?.();
-  }
-  answer(status: number) {
-    this.status = status;
-    this.onload?.();
-  }
-}
-
-const xhr = () => {
-  if (!FakeXhr.last) throw new Error("no PUT was sent");
-  return FakeXhr.last;
-};
+let xhrs: ReturnType<typeof fakeXhr>;
 
 const put = (signal?: AbortSignal) =>
   putWithProgress("https://storage.test/part-1", new Blob(["part"]), {
@@ -47,8 +11,10 @@ const put = (signal?: AbortSignal) =>
   });
 
 beforeEach(() => {
-  FakeXhr.last = null;
-  vi.stubGlobal("XMLHttpRequest", FakeXhr);
+  // Each PUT waits for the test: its progress, the body sent, an answer or an error, each when the test says.
+  xhrs = fakeXhr();
+  xhrs.answers = () => "hang";
+  vi.stubGlobal("XMLHttpRequest", xhrs.XMLHttpRequest);
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
 });
 
@@ -65,7 +31,7 @@ describe("putWithProgress: a stalled PUT (07 D80)", () => {
     expect(result).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
     expect(result).toHaveBeenCalledWith({ ok: false, code: "network" });
-    expect(xhr().aborted).toBe(true);
+    expect(xhrs.last().aborted).toBe(true);
     expect(vi.getTimerCount()).toBe(0);
   });
 
@@ -73,20 +39,20 @@ describe("putWithProgress: a stalled PUT (07 D80)", () => {
     const pending = put();
     for (let n = 1; n <= 4; n++) {
       await vi.advanceTimersByTimeAsync(PUT_STALL_MS / 2);
-      xhr().progress(n);
+      xhrs.last().progress(n);
     }
-    xhr().sent();
+    xhrs.last().sent();
     await vi.advanceTimersByTimeAsync(PUT_STALL_MS - 1);
-    xhr().answer(200);
+    xhrs.last().answer(200);
     await expect(pending).resolves.toEqual({ ok: true, status: 200 });
-    expect(xhr().aborted).toBe(false);
+    expect(xhrs.last().aborted).toBe(false);
     expect(vi.getTimerCount()).toBe(0);
   });
 
   it("ends as network when the body is sent but no answer comes", async () => {
     const pending = put();
-    xhr().progress(4);
-    xhr().sent();
+    xhrs.last().progress(4);
+    xhrs.last().sent();
     await vi.advanceTimersByTimeAsync(PUT_STALL_MS);
     await expect(pending).resolves.toEqual({ ok: false, code: "network" });
   });
@@ -101,7 +67,7 @@ describe("putWithProgress: a stalled PUT (07 D80)", () => {
 
   it("leaves no timer after a dropped connection", async () => {
     const pending = put();
-    xhr().onerror?.();
+    xhrs.last().fail();
     await expect(pending).resolves.toEqual({ ok: false, code: "network" });
     expect(vi.getTimerCount()).toBe(0);
   });

@@ -68,14 +68,25 @@ function expectCookieCleared(response: Response) {
   expect(line).toMatch(/Expires=Thu, 01 Jan 1970/i);
 }
 
-// Bound before any spy, so a second grantScopes still reaches the real exchange.
+// The real calls, bound before any spy, so a spy laid over another (a second grantScopes) still reaches them.
 const realExchange = mockProvider.exchangeCode.bind(mockProvider);
+const realProfile = mockProvider.getProfile.bind(mockProvider);
 
 /** The platform grants these scopes instead of the mock's own. */
 function grantScopes(scopes: string[]) {
   return vi
     .spyOn(mockProvider, "exchangeCode")
     .mockImplementation(async (i) => ({ ...(await realExchange(i)), scopes }));
+}
+
+/** The platform's account id holds a NUL byte, which can't be stored: the registry fails the profile read (text.ts). */
+function nulAccountId() {
+  return vi
+    .spyOn(mockProvider, "getProfile")
+    .mockImplementation(async (token) => {
+      const own = await realProfile(token);
+      return { ...own, externalAccountId: `${own.externalAccountId}\u0000` };
+    });
 }
 
 async function linkedAudits(socialAccountId: string) {
@@ -300,6 +311,17 @@ describe("callback", () => {
     ]);
   });
 
+  it("counts a profile whose account id holds a NUL as unreadable: without the scope, nothing is given back", async () => {
+    await signedInCreator();
+    grantScopes([]);
+    nulAccountId();
+    const revoke = vi.spyOn(mockProvider, "revoke");
+    expect(location(await connect())).toBe(
+      at("/dashboard/connections?error=missing_scope"),
+    );
+    expect(revoke).not.toHaveBeenCalled();
+  });
+
   it("still redirects when giving the tokens back fails", async () => {
     await signedInCreator();
     grantScopes([]);
@@ -357,18 +379,31 @@ describe("callback", () => {
     );
     profile.mockRestore();
 
-    // A NUL byte in the platform's account id makes the database refuse it: a failure that isn't a unique violation.
-    const real = mockProvider.getProfile.bind(mockProvider);
-    vi.spyOn(mockProvider, "getProfile").mockImplementation(async (token) => {
-      const own = await real(token);
-      return { ...own, externalAccountId: `${own.externalAccountId}\u0000` };
-    });
+    // A NUL byte in the platform's account id: the profile read fails.
+    const nul = nulAccountId();
+    response = await connect();
+    expect(location(response)).toBe(
+      at("/dashboard/connections?error=provider_error"),
+    );
+    nul.mockRestore();
+
+    // A token expiry that isn't a date can't be saved: a failure that isn't a unique violation.
+    vi.spyOn(mockProvider, "exchangeCode").mockImplementation(async (i) => ({
+      ...(await realExchange(i)),
+      accessTokenExpiresAt: new Date(Number.NaN),
+    }));
     response = await connect();
     expect(location(response)).toBe(
       at("/dashboard/connections?error=provider_error"),
     );
 
     const { written, events } = logs();
+    const profileFailed = expect.objectContaining({
+      level: "warn",
+      provider: "mock",
+      stage: "profile",
+      reason: "SocialUpstreamError",
+    });
     expect(events).toEqual([
       expect.objectContaining({
         level: "warn",
@@ -376,12 +411,8 @@ describe("callback", () => {
         stage: "exchange",
         reason: "SocialAuthError",
       }),
-      expect.objectContaining({
-        level: "warn",
-        provider: "mock",
-        stage: "profile",
-        reason: "SocialUpstreamError",
-      }),
+      profileFailed,
+      profileFailed,
       expect.objectContaining({
         level: "error",
         provider: "mock",

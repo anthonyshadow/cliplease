@@ -114,8 +114,46 @@ export function refreshDecision(
 /** An access token in the clear, with the token_refreshed_at it was read with (for withAccessToken's retry). */
 type HeldToken = { token: string; refreshedAt: Date | null };
 
-/** The token_refreshed_at of the tokens the last platform call used: the ones a SocialAuthError says are dead. */
-type Seen = { refreshedAt?: Date | null };
+/**
+ * A refusal of the tokens stamped `tokenRefreshedAt` (their token_refreshed_at, null when the row had none): orReconnect
+ * marks the account only while the row still holds them (07 D12b), so one a reconnect gave new tokens meanwhile stays
+ * connected. Any other SocialAuthError, an adapter's or one thrown with no row read, marks the account unfenced.
+ */
+class TokensRefused extends SocialAuthError {
+  constructor(
+    readonly tokenRefreshedAt: Date | null,
+    message?: string,
+  ) {
+    super(message);
+  }
+}
+
+/**
+ * The refusal of the tokens stamped `refreshedAt` (TokensRefused), or a plain SocialAuthError when no row was read
+ * (undefined). Given `from`, the SocialAuthError a platform call threw, it keeps that message.
+ */
+function refusal(
+  refreshedAt: Date | null | undefined,
+  from?: SocialAuthError,
+): SocialAuthError {
+  return refreshedAt === undefined
+    ? new SocialAuthError(from?.message)
+    : new TokensRefused(refreshedAt, from?.message);
+}
+
+/** A platform call made with the tokens stamped `refreshedAt`: a SocialAuthError it throws becomes their refusal. */
+async function stampRefusal<T>(
+  refreshedAt: Date | null,
+  call: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await call();
+  } catch (error) {
+    throw error instanceof SocialAuthError
+      ? refusal(refreshedAt, error)
+      : error;
+  }
+}
 
 const tokenColumns = {
   provider: socialAccount.provider,
@@ -132,7 +170,7 @@ type TokenRow = NonNullable<Awaited<ReturnType<typeof readTokenRow>>>;
 
 /** The row's tokens in the clear: the inverse of sealTokenColumns. The row must hold an access token. */
 function openTokenSet(accountId: string, row: TokenRow): TokenSet {
-  if (row.accessTokenEnc === null) throw new SocialAuthError();
+  if (row.accessTokenEnc === null) throw refusal(row.tokenRefreshedAt);
   return {
     accessToken: decryptSecret(row.accessTokenEnc, accessTokenAad(accountId)),
     accessTokenExpiresAt: row.accessTokenExpiresAt,
@@ -174,7 +212,6 @@ async function readTokenRow(accountId: string) {
  */
 async function refreshUnderLock(
   accountId: string,
-  seen?: Seen,
 ): Promise<{ tokens: TokenSet; refreshedAt: Date | null }> {
   try {
     return await db.transaction(async (tx) => {
@@ -184,11 +221,10 @@ async function refreshUnderLock(
         .from(socialAccount)
         .where(eq(socialAccount.id, accountId))
         .for("update");
-      if (seen && row) seen.refreshedAt = row.tokenRefreshedAt;
       const now = new Date();
       const decision = row ? refreshDecision(row.provider, row, now) : null;
       if (row?.status !== "connected" || decision === "reconnect") {
-        throw new SocialAuthError();
+        throw refusal(row?.tokenRefreshedAt);
       }
       const current = openTokenSet(accountId, row);
       if (decision === "use") {
@@ -197,9 +233,11 @@ async function refreshUnderLock(
 
       const provider = getProvider(row.provider);
       if (!provider) throw new SocialUpstreamError();
-      const next = await provider.refreshToken(current, {
-        signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS),
-      });
+      const next = await stampRefusal(row.tokenRefreshedAt, () =>
+        provider.refreshToken(current, {
+          signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS),
+        }),
+      );
       // The scopes stay those granted at connect (03 §7.2's refresh UPDATE leaves them alone), and a set without a
       // refresh token keeps the stored one (storeTokens).
       const stored: TokenSet = {
@@ -220,34 +258,35 @@ async function refreshUnderLock(
   }
 }
 
-async function freshToken(accountId: string, seen: Seen): Promise<HeldToken> {
+async function freshToken(accountId: string): Promise<HeldToken> {
   const row = await readTokenRow(accountId);
-  if (row) seen.refreshedAt = row.tokenRefreshedAt;
   const held = row ? heldToken(accountId, row) : null;
   const decision = row ? refreshDecision(row.provider, row, new Date()) : null;
-  if (!held || decision === "reconnect") throw new SocialAuthError();
+  if (!held || decision === "reconnect") throw refusal(row?.tokenRefreshedAt);
   if (decision === "use") return held;
-  const { tokens, refreshedAt } = await refreshUnderLock(accountId, seen);
+  const { tokens, refreshedAt } = await refreshUnderLock(accountId);
   return { token: tokens.accessToken, refreshedAt };
 }
 
 /**
  * 07 D02's one rule, in one place: a SocialAuthError that leaves this module means the account must reconnect. It runs
  * after any refresh transaction has ended, and markNeedsReconnect does nothing to an account that isn't connected or
- * no longer holds the tokens `work` saw refused. When a reconnect stored new tokens meanwhile, the error becomes a
+ * no longer holds the tokens a TokensRefused names. When a reconnect stored new tokens meanwhile, the error becomes a
  * SocialUpstreamError: the account is fine, so nobody is told to reconnect it.
  */
 async function orReconnect<T>(
   accountId: string,
-  work: (seen: Seen) => Promise<T>,
+  work: () => Promise<T>,
 ): Promise<T> {
-  const seen: Seen = {};
   try {
-    return await work(seen);
+    return await work();
   } catch (error) {
     if (
       error instanceof SocialAuthError &&
-      !(await markNeedsReconnect(accountId, seen.refreshedAt)) &&
+      !(await markNeedsReconnect(
+        accountId,
+        error instanceof TokensRefused ? error.tokenRefreshedAt : undefined,
+      )) &&
       (await readTokenRow(accountId))?.status === "connected"
     ) {
       // A reconnect replaced the refused tokens meanwhile: the account is fine, only this call failed.
@@ -260,12 +299,14 @@ async function orReconnect<T>(
 /**
  * A usable access token for a connected account, refreshed first when it is due (02 §7.4). Throws SocialAuthError when
  * the account isn't connected or must reconnect (the account is then needs_reconnect), SocialUpstreamError when the
- * refresh timed out, waited too long for the lock, or was refused while a reconnect stored new tokens.
+ * refresh timed out, waited too long for the lock, or was refused while a reconnect stored new tokens. Platform calls
+ * go through withAccessToken instead: a refusal of this raw token gets neither withAccessToken's retry nor 07 D02's
+ * rule. It stays for 07 D12's concurrency test.
  */
 export async function getFreshAccessToken(accountId: string): Promise<string> {
   return orReconnect(
     accountId,
-    async (seen) => (await freshToken(accountId, seen)).token,
+    async () => (await freshToken(accountId)).token,
   );
 }
 
@@ -278,9 +319,8 @@ export async function withAccessToken<T>(
   accountId: string,
   fn: (token: string) => Promise<T>,
 ): Promise<T> {
-  return orReconnect(accountId, async (seen) => {
-    const held = await freshToken(accountId, seen);
-    seen.refreshedAt = held.refreshedAt;
+  return orReconnect(accountId, async () => {
+    const held = await freshToken(accountId);
     try {
       return await fn(held.token);
     } catch (error) {
@@ -290,9 +330,8 @@ export async function withAccessToken<T>(
       const refreshedMeanwhile =
         current !== null &&
         current.refreshedAt?.getTime() !== held.refreshedAt?.getTime();
-      if (!refreshedMeanwhile) throw error;
-      seen.refreshedAt = current.refreshedAt;
-      return fn(current.token);
+      if (!refreshedMeanwhile) throw refusal(held.refreshedAt, error);
+      return stampRefusal(current.refreshedAt, () => fn(current.token));
     }
   });
 }

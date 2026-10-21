@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { DEMO_PROFILE } from "../../../tests/helpers/social-fixtures";
 import { env } from "../env";
 import { mockProvider } from "./providers/mock";
 import {
@@ -12,6 +13,10 @@ import type { SocialProvider } from "./types";
 const APP_URL = "http://localhost:3000";
 const fakeYouTube = { ...mockProvider, platform: "youtube" } as SocialProvider;
 
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 describe("createSocialRegistry (02 §5.3)", () => {
   it("lists enabled platforms in the UI order, whatever the env order", () => {
     const registry = createSocialRegistry(
@@ -19,7 +24,7 @@ describe("createSocialRegistry (02 §5.3)", () => {
       { mock: mockProvider, youtube: fakeYouTube },
     );
     expect(registry.enabledPlatforms()).toEqual(["youtube", "mock"]);
-    expect(registry.getProvider("youtube")).toBe(fakeYouTube);
+    expect(registry.getProvider("youtube")?.platform).toBe("youtube");
   });
 
   it("answers null for a platform that isn't enabled or isn't a provider", () => {
@@ -37,7 +42,20 @@ describe("createSocialRegistry (02 §5.3)", () => {
     ]) {
       expect(registry.getProvider(name)).toBeNull();
     }
-    expect(registry.getProvider("mock")).toBe(mockProvider);
+    expect(registry.getProvider("mock")?.platform).toBe("mock");
+  });
+
+  it("hands out each adapter with its reads cleaned (text.ts), the rest its own", async () => {
+    const provider = createSocialRegistry({
+      ENABLED_SOCIAL_PROVIDERS: ["mock"],
+      APP_URL,
+    }).getProvider("mock");
+    vi.spyOn(mockProvider, "getProfile").mockResolvedValue({
+      ...DEMO_PROFILE,
+      username: "demo.creator\u0000",
+    });
+    expect(await provider?.getProfile("t")).toEqual(DEMO_PROFILE);
+    expect(provider?.requiredScopes).toBe(mockProvider.requiredScopes);
   });
 
   it("fails when an enabled platform has no adapter yet", () => {

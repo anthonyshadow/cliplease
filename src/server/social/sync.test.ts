@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { socialPost } from "../../../tests/helpers/social-fixtures";
 import {
   isKeptVideo,
   lostProfessionalAccount,
@@ -8,7 +9,6 @@ import {
   SOCIAL_SYNC_MAX_POSTS,
   toSocialPostRow,
 } from "./sync";
-import type { SocialPost } from "./types";
 
 const NOW = new Date("2026-10-18T12:00:00Z");
 const ACCOUNT = {
@@ -16,30 +16,6 @@ const ACCOUNT = {
   creatorId: "22222222-2222-4222-8222-222222222222",
   provider: "mock",
 } as const;
-
-function post(overrides: Partial<SocialPost> = {}): SocialPost {
-  return {
-    platform: "mock",
-    externalId: "mock_post_c4180ab2_01",
-    kind: "video",
-    title: null,
-    linkKey: "mock_post_c4180ab2_01",
-    caption: "Morning light over the bay",
-    permalink: "https://example.com/mock/mock_post_c4180ab2_01",
-    thumbnailUrl: "mock://thumb/01",
-    thumbnailExpiresAt: null,
-    publishedAt: new Date("2026-10-01T15:00:00Z"),
-    durationSec: 14,
-    width: 720,
-    height: 1280,
-    viewCount: 1200,
-    likeCount: 80,
-    commentCount: 4,
-    shareCount: null,
-    visibility: "public",
-    ...overrides,
-  };
-}
 
 describe("sync constants (02 §10, OQ-16)", () => {
   it("keeps 200 posts, reads 10 pages and hides posts after 30 days", () => {
@@ -51,7 +27,7 @@ describe("sync constants (02 §10, OQ-16)", () => {
 
 describe("toSocialPostRow (03 DB1, 07 D68)", () => {
   it("maps the DTO to columns, with the account's ids and one clock", () => {
-    expect(toSocialPostRow(ACCOUNT, post(), NOW)).toEqual({
+    expect(toSocialPostRow(ACCOUNT, socialPost("01"), NOW)).toEqual({
       socialAccountId: ACCOUNT.id,
       creatorId: ACCOUNT.creatorId,
       provider: "mock",
@@ -82,7 +58,11 @@ describe("toSocialPostRow (03 DB1, 07 D68)", () => {
   it("keeps the link key the adapter gives (an Instagram shortcode, not the post id)", () => {
     const row = toSocialPostRow(
       { ...ACCOUNT, provider: "instagram" },
-      post({ platform: "instagram", externalId: "1789", linkKey: "DAbc_12" }),
+      socialPost("01", {
+        platform: "instagram",
+        externalId: "1789",
+        linkKey: "DAbc_12",
+      }),
       NOW,
     );
     expect(row).toMatchObject({
@@ -96,29 +76,15 @@ describe("toSocialPostRow (03 DB1, 07 D68)", () => {
     const long = `${"a".repeat(499)}🎬🎬`;
     const caption = toSocialPostRow(
       ACCOUNT,
-      post({ caption: long }),
+      socialPost("01", { caption: long }),
       NOW,
     ).caption;
     expect(Array.from(caption ?? "")).toHaveLength(500);
     expect(caption?.endsWith("a🎬")).toBe(true);
     expect(
-      toSocialPostRow(ACCOUNT, post({ caption: null }), NOW).caption,
+      toSocialPostRow(ACCOUNT, socialPost("01", { caption: null }), NOW)
+        .caption,
     ).toBeNull();
-  });
-
-  it("drops NUL bytes from the title and the caption before the cut, and a thumbnail URL that holds one", () => {
-    const row = toSocialPostRow(
-      ACCOUNT,
-      post({
-        title: "Bay\u0000",
-        caption: `${"\u0000".repeat(10)}${"a".repeat(500)}`,
-        thumbnailUrl: "mock://thumb/\u000001",
-      }),
-      NOW,
-    );
-    expect(row.title).toBe("Bay");
-    expect(row.caption).toBe("a".repeat(500));
-    expect(row.thumbnailUrl).toBeNull();
   });
 });
 
@@ -151,7 +117,7 @@ describe("refusalReason (02 §7.5 step 1)", () => {
 describe("isKeptVideo", () => {
   it("keeps videos, reels and shorts only", () => {
     for (const kind of ["video", "reel", "short"] as const) {
-      expect(isKeptVideo(post({ kind }))).toBe(true);
+      expect(isKeptVideo(socialPost("01", { kind }))).toBe(true);
     }
     for (const kind of ["image", "carousel", "story", "", "VIDEO"]) {
       expect(isKeptVideo({ kind })).toBe(false);

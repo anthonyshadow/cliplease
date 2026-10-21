@@ -19,10 +19,13 @@ import {
   getFreshAccessToken,
   markNeedsReconnect,
   refreshTokenAad,
+  storeTokens,
+  withAccessToken,
 } from "../../../src/server/social/tokens";
 import {
   accountRow,
   auditsOf,
+  demoAccount,
   insertDemoAccount,
 } from "../../helpers/connect-flow";
 import { resetDb } from "../../helpers/db";
@@ -205,6 +208,53 @@ describe("markNeedsReconnect fenced on the refused tokens (07 D12b)", () => {
     expect(
       decryptSecret(row.accessTokenEnc as string, accessTokenAad(id)),
     ).toBe(fresh.accessToken);
+    expect(await auditsOf(id, "social_account.needs_reconnect")).toEqual([]);
+  });
+
+  /**
+   * withAccessToken on a Demo account whose platform refuses every token. Another request's refresh lands before the
+   * first refusal, so it retries with that token; with `reconnect`, newer tokens land again before the retry's
+   * refusal. Gives back the tokens used and what the call threw.
+   */
+  async function refusedRetry(reconnect: boolean) {
+    const {
+      account: { id },
+      userId,
+    } = await demoAccount();
+    const used: string[] = [];
+    const thrown = await withAccessToken(id, async (token) => {
+      used.push(token);
+      if (used.length === 1 || reconnect) {
+        await storeTokens(
+          db,
+          id,
+          mockTokensFor(userId, `t${used.length + 1}`),
+          new Date(Date.now() + used.length * MINUTE_MS),
+        );
+      }
+      throw new SocialAuthError();
+    }).catch((error: unknown) => error);
+    return { id, userId, used, thrown };
+  }
+
+  it("marks the account when the retry's token is refused too: fenced on the retry's tokens", async () => {
+    const { id, userId, used, thrown } = await refusedRetry(false);
+    expect(thrown).toBeInstanceOf(SocialAuthError);
+    expect(used).toEqual([
+      mockTokensFor(userId, "t1").accessToken,
+      mockTokensFor(userId, "t2").accessToken,
+    ]);
+    expect((await accountRow(id)).status).toBe("needs_reconnect");
+    expect(await auditsOf(id, "social_account.needs_reconnect")).toHaveLength(
+      1,
+    );
+  });
+
+  it("leaves the account connected when a reconnect replaces the tokens the retry was refused with", async () => {
+    const { id, used, thrown } = await refusedRetry(true);
+    expect(thrown).toBeInstanceOf(SocialUpstreamError);
+    expect(used).toHaveLength(2);
+    expect((await accountRow(id)).status).toBe("connected");
     expect(await auditsOf(id, "social_account.needs_reconnect")).toEqual([]);
   });
 });

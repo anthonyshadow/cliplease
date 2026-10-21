@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { countingStream } from "../../tests/helpers/streams";
 import { readJsonCapped } from "./http";
 
 const ROUTE_URL = "http://localhost:3000/api/uploads/start";
@@ -13,23 +14,9 @@ function chunkedBody(
   size: number,
   headers: Record<string, string> = {},
 ) {
-  const state = { pulled: 0, cancelled: false };
-  const stream = new ReadableStream<Uint8Array>(
-    {
-      pull(controller) {
-        if (state.pulled === chunks) {
-          controller.close();
-          return;
-        }
-        state.pulled += 1;
-        controller.enqueue(new TextEncoder().encode(" ".repeat(size)));
-      },
-      cancel() {
-        state.cancelled = true;
-      },
-    },
-    // Nothing is pulled before a read asks for it.
-    { highWaterMark: 0 },
+  const chunk = new TextEncoder().encode(" ".repeat(size));
+  const { stream, ...counts } = countingStream(
+    Array.from({ length: chunks }, () => chunk),
   );
   // Node's fetch needs `duplex` for a stream body; the DOM's RequestInit doesn't list it.
   const init: RequestInit & { duplex: "half" } = {
@@ -38,7 +25,7 @@ function chunkedBody(
     headers,
     duplex: "half",
   };
-  return { request: new Request(ROUTE_URL, init), state };
+  return { request: new Request(ROUTE_URL, init), ...counts };
 }
 
 describe("readJsonCapped", () => {
@@ -60,18 +47,18 @@ describe("readJsonCapped", () => {
   });
 
   it("refuses unread when the Content-Length says more than the cap", async () => {
-    const { request, state } = chunkedBody(1, 2, {
+    const { request, pulled } = chunkedBody(1, 2, {
       "content-length": String(MAX + 1),
     });
     expect(await readJsonCapped(request, MAX)).toEqual({ ok: false });
-    expect(state.pulled).toBe(0);
+    expect(pulled()).toBe(0);
   });
 
   it("stops reading a body with no length once it goes over, and cancels it", async () => {
-    const { request, state } = chunkedBody(1000, 16);
+    const { request, pulled, cancelled } = chunkedBody(1000, 16);
     expect(await readJsonCapped(request, MAX)).toEqual({ ok: false });
-    expect(state.pulled).toBeLessThanOrEqual(MAX / 16 + 2);
-    expect(state.cancelled).toBe(true);
+    expect(pulled()).toBeLessThanOrEqual(MAX / 16 + 2);
+    expect(cancelled()).toBe(true);
   });
 
   it("refuses no body, an empty one, one that isn't JSON and one that isn't UTF-8", async () => {

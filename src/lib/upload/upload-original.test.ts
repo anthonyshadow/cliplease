@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   fakeNetwork,
+  fakeXhr,
   memoryStorage,
 } from "../../../tests/helpers/upload-fakes";
 import { PART_CONCURRENCY, PART_MAX_ATTEMPTS, PART_URL_BATCH } from "./limits";
@@ -73,82 +74,6 @@ const range = (from: number, to: number) =>
 const partUrl = (n: number) => `https://example.test/part/${n}`;
 const partOf = (url: string) => Number(/\/part\/(\d+)/.exec(url)?.[1]);
 
-/** How a part's nth send answers: a status, a dropped connection, or nothing until it is aborted. */
-type Answer = number | "error" | "hang";
-
-/** A part PUT: partial then full progress, then its answer, each a timer apart. Abort answers at once, as browsers do. */
-class FakeXhr {
-  static all: FakeXhr[] = [];
-  static inFlight = 0;
-  static maxInFlight = 0;
-  static answer: (part: number, send: number) => Answer = () => 200;
-
-  static sendsOf(part: number) {
-    return FakeXhr.all.filter((x) => x.part === part);
-  }
-
-  method = "";
-  url = "";
-  part = 0;
-  status = 0;
-  headers: [string, string][] = [];
-  body: Blob | null = null;
-  aborted = false;
-  answered = false;
-  sentAt = 0;
-  answeredAt = 0;
-  upload: { onprogress: ((event: { loaded: number }) => void) | null } = {
-    onprogress: null,
-  };
-  onload: (() => void) | null = null;
-  onerror: (() => void) | null = null;
-  onabort: (() => void) | null = null;
-
-  open(method: string, url: string) {
-    this.method = method;
-    this.url = url;
-    this.part = partOf(url);
-  }
-
-  setRequestHeader(name: string, value: string) {
-    this.headers.push([name, value]);
-  }
-
-  send(body: Blob) {
-    this.body = body;
-    this.sentAt = Date.now();
-    FakeXhr.all.push(this);
-    FakeXhr.inFlight++;
-    FakeXhr.maxInFlight = Math.max(FakeXhr.maxInFlight, FakeXhr.inFlight);
-    const answer = FakeXhr.answer(this.part, FakeXhr.sendsOf(this.part).length);
-    if (answer === "hang") return;
-    setTimeout(() => {
-      if (this.aborted) return;
-      this.upload.onprogress?.({ loaded: Math.floor(body.size / 2) });
-      setTimeout(() => {
-        if (this.aborted) return;
-        this.answered = true;
-        this.answeredAt = Date.now();
-        FakeXhr.inFlight--;
-        if (answer === "error") {
-          this.onerror?.();
-          return;
-        }
-        this.upload.onprogress?.({ loaded: body.size });
-        this.status = answer;
-        this.onload?.();
-      }, 0);
-    }, 0);
-  }
-
-  abort() {
-    if (this.aborted || this.answered) return;
-    this.aborted = true;
-    FakeXhr.inFlight--;
-    this.onabort?.();
-  }
-}
-
 type Call = {
   route: string;
   body: unknown;
@@ -166,9 +91,13 @@ let completeAnswer: () => Response;
 let abortAnswer: () => Response;
 let network: ReturnType<typeof fakeNetwork>;
 let hints: ReturnType<typeof memoryStorage>;
+let xhrs: ReturnType<typeof fakeXhr>;
 
 const bodiesOf = (route: string) =>
   calls.filter((c) => c.route === route).map((c) => c.body);
+/** A part's PUTs in order, to each URL it was signed with. */
+const sendsOf = (part: number) =>
+  xhrs.all.filter((x) => partOf(x.url) === part);
 /** The statuses reported so far, from the event log. */
 const statuses = () =>
   events
@@ -196,12 +125,9 @@ beforeEach(() => {
     events.push("hint");
     hints.items.set(key, value);
   });
-  FakeXhr.all = [];
-  FakeXhr.inFlight = 0;
-  FakeXhr.maxInFlight = 0;
-  FakeXhr.answer = () => 200;
+  xhrs = fakeXhr();
   const signed = new Map<number, number>();
-  vi.stubGlobal("XMLHttpRequest", FakeXhr);
+  vi.stubGlobal("XMLHttpRequest", xhrs.XMLHttpRequest);
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -214,7 +140,7 @@ beforeEach(() => {
         route,
         body,
         init,
-        sends: FakeXhr.all.length,
+        sends: xhrs.all.length,
         at: Date.now(),
       });
       events.push(route);
@@ -296,12 +222,12 @@ describe("uploadOriginal (02 §5.9, 07 D80)", () => {
       PART_URL_BATCH - PART_CONCURRENCY + 1,
     );
 
-    expect(FakeXhr.all).toHaveLength(25);
-    expect(FakeXhr.maxInFlight).toBe(PART_CONCURRENCY);
-    expect(FakeXhr.all.map((x) => x.url).sort()).toEqual(
+    expect(xhrs.all).toHaveLength(25);
+    expect(xhrs.maxInFlight).toBe(PART_CONCURRENCY);
+    expect(xhrs.all.map((x) => x.url).sort()).toEqual(
       range(1, 25).map(partUrl).sort(),
     );
-    for (const xhr of FakeXhr.all) {
+    for (const xhr of xhrs.all) {
       expect(xhr.method).toBe("PUT");
       expect(xhr.headers).toEqual([]);
       expect(xhr.body).toBeInstanceOf(Blob);
@@ -344,8 +270,8 @@ describe("uploadOriginal (02 §5.9, 07 D80)", () => {
       },
     });
     expect(result).toEqual({ ok: false, code: "canceled" });
-    expect(FakeXhr.all.some((x) => x.aborted)).toBe(true);
-    expect(FakeXhr.inFlight).toBe(0);
+    expect(xhrs.all.some((x) => x.aborted)).toBe(true);
+    expect(xhrs.inFlight).toBe(0);
     expect(bodiesOf("complete")).toEqual([]);
     expect(statuses()).not.toContain("checking");
     expect(savedHint()).toEqual(HINT);
@@ -358,7 +284,7 @@ describe("uploadOriginal (02 §5.9, 07 D80)", () => {
     startAnswer = () => json(body, status);
     expect(await upload()).toEqual({ ok: false, code });
     expect(bodiesOf("parts")).toEqual([]);
-    expect(FakeXhr.all).toEqual([]);
+    expect(xhrs.all).toEqual([]);
   });
 
   it("is network when fetch rejects, never sending a fresh start again", async () => {
@@ -374,19 +300,19 @@ describe("uploadOriginal (02 §5.9, 07 D80)", () => {
     startAnswer = () => json(multipart({ partCount: 24 }));
     expect(await upload()).toEqual({ ok: false, code: "internal" });
     expect(bodiesOf("parts")).toEqual([]);
-    expect(FakeXhr.all).toEqual([]);
+    expect(xhrs.all).toEqual([]);
   });
 });
 
 describe("retries (07 D80, owner answer Q-45 a)", () => {
   it(`pauses after ${PART_MAX_ATTEMPTS} retries of a part that keeps failing, aborting the parts in flight`, async () => {
     fakeTimers();
-    FakeXhr.answer = (part) => (part === 2 ? 500 : "hang");
+    xhrs.answers = (xhr) => (partOf(xhr.url) === 2 ? 500 : "hang");
     const pending = upload();
     await vi.runAllTimersAsync();
 
     expect(await pending).toEqual({ ok: false, code: "paused" });
-    const sends = FakeXhr.sendsOf(2);
+    const sends = sendsOf(2);
     expect(sends).toHaveLength(1 + PART_MAX_ATTEMPTS);
     const waits = sends
       .slice(1)
@@ -398,10 +324,10 @@ describe("retries (07 D80, owner answer Q-45 a)", () => {
       { videoId: VIDEO_ID, uploadId: "u", partNumbers: range(1, 20) },
     ]);
 
-    const others = FakeXhr.all.filter((x) => x.part !== 2);
+    const others = xhrs.all.filter((x) => partOf(x.url) !== 2);
     expect(others).toHaveLength(PART_CONCURRENCY - 1);
     for (const xhr of others) expect(xhr.aborted).toBe(true);
-    expect(FakeXhr.inFlight).toBe(0);
+    expect(xhrs.inFlight).toBe(0);
     expect(bodiesOf("complete")).toEqual([]);
     expect(statuses()).toEqual(["uploading", "retrying"]);
     // Choosing the same file resumes it.
@@ -415,13 +341,14 @@ describe("retries (07 D80, owner answer Q-45 a)", () => {
     "re-signs a part after %s and sends it again after the first wait",
     async (_, failure) => {
       fakeTimers();
-      FakeXhr.answer = (part, send) =>
-        part === 2 && send === 1 ? failure : 200;
+      // Fails part 2's first PUT only: its retry goes to a re-signed URL.
+      xhrs.answers = (xhr, send) =>
+        xhr.url === partUrl(2) && send === 1 ? failure : 200;
       const pending = upload();
       await vi.runAllTimersAsync();
 
       expect(await pending).toEqual({ ok: true });
-      const [first, second] = FakeXhr.sendsOf(2);
+      const [first, second] = sendsOf(2);
       expect(first?.url).toBe(partUrl(2));
       expect(second?.url).toBe(`${partUrl(2)}?sig=2`);
       const wait = (second?.sentAt ?? 0) - (first?.answeredAt ?? 0);
@@ -432,7 +359,7 @@ describe("retries (07 D80, owner answer Q-45 a)", () => {
         uploadId: "u",
         partNumbers: [2],
       });
-      expect(FakeXhr.all).toHaveLength(26);
+      expect(xhrs.all).toHaveLength(26);
       expect(statuses()).toEqual([
         "uploading",
         "retrying",
@@ -470,7 +397,7 @@ describe("retries (07 D80, owner answer Q-45 a)", () => {
     [
       "a part PUT",
       () => {
-        FakeXhr.answer = (part) => (part === 2 ? 404 : 200);
+        xhrs.answers = (xhr) => (partOf(xhr.url) === 2 ? 404 : 200);
       },
     ],
     [
@@ -482,7 +409,7 @@ describe("retries (07 D80, owner answer Q-45 a)", () => {
     [
       "a part's re-sign",
       () => {
-        FakeXhr.answer = (part) => (part === 2 ? 403 : 200);
+        xhrs.answers = (xhr) => (partOf(xhr.url) === 2 ? 403 : 200);
         partsAnswer = (partNumbers) =>
           partNumbers.length === 1 ? json({ code: "not_found" }, 404) : null;
       },
@@ -492,7 +419,7 @@ describe("retries (07 D80, owner answer Q-45 a)", () => {
     async (_, setup) => {
       setup();
       expect(await upload()).toEqual({ ok: false, code: "stale_upload" });
-      expect(FakeXhr.sendsOf(2).length).toBeLessThanOrEqual(1);
+      expect(sendsOf(2).length).toBeLessThanOrEqual(1);
       expect(statuses()).not.toContain("checking");
       expect(bodiesOf("complete")).toEqual([]);
       expect(savedHint()).toBeUndefined();
@@ -502,14 +429,14 @@ describe("retries (07 D80, owner answer Q-45 a)", () => {
   it("ends as upload_expired with no complete when the part URLs answer 410", async () => {
     partsAnswer = () => json({ code: "upload_expired" }, 410);
     expect(await upload()).toEqual({ ok: false, code: "upload_expired" });
-    expect(FakeXhr.all).toEqual([]);
+    expect(xhrs.all).toEqual([]);
     expect(bodiesOf("complete")).toEqual([]);
     expect(savedHint()).toBeUndefined();
   });
 
   it("ends as upload_expired, asking no second time, when a part's re-sign answers 410", async () => {
     fakeTimers();
-    FakeXhr.answer = (part) => (part === 2 ? 403 : 200);
+    xhrs.answers = (xhr) => (partOf(xhr.url) === 2 ? 403 : 200);
     partsAnswer = (partNumbers) =>
       partNumbers.length === 1 ? json({ code: "upload_expired" }, 410) : null;
     const pending = upload();
@@ -519,7 +446,7 @@ describe("retries (07 D80, owner answer Q-45 a)", () => {
       { videoId: VIDEO_ID, uploadId: "u", partNumbers: range(1, 20) },
       { videoId: VIDEO_ID, uploadId: "u", partNumbers: [2] },
     ]);
-    expect(FakeXhr.sendsOf(2)).toHaveLength(1);
+    expect(sendsOf(2)).toHaveLength(1);
     expect(bodiesOf("complete")).toEqual([]);
   });
 });
@@ -531,7 +458,7 @@ describe("offline (07 D80)", () => {
     const pending = upload({
       onProgress: (sent) => {
         if (sent > 0 && partsWhenOffline === 0) {
-          partsWhenOffline = FakeXhr.all.length;
+          partsWhenOffline = xhrs.all.length;
           network.set(false);
         }
       },
@@ -539,7 +466,7 @@ describe("offline (07 D80)", () => {
     await vi.advanceTimersByTimeAsync(60_000);
 
     expect(partsWhenOffline).toBe(PART_CONCURRENCY);
-    expect(FakeXhr.all).toHaveLength(PART_CONCURRENCY);
+    expect(xhrs.all).toHaveLength(PART_CONCURRENCY);
     expect(statuses()).toEqual(["uploading", "paused"]);
     // Nothing polls while it waits.
     expect(vi.getTimerCount()).toBe(0);
@@ -553,7 +480,7 @@ describe("offline (07 D80)", () => {
       "uploading",
       "checking",
     ]);
-    expect(FakeXhr.all).toHaveLength(25);
+    expect(xhrs.all).toHaveLength(25);
   });
 });
 
@@ -576,7 +503,7 @@ describe("resume (07 D80)", () => {
     expect(bodiesOf("parts")).toEqual([
       { videoId: VIDEO_ID, uploadId: "u", partNumbers: missing },
     ]);
-    expect(FakeXhr.all.map((x) => x.part).sort((a, b) => a - b)).toEqual(
+    expect(xhrs.all.map((x) => partOf(x.url)).sort((a, b) => a - b)).toEqual(
       missing,
     );
     expect(progress[0]).toEqual([done.length * PART_SIZE, SIZE]);
@@ -595,7 +522,7 @@ describe("resume (07 D80)", () => {
 
     expect(result).toEqual({ ok: false, code: "stale_upload" });
     expect(bodiesOf("parts")).toEqual([]);
-    expect(FakeXhr.all).toEqual([]);
+    expect(xhrs.all).toEqual([]);
     expect(bodiesOf("complete")).toEqual([]);
     expect(onStarted).not.toHaveBeenCalled();
     expect(savedHint()).toBeUndefined();
@@ -615,8 +542,8 @@ describe("resume (07 D80)", () => {
     const [first, second] = bodiesOf("start");
     expect(first).not.toHaveProperty("resume");
     expect(second).toEqual({ ...START_BODY, resume: true });
-    expect(FakeXhr.sendsOf(7)).toHaveLength(2);
-    expect(FakeXhr.all).toHaveLength(26);
+    expect(sendsOf(7)).toHaveLength(2);
+    expect(xhrs.all).toHaveLength(26);
     expect(bodiesOf("complete")).toEqual([
       { kind: "original", videoId: VIDEO_ID, uploadId: "u", meta: META },
       { kind: "original", videoId: VIDEO_ID, uploadId: "u", meta: META },
@@ -673,7 +600,7 @@ describe("a resume's start (07 D80, 04 §9.26 Paused)", () => {
     expect(await pending).toEqual({ ok: true });
     const [first, second] = calls.filter((c) => c.route === "start");
     expect((second?.at ?? 0) - (first?.at ?? 0)).toBe(RETRY_DELAYS_MS[0]);
-    expect(FakeXhr.all).toHaveLength(24);
+    expect(xhrs.all).toHaveLength(24);
   });
 
   it(`pauses after ${PART_MAX_ATTEMPTS} retries with no answer, keeping the hint`, async () => {
@@ -751,7 +678,7 @@ describe("complete first (Try again after complete's answer was lost, 07 D80)", 
       "complete",
     ]);
     expect(bodiesOf("start")).toEqual([{ ...START_BODY, resume: true }]);
-    expect(FakeXhr.all.map((x) => x.part)).toEqual([7]);
+    expect(xhrs.all.map((x) => partOf(x.url))).toEqual([7]);
     expect(statuses()).toEqual(["checking", "uploading", "checking"]);
   });
 
@@ -812,7 +739,7 @@ describe("the resume hint (07 D80, D103)", () => {
     // The caller's abort names it (owner answer Q-50).
     expect(onStarted).toHaveBeenCalledWith("u");
     expect(bodiesOf("parts")).toEqual([]);
-    expect(FakeXhr.all).toEqual([]);
+    expect(xhrs.all).toEqual([]);
   });
 
   it("is left alone by a run whose start never answered: that run wrote none", async () => {

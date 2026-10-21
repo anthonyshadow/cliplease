@@ -11,6 +11,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { countingStream } from "../../../tests/helpers/streams";
 import { MultipartError, StorageKeyError } from "./errors";
 import { PART_BYTES, UPLOAD_RESUME_WINDOW_MS } from "./limits";
 import {
@@ -67,25 +68,14 @@ function streamOf(...chunks: Uint8Array[]): ReadableStream<Uint8Array> {
   });
 }
 
-/** A lazy stream of `total` bytes in 1 MiB chunks, reporting how much was pulled and whether it was cancelled. */
+/** A lazy stream of `total` bytes in 1 MiB chunks (the last one shorter), counting the pulls, reporting a cancel. */
 function lazyStream(total: number) {
   const chunk = new Uint8Array(MIB).fill(0x5a);
-  const state = { pulled: 0, cancelled: false };
-  const body = new ReadableStream<Uint8Array>({
-    pull(controller) {
-      if (state.pulled >= total) {
-        controller.close();
-        return;
-      }
-      const n = Math.min(MIB, total - state.pulled);
-      state.pulled += n;
-      controller.enqueue(chunk.subarray(0, n));
-    },
-    cancel() {
-      state.cancelled = true;
-    },
-  });
-  return { body, state };
+  return countingStream(
+    Array.from({ length: Math.ceil(total / MIB) }, (_, i) =>
+      chunk.subarray(0, Math.min(MIB, total - i * MIB)),
+    ),
+  );
 }
 
 async function readAll(body: ReadableStream<Uint8Array>): Promise<Buffer> {
@@ -528,13 +518,13 @@ describe("multipart upload", () => {
         key: KEY,
         contentType: "video/mp4",
       });
-      const { body, state } = lazyStream(PART_BYTES + 64 * MIB);
+      const { stream, pulled, cancelled } = lazyStream(PART_BYTES + 64 * MIB);
       expect(
-        await store.receivePart({ key: KEY, uploadId, partNumber: 1 }, body),
+        await store.receivePart({ key: KEY, uploadId, partNumber: 1 }, stream),
       ).toBe("too_large");
       // It stops reading once over the limit instead of draining the body.
-      expect(state.cancelled).toBe(true);
-      expect(state.pulled).toBeLessThanOrEqual(PART_BYTES + 2 * MIB);
+      expect(cancelled()).toBe(true);
+      expect(pulled()).toBeLessThanOrEqual(PART_BYTES / MIB + 2);
       expect(await readdir(uploadDirOf(uploadId))).toEqual(["manifest.json"]);
       expect(await partsOf(uploadId)).toEqual([]);
     });
@@ -544,10 +534,10 @@ describe("multipart upload", () => {
         key: KEY,
         contentType: "video/mp4",
       });
-      const { body } = lazyStream(PART_BYTES);
+      const { stream } = lazyStream(PART_BYTES);
       const result = await store.receivePart(
         { key: KEY, uploadId, partNumber: 1 },
-        body,
+        stream,
       );
       expect(result).toMatchObject({
         etag: expect.stringMatching(/^"[0-9a-f]{32}"$/),

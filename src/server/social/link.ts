@@ -9,7 +9,6 @@ import type { Actor } from "../auth/actor";
 import { uniqueViolationConstraint } from "../db-errors";
 import { errorName, logEvent } from "../log";
 import { AlreadyLinkedError } from "./errors";
-import { urlWithoutNul, withoutNul } from "./text";
 import { sealTokenColumns, tokenUpdateColumns } from "./tokens";
 import type {
   RevokeOutcome,
@@ -19,19 +18,19 @@ import type {
 } from "./types";
 
 // Linking a platform account to a creator (02 §5.3, §7.2; 03 §5.4, §7.2; 07 D37). The adapter's DTO names map to
-// columns once, here (03 DB1): externalAccountId → provider_account_id.
+// columns once, here (03 DB1): externalAccountId → provider_account_id. The registry has cleaned the profile (text.ts).
 
 type LinkResult = { socialAccountId: string; created: boolean };
 
 /** The profile columns an adapter's SocialProfile fills; a connect and every sync write them (03 DB1). */
-export function profileColumns(profile: SocialProfile) {
-  return {
-    username: withoutNul(profile.username),
-    displayName: withoutNul(profile.displayName),
-    avatarUrl: urlWithoutNul(profile.avatarUrl),
-    profileUrl: urlWithoutNul(profile.profileUrl),
-    accountType: withoutNul(profile.accountType),
-  };
+export function profileColumns({
+  username,
+  displayName,
+  avatarUrl,
+  profileUrl,
+  accountType,
+}: SocialProfile) {
+  return { username, displayName, avatarUrl, profileUrl, accountType };
 }
 
 /**

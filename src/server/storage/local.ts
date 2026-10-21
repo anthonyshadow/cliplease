@@ -13,6 +13,7 @@ import {
   stat,
 } from "node:fs/promises";
 import path from "node:path";
+import { readCapped } from "../read-capped";
 import { MultipartError, StorageKeyError } from "./errors";
 import type { ObjectStorage } from "./index";
 import {
@@ -142,19 +143,11 @@ async function copyCapped(
   max: number,
 ): Promise<{ bytes: number; md5: string } | null> {
   const hash = createHash("md5");
-  const reader = body.getReader();
-  let bytes = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) return { bytes, md5: hash.digest("hex") };
-    bytes += value.byteLength;
-    if (bytes > max) {
-      await reader.cancel();
-      return null;
-    }
-    hash.update(value);
-    await file.write(value);
-  }
+  const bytes = await readCapped(body, max, (chunk) => {
+    hash.update(chunk);
+    return file.write(chunk);
+  });
+  return bytes === null ? null : { bytes, md5: hash.digest("hex") };
 }
 
 /** Writes `data` to `target` through a temp file. */

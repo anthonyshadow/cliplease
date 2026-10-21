@@ -157,6 +157,42 @@ export async function attachSample(page: Page) {
   return waitForAttached(page, stored);
 }
 
+/**
+ * Tracks the page's reads of a video file from now on (readVideoMetadata: the hints, and a frame when asked): each read
+ * opens a blob: URL of the file and revokes it when it ends, frame or not. The returned function waits until every read
+ * begun so far has ended (within the read's own 15 s deadline). The page must not reload in between.
+ */
+export async function trackVideoReads(page: Page) {
+  await page.evaluate(() => {
+    const open = new Set<string>();
+    Object.assign(window, { e2eVideoReads: open });
+    const create = URL.createObjectURL;
+    const revoke = URL.revokeObjectURL;
+    URL.createObjectURL = (object) => {
+      const url = create.call(URL, object);
+      if (object instanceof Blob && object.type.startsWith("video/")) {
+        open.add(url);
+      }
+      return url;
+    };
+    URL.revokeObjectURL = (url) => {
+      open.delete(url);
+      revoke.call(URL, url);
+    };
+  });
+  return () =>
+    page.waitForFunction(
+      () => {
+        const open = (window as Window & { e2eVideoReads?: Set<string> })
+          .e2eVideoReads;
+        if (!open) throw new Error("the page reloaded: no reads are tracked");
+        return open.size === 0;
+      },
+      undefined,
+      { timeout: 20_000 },
+    );
+}
+
 /** Chooses `file` on the open File step; returns the upload id its start answered with. */
 export async function chooseOriginal(
   page: Page,

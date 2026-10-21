@@ -2,28 +2,15 @@
 // config can use it as well as src/server/log.ts.
 
 const REDACTED = "[redacted]";
-// Key names: these match anywhere in the key, case-insensitively (header names included: set-cookie, x-api-key,
-// stripe-signature).
-const SECRET_KEY_PARTS = [
-  "token",
-  "secret",
-  "password",
-  "apikey",
-  "api_key",
-  "api-key",
-  "email",
-  "cookie",
-  "signature",
-  "credential",
-  "privatekey",
-  "private_key",
-  "private-key",
-];
-// These match the whole key, case-insensitively. Not "authorization" anywhere in a key: a payment authorization's id
-// is no secret.
+// Key names are compared folded (foldKey): lower-case, without "-" or "_", so one entry covers every spelling
+// ("api_key", "API-Key", "apiKey"). These parts match anywhere in the key (header names included: set-cookie,
+// x-api-key, stripe-signature).
+const SECRET_KEY_PART =
+  /token|secret|password|apikey|email|cookie|signature|credential|privatekey/;
+// These match the whole key. Not "authorization" anywhere in a key: a payment authorization's id is no secret.
 const SECRET_KEYS = new Set([
   "authorization",
-  "proxy-authorization",
+  "proxyauthorization",
   "code",
   "otp",
 ]);
@@ -38,15 +25,33 @@ const URL_IN_TEXT = /(?<![a-z0-9+.-])[a-z0-9+.-]+:\/\/[^\s"'<>]+/gi;
 const EMAIL_IN_TEXT =
   /(?<![^\s@<>"'():;,])[^\s@<>"'():;,]+@[^\s@<>"'():;,]+\.[a-z]{2,}/gi;
 // Buyer license links carry their bearer token in the path, not the query (02 §9.5, ADR-24): /l/<token> and
-// /api/licenses/<token>/…, in an absolute URL's path or as a bare path in text (anchored like the patterns above).
-const TOKEN_PATH = /^(\/l|\/api\/licenses)\/[^/?#]+/;
-const TOKEN_PATH_IN_TEXT =
-  /(?<![^\s"'(=])(\/l|\/api\/licenses)\/[A-Za-z0-9_-]+/g;
+// /api/licenses/<token>/…, in an absolute URL's path or as a bare path in text (anchored like the patterns above). The
+// three patterns below share this prefix source, so a new license path is one edit.
+const TOKEN_PATH_PREFIX = String.raw`\/(?:l|api\/licenses)`;
+const TOKEN_PATH = new RegExp(String.raw`^(${TOKEN_PATH_PREFIX})\/[^/?#]+`);
+const TOKEN_PATH_IN_TEXT = new RegExp(
+  String.raw`(?<![^\s"'(=])(${TOKEN_PATH_PREFIX})\/[A-Za-z0-9_-]+`,
+  "g",
+);
+// The text every TOKEN_PATH_IN_TEXT match contains. Most strings hold no license link: this literal search rules them
+// out for a fraction of that pattern's cost (its lookbehind is tried at every position), and stays cheaper than
+// includes() on text full of slashes.
+const TOKEN_PATH_HINT = new RegExp(String.raw`${TOKEN_PATH_PREFIX}\/`);
 
 export type RedactOptions = {
-  /** Whole-key names to keep although the log rules redact them: the audit writer keeps `code` (license codes). */
+  /**
+   * Whole-key names to keep although the log rules redact them, compared folded like SECRET_KEYS: the audit writer
+   * keeps `code` (license codes).
+   */
   keepKeys?: readonly string[];
 };
+
+const KEY_SEPARATORS = /[-_]/g;
+
+/** `key` lower-cased without "-" or "_", the form every key-name rule is written in. */
+function foldKey(key: string): string {
+  return key.toLowerCase().replace(KEY_SEPARATORS, "");
+}
 
 /** `text` cut back to its last whitespace before MAX_TEXT, so half an email address or URL never survives. */
 function capText(text: string): string {
@@ -86,10 +91,11 @@ function stripUrl(match: string): string {
  * by "[email]".
  */
 export function redactText(text: string): string {
-  return capText(text)
-    .replace(URL_IN_TEXT, stripUrl)
-    .replace(TOKEN_PATH_IN_TEXT, `$1/${REDACTED}`)
-    .replace(EMAIL_IN_TEXT, "[email]");
+  const stripped = capText(text).replace(URL_IN_TEXT, stripUrl);
+  const tokenless = TOKEN_PATH_HINT.test(stripped)
+    ? stripped.replace(TOKEN_PATH_IN_TEXT, `$1/${REDACTED}`)
+    : stripped;
+  return tokenless.replace(EMAIL_IN_TEXT, "[email]");
 }
 
 function redactError(error: Error): Record<string, unknown> {
@@ -115,13 +121,11 @@ function redactError(error: Error): Record<string, unknown> {
  * Cycles become "[circular]".
  */
 export function redact(value: unknown, options: RedactOptions = {}): unknown {
-  const keep = new Set(options.keepKeys?.map((key) => key.toLowerCase()));
+  const keep = new Set(options.keepKeys?.map(foldKey));
   const isRedactedKey = (key: string) => {
-    const k = key.toLowerCase();
+    const k = foldKey(key);
     if (keep.has(k)) return false;
-    return (
-      SECRET_KEYS.has(k) || SECRET_KEY_PARTS.some((part) => k.includes(part))
-    );
+    return SECRET_KEYS.has(k) || SECRET_KEY_PART.test(k);
   };
   // The objects on the path from the root: one seen twice side by side is copied twice, not called a cycle.
   const ancestors = new WeakSet<object>();

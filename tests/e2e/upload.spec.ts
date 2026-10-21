@@ -30,6 +30,7 @@ import {
   SAMPLE_MP4,
   STORAGE_ROOT,
   trackPosterStored,
+  trackVideoReads,
   uploadCard,
   uploadRoute,
   waitForAttached,
@@ -451,13 +452,14 @@ test("Q-41: Replace keeps a cover the creator chose and reads no new frame", asy
       r.request().postDataJSON()?.kind === "original" &&
       r.status() === 200,
   );
+  const readsEnded = await trackVideoReads(page);
   const chooser = page.waitForEvent("filechooser");
   await pressButton(page, "Replace");
   await (await chooser).setFiles(SAMPLE_MP4);
   await replaced;
   await expect(page.getByText(/^Original attached/).first()).toBeVisible();
-  // A frame read runs alongside the upload and can land after its complete: give one the time to show.
-  await waitInPage(page, 1_500);
+  // Complete waits for the hints only, so a frame read could still be running: wait until the file's reads have ended.
+  await readsEnded();
   // No frame was read for the cover: no "can't preview" line, no poster upload, and the chosen cover still shows.
   await expect(page.getByText(CANT_PREVIEW, { exact: true })).toHaveCount(0);
   await expect(coverImage(page)).toBeVisible();
