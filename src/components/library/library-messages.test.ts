@@ -5,6 +5,7 @@ import {
   type LibraryAccount,
   libraryChips,
   libraryEmptyState,
+  libraryRedirect,
   librarySyncLine,
   loadOlder,
   rateLimits,
@@ -238,6 +239,7 @@ describe("libraryEmptyState (05 §6.1 States)", () => {
     expect(state({ accounts: [] })).toEqual({ kind: "no-accounts" });
     expect(state({ allExpired: true, filter: { q: "snow" } })).toEqual({
       kind: "expired",
+      anyConnected: true,
     });
     expect(state({ filter: { q: "zzzz" } })).toEqual({
       kind: "no-match",
@@ -279,6 +281,43 @@ describe("libraryEmptyState (05 §6.1 States)", () => {
     ).toMatchObject({
       title: "No videos found on @demo.creator or @demo.creator.2.",
     });
+  });
+
+  it("one account that can sync among several that can't gets its own Sync now, not Sync all", () => {
+    const a = account({ platform: "instagram", username: "a" });
+    for (const b of [
+      { status: "needs_reconnect" as const },
+      { blockedMinutes: 3 },
+      { syncing: true },
+    ]) {
+      expect(
+        state({
+          accounts: [
+            a,
+            account({ id: B, platform: "instagram", username: "b", ...b }),
+          ],
+          filter: { platform: "instagram" },
+        }),
+      ).toEqual({
+        kind: "no-videos",
+        title: "No videos found on @a or @b.",
+        notes: ["Images and carousels aren't shown."],
+        target: { socialAccountId: A },
+      });
+    }
+  });
+
+  it("offers the expired state's Sync now only while an account is connected", () => {
+    expect(
+      state({
+        accounts: [account({ status: "needs_reconnect" })],
+        allExpired: true,
+      }),
+    ).toEqual({ kind: "expired", anyConnected: false });
+    // A rate-limited account keeps the button, disabled with its wait (blockedHelper).
+    expect(
+      state({ accounts: [account({ blockedMinutes: 3 })], allExpired: true }),
+    ).toEqual({ kind: "expired", anyConnected: true });
   });
 
   it("offers no Sync now when the account can't sync", () => {
@@ -325,6 +364,29 @@ describe("filters (05 §6.1 interaction notes)", () => {
     expect(
       filterForAccounts({ platform: "tiktok", cursor: X }, [demo]),
     ).toEqual({});
+  });
+
+  it("libraryRedirect drops what filterForAccounts drops, and a cursor whose page came back empty", () => {
+    const X = "abc";
+    expect(libraryRedirect({ accountId: A, cursor: X }, [demo], 24)).toBeNull();
+    expect(libraryRedirect({ q: "snow" }, [demo], 0)).toBeNull();
+    expect(libraryRedirect({}, [demo], 0)).toBeNull();
+    expect(
+      libraryRedirect(
+        { platform: "mock", accountId: A, q: "snow", cursor: X },
+        [demo],
+        0,
+      ),
+    ).toBe(`/dashboard/library?platform=mock&account=${A}&q=snow`);
+    expect(libraryRedirect({ cursor: X }, [demo], 0)).toBe(
+      "/dashboard/library",
+    );
+    expect(
+      libraryRedirect({ accountId: C, q: "snow", cursor: X }, [demo], 24),
+    ).toBe("/dashboard/library?q=snow");
+    expect(libraryRedirect({ platform: "tiktok" }, [demo], 0)).toBe(
+      "/dashboard/library",
+    );
   });
 
   it("chips count each linked platform and keep the other params", () => {
@@ -376,7 +438,7 @@ describe("filters (05 §6.1 interaction notes)", () => {
 });
 
 describe("loadOlder (07 D13)", () => {
-  it("only for the filtered account, connected with older posts; the cap note at the cap", () => {
+  it("only for the filtered account, connected with older posts; the cap note from the cap on, with the count held", () => {
     const older = account({ hasOlder: true });
     expect(loadOlder([older], {}, 200)).toBeNull();
     expect(loadOlder([older], { accountId: A }, 200)).toEqual({
@@ -395,6 +457,13 @@ describe("loadOlder (07 D13)", () => {
       note: "Showing your newest 200 videos.",
       blockedHelper: null,
     });
+    expect(
+      loadOlder(
+        [account({ hasOlder: true, postCount: 300 })],
+        { accountId: A },
+        200,
+      ),
+    ).toMatchObject({ note: "Showing your newest 300 videos." });
     expect(
       loadOlder(
         [account({ hasOlder: true, blockedMinutes: 15 })],

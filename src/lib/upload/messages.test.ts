@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ORIGINAL_MAX_BYTES } from "./limits";
 import {
   attachedLine,
@@ -284,6 +284,48 @@ describe("splitFileName (04 §9.26)", () => {
     expect(tail.endsWith(".mov")).toBe(true);
     expect(head + tail).toBe(name);
     expect(splitFileName(name, 4)).toEqual([name.slice(0, -4), ".mov"]);
+  });
+
+  it.each([
+    ["an emoji", "🎬"],
+    ["a joined emoji", "👨‍👩‍👧"],
+    ["a flag", "🇨🇦"],
+    ["a decomposed accent", "e\u0301"],
+  ])("keeps %s at the cut whole", (_, character) => {
+    const name = `abcdefghij${character}abc.mp4`;
+    expect(splitFileName(name)).toEqual(["abcdefghij", `${character}abc.mp4`]);
+  });
+
+  it("counts a name of 16 characters as short, whatever their length in code units", () => {
+    const name = "🎬🎬🎬🎬clip_one.mp4";
+    expect(splitFileName(name)).toEqual([name, ""]);
+  });
+});
+
+describe("splitFileName without Intl.Segmenter (Firefox before 125)", () => {
+  const original = Intl.Segmenter;
+
+  afterEach(() => {
+    Object.defineProperty(Intl, "Segmenter", {
+      value: original,
+      configurable: true,
+      writable: true,
+    });
+    vi.resetModules();
+  });
+
+  it("loads, and still never cuts a code point in two", async () => {
+    Object.defineProperty(Intl, "Segmenter", {
+      value: undefined,
+      configurable: true,
+      writable: true,
+    });
+    vi.resetModules();
+    const fresh = await import("./messages");
+    expect(fresh.splitFileName("abcdefghij🎬abc.mp4")).toEqual([
+      "abcdefghij",
+      "🎬abc.mp4",
+    ]);
   });
 });
 

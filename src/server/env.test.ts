@@ -212,8 +212,23 @@ describe("dev-only driver guards (07 D51)", () => {
     },
   );
 
+  it.each(["preview", "production"] as const)(
+    "refuses an http APP_URL or BETTER_AUTH_URL in %s, naming the key without the value",
+    (appEnv) => {
+      for (const key of ["APP_URL", "BETTER_AUTH_URL"] as const) {
+        const message = failure({
+          ...deployed,
+          APP_ENV: appEnv,
+          [key]: "http://cliplease-typo.com",
+        });
+        expect(message).toContain(key);
+        expect(message).not.toContain("cliplease-typo");
+      }
+    },
+  );
+
   it.each(["development", "test"] as const)(
-    "allows the dev drivers in %s",
+    "allows the dev drivers and http origins in %s",
     (appEnv) => {
       expect(() => parseEnv({ ...baseline, APP_ENV: appEnv })).not.toThrow();
     },
@@ -317,9 +332,25 @@ describe("error messages", () => {
 });
 
 describe("ENV_KEYS", () => {
-  // A key missing from .env.test would let `next start` fill it from .env.local during e2e (P01 Decisions).
-  it(".env.test lists every key the schema reads", () => {
-    const listed = Object.keys(parseEnvFile(readFileSync(".env.test", "utf8")));
-    expect(ENV_KEYS.filter((key) => !listed.includes(key))).toEqual([]);
+  // A key missing from .env.test would let `next start` fill it from .env.local during e2e (P01 Decisions);
+  // .env.example is the template developers copy (02 §10).
+  it.each([".env.test", ".env.example"])(
+    "%s lists every key the schema reads",
+    (file) => {
+      const listed = Object.keys(parseEnvFile(readFileSync(file, "utf8")));
+      expect(ENV_KEYS.filter((key) => !listed.includes(key))).toEqual([]);
+    },
+  );
+
+  it(".env.example parses as a development environment once its secrets are filled", () => {
+    const template = parseEnvFile(readFileSync(".env.example", "utf8"));
+    expect(
+      parseEnv({
+        ...template,
+        BETTER_AUTH_SECRET: SECRET,
+        TOKEN_ENCRYPTION_KEY: KEY,
+        CRON_SECRET: CRON,
+      }).APP_ENV,
+    ).toBe("development");
   });
 });

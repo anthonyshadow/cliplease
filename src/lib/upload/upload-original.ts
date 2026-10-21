@@ -3,7 +3,12 @@
 // server lists the parts itself). It pauses while the browser is offline and goes on when it's back. Browser only.
 import type { StartUploadResult } from "../../server/storage/uploads";
 import type { UploadErrorCode } from "./codes";
-import { postUploadRoute, putWithProgress, type UploadResult } from "./http";
+import {
+  type ApiResult,
+  postUploadRoute,
+  putWithProgress,
+  type UploadResult,
+} from "./http";
 import { type OriginalMime, PART_CONCURRENCY, PART_URL_BATCH } from "./limits";
 import { type PlannedPart, planParts } from "./plan";
 import {
@@ -49,6 +54,11 @@ export type UploadOriginalInput = {
   resume?: boolean;
   /** When resuming, the upload this device started: if start hands back another, nothing is sent (`stale_upload`). */
   expectedUploadId?: string;
+  /**
+   * With `resume` and `expectedUploadId`: every part went before, and complete's answer was lost. Complete is asked
+   * again first (07 D80: idempotent); only when it finds a part missing does the resume go on.
+   */
+  completeFirst?: boolean;
   /** Bytes stored so far: the server's stored parts, plus finished and in-flight parts. Never past the size. */
   onProgress?: (sent: number, total: number) => void;
   onStatus?: (status: UploadStatus) => void;
@@ -189,16 +199,31 @@ type RunInput = UploadOriginalInput & {
 async function run(i: RunInput, repairing: boolean): Promise<UploadResult> {
   const { videoId, file } = i;
   const signal = i.signal ?? new AbortController().signal;
-  // Start is never aborted: a Cancel waits for its answer, so the upload it opened is the one the abort then ends.
-  const started = await postUploadRoute<StartUploadResult>("start", {
-    kind: "original",
-    videoId,
-    fileName: file.name.slice(0, 255),
-    size: file.size,
-    contentType: i.contentType,
-    ...(i.resume ? { resume: true } : {}),
-  });
-  if (!started.ok) return started;
+  if (i.completeFirst && i.expectedUploadId) {
+    const completed = await complete(i, i.expectedUploadId);
+    if (completed.ok || completed.code !== "parts_incomplete") return completed;
+    // A part changed or went missing: the one resume pass sends what's missing.
+    return run({ ...i, completeFirst: false }, true);
+  }
+  // Start is never aborted: a Cancel waits for its answer, so the upload it opened is the one the abort then ends. A
+  // resume's start is safe to repeat: a dropped connection is tried again, and still no answer pauses the upload (it
+  // goes on by itself once back online). A fresh one isn't: landing after a Cancel's abort, it would open an upload
+  // nobody ends.
+  const start = () =>
+    postUploadRoute<StartUploadResult>("start", {
+      kind: "original",
+      videoId,
+      fileName: file.name.slice(0, 255),
+      size: file.size,
+      contentType: i.contentType,
+      ...(i.resume ? { resume: true } : {}),
+    });
+  const started = i.resume
+    ? await resumeStart(i, start, signal)
+    : await start();
+  if (!started.ok) {
+    return i.resume && started.code === "network" ? fail("paused") : started;
+  }
   const upload = started.data;
   if (upload.mode !== "multipart") return fail("internal");
   if (
@@ -230,31 +255,66 @@ async function run(i: RunInput, repairing: boolean): Promise<UploadResult> {
   const failed = await sendParts(i, upload, todo, doneBytes, signal);
   if (failed) return failed;
 
-  // Every part is in, or the upload isn't open any more (gone). Complete is idempotent and says what became of it
-  // (assembled → ok, past 24 h or aborted → upload_expired, another upload in its place → not_found).
-  i.onStatus?.("checking");
-  const meta = await i.meta;
-  const completed = await withRetries(
-    () =>
-      postUploadRoute<{ ok: true }>("complete", {
-        kind: "original",
-        videoId,
-        ...(meta ? { meta } : {}),
-      }),
-    retryWatch(i, new AbortController().signal),
-  );
-  if (completed.ok) return { ok: true };
+  const completed = await complete(i, upload.uploadId);
   // A part changed or went missing after the list (owner answer Q-35): one resume pass sends what's missing.
-  if (completed.code === "parts_incomplete" && !repairing && !signal.aborted) {
+  if (
+    !completed.ok &&
+    completed.code === "parts_incomplete" &&
+    !repairing &&
+    !signal.aborted
+  ) {
     return run({ ...i, resume: true, expectedUploadId: upload.uploadId }, true);
   }
   return completed;
 }
 
 /**
+ * A resume's start, tried again after a dropped connection. While it waits for the browser to be back online the upload
+ * shows as paused (offline), with Cancel, as a part's wait does; the parts then say uploading.
+ */
+async function resumeStart(
+  i: RunInput,
+  start: () => Promise<ApiResult<StartUploadResult>>,
+  signal: AbortSignal,
+): Promise<ApiResult<StartUploadResult>> {
+  const offline = (online: boolean) => {
+    if (!online) i.onStatus?.("paused");
+  };
+  const unsubscribe = i.network.onChange(offline);
+  offline(i.network.isOnline());
+  try {
+    return await withRetries(start, retryWatch(i, signal));
+  } finally {
+    unsubscribe();
+  }
+}
+
+/**
+ * Every part of `uploadId` is in: complete assembles it, named so that it finishes this upload only (owner decision,
+ * like abort's Q-50). Idempotent and never aborted; it says what became of the upload (assembled → ok, past 24 h →
+ * upload_expired, another upload in its place → not_found).
+ */
+async function complete(i: RunInput, uploadId: string): Promise<UploadResult> {
+  i.onStatus?.("checking");
+  const meta = await i.meta;
+  const completed = await withRetries(
+    () =>
+      postUploadRoute<{ ok: true }>("complete", {
+        kind: "original",
+        videoId: i.videoId,
+        uploadId,
+        ...(meta ? { meta } : {}),
+      }),
+    retryWatch(i, new AbortController().signal),
+  );
+  return completed.ok ? { ok: true } : completed;
+}
+
+/**
  * The parts, PART_CONCURRENCY at a time, each through sendPartWithRetry. No new part starts while the browser is
  * offline; a part that runs out of retries stops the rest and the upload pauses. URLs are signed PART_URL_BATCH at a
- * time; a re-sign asks for one part. Null when complete goes next: every part is in, or the upload is gone.
+ * time; a re-sign asks for one part. Null when every part is in and complete goes next. An upload that isn't open any
+ * more (a 404) ends the run as stale_upload with no complete (owner decision): there is nothing of this file to finish.
  */
 async function sendParts(
   i: RunInput,
@@ -274,8 +334,8 @@ async function sendParts(
   const total = i.file.size;
   const inFlight = new Map<number, number>();
   let finished = doneBytes;
-  let outcome: Failed | "gone" | null = null;
-  const end = (o: Failed | "gone") => {
+  let outcome: Failed | null = null;
+  const end = (o: Failed) => {
     outcome ??= o;
     stop.abort();
   };
@@ -301,8 +361,9 @@ async function sendParts(
     }
   };
   const unsubscribe = i.network.onChange(sync);
-  sync();
+  // This pass's bytes first, so a status change (a repair pass's uploading, a pause) shows them and not the last pass's.
   report();
+  sync();
 
   const postParts = (partNumbers: number[]) =>
     postUploadRoute<{ urls: Record<string, string> }>(
@@ -322,7 +383,7 @@ async function sendParts(
         .map((p) => p.partNumber);
       urls = withRetries(() => postParts(partNumbers), watch).then((r) => {
         if (r.ok) return r.data.urls;
-        if (r.code === "not_found") end("gone");
+        if (r.code === "not_found") end(fail("stale_upload"));
         else if (r.code === "network") end(fail("paused"));
         else end(r);
         return null;
@@ -344,6 +405,12 @@ async function sendParts(
       resign: async () => {
         const r = await postParts([part.partNumber]);
         if (r.ok) return r.data.urls[String(part.partNumber)] ?? null;
+        // Past its 24 hours: the run ends as expired, as a URL batch's 410 does, and no URL will come.
+        if (r.code === "upload_expired") {
+          end(r);
+          return null;
+        }
+        // Not open any more: no URL will come.
         if (r.code === "not_found") return null;
         if (r.code === "canceled") throw abortError();
         throw { kind: "network" } satisfies SendFailure;
@@ -412,7 +479,7 @@ async function sendParts(
       } else if (result === "failed") {
         end(fail("internal"));
       } else {
-        end(result === "paused" ? fail("paused") : result);
+        end(fail(result === "paused" ? "paused" : "stale_upload"));
       }
     }
   };
@@ -426,5 +493,5 @@ async function sendParts(
     outer.removeEventListener("abort", cancel);
   }
   if (outer.aborted) return fail("canceled");
-  return outcome === "gone" ? null : outcome;
+  return outcome;
 }

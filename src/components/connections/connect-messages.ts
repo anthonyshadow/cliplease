@@ -118,8 +118,13 @@ export const tryAgainIn = (minutes: number) => `Try again in ${minutes} min.`;
 export const rateLimitMessage = (label: string, minutes: number) =>
   `${label} asked us to slow down. ${tryAgainIn(minutes)}`;
 
-/** The cap note under the sync line (04 §11.8, 01 J3.11); `max` is SOCIAL_SYNC_MAX_POSTS, passed in from the server. */
-export const capNote = (max: number) => `Showing your newest ${max} videos.`;
+/**
+ * The cap note under the sync line (04 §11.8, 01 J3.11) while older videos are left (callers check has_older): from the
+ * cap on, how many of the newest are held. 01 shows it at 200; Load older videos (07 D13) and new posts take the count
+ * past it, and the note follows. `max` is SOCIAL_SYNC_MAX_POSTS, passed in from the server.
+ */
+export const capNote = (postCount: number, max: number) =>
+  postCount >= max ? `Showing your newest ${postCount} videos.` : null;
 
 /** The Disconnect sheet (04 §11.7; owner answers Q-19, Q-20). */
 export const disconnectTitle = (name: string) => `Disconnect ${name}?`;

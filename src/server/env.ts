@@ -41,7 +41,8 @@ export function isDevAppEnv(appEnv: AppEnv): boolean {
   return appEnv === "development" || appEnv === "test";
 }
 
-// An origin such as https://cliplease.com: no path, query, fragment or trailing slash (07 D102).
+// An origin such as https://cliplease.com: no path, query, fragment or trailing slash (07 D102). http only when APP_ENV
+// is development or test (the superRefine below).
 // The refine also runs after a failed format check, so it must never throw on unparseable input:
 // a TypeError from `new URL` would escape parseEnv with the raw value in it.
 const origin = z
@@ -160,6 +161,10 @@ const schema = z.object(shape).superRefine((e, ctx) => {
   if (e.STORAGE_DRIVER === "local") refuse("STORAGE_DRIVER", "local");
   if (e.RESEND_API_KEY === undefined) {
     refuse("RESEND_API_KEY", "the console email driver (unset)");
+  }
+  // An http origin would drop Secure from the session and OAuth state cookies (07 D102).
+  for (const key of ["APP_URL", "BETTER_AUTH_URL"] as const) {
+    if (e[key].startsWith("http:")) refuse(key, "http");
   }
 });
 

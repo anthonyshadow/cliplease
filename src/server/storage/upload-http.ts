@@ -3,12 +3,15 @@ import { z } from "zod";
 import type { UploadRouteCode } from "../../lib/upload/codes";
 import type { CreatorContext } from "../auth/session";
 import { getCreatorForApi } from "../auth/session";
-import { NO_STORE, unauthorizedJson } from "../http";
+import { NO_STORE, readJsonCapped, unauthorizedJson } from "../http";
 import { errorName, logEvent } from "../log";
 
 // The upload routes' shared HTTP layer (02 §6.2): a creator session first (else 401), a JSON body only, Zod, then the
 // domain call; errors answer `{ code }` with the prompt's status, and nothing is cached. No route takes a key or an ETag
 // from the client.
+
+/** The largest valid body is about 4.3 KB (a poster complete with its 4096-character token); anything over is unread. */
+const UPLOAD_BODY_MAX_BYTES = 16 * 1024;
 
 /** Every code an upload route answers with, and its status; a domain code missing here fails the typecheck. */
 const STATUS = {
@@ -45,7 +48,7 @@ type IssueCode = (issue: z.core.$ZodIssue) => UploadCode | null;
 
 /**
  * Runs `handle` for a signed-in creator with the body parsed by `schema`. The media type must be application/json exactly
- * (so a cross-site form post can't reach it), and a body that isn't JSON is `invalid`.
+ * (so a cross-site form post can't reach it), and a body that isn't JSON, or is over UPLOAD_BODY_MAX_BYTES, is `invalid`.
  */
 export async function uploadRoute<S extends z.ZodType>(
   request: Request,
@@ -57,13 +60,9 @@ export async function uploadRoute<S extends z.ZodType>(
   if (!ctx) return unauthorizedJson();
   const type = request.headers.get("content-type")?.split(";")[0]?.trim();
   if (type?.toLowerCase() !== "application/json") return uploadError("invalid");
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return uploadError("invalid");
-  }
-  const parsed = schema.safeParse(body);
+  const read = await readJsonCapped(request, UPLOAD_BODY_MAX_BYTES);
+  if (!read.ok) return uploadError("invalid");
+  const parsed = schema.safeParse(read.body);
   if (!parsed.success) {
     const codes = parsed.error.issues.map(codeOf);
     return uploadError(codes.find((c) => c !== null) ?? "invalid");

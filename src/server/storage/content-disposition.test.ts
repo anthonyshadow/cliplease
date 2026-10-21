@@ -37,6 +37,16 @@ describe("contentDisposition (research/infra.md §1)", () => {
     );
   });
 
+  it("percent-encodes ' ( ) * in the UTF-8 name (RFC 8187) and keeps them in the quoted fallback", () => {
+    const header = contentDisposition(
+      "attachment",
+      "Tony's clip (final)*!.mov",
+    );
+    expect(header).toBe(
+      `attachment; filename="Tony's clip (final)*!.mov"; filename*=UTF-8''Tony%27s%20clip%20%28final%29%2A!.mov`,
+    );
+  });
+
   it("never lets a CR or LF into the header", () => {
     const header = contentDisposition("attachment", "a\r\nSet-Cookie: x.mp4");
     expect(header).not.toMatch(/[\r\n]/);

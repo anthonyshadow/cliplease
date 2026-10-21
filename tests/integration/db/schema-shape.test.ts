@@ -218,3 +218,23 @@ describe("0000_init schema shape", () => {
     expect(columns.filter((c) => c.column_name.includes("birth"))).toEqual([]);
   });
 });
+
+describe("0001_negative_balance_debits", () => {
+  it("adds creator_profile.negative_balance_debits_enabled_at: a nullable timestamptz with no default (07 D139)", async () => {
+    const { rows: columns } = await db.execute<{
+      data_type: string;
+      is_nullable: string;
+      column_default: string | null;
+    }>(sql`
+      select data_type, is_nullable, column_default from information_schema.columns
+      where table_schema = 'public' and table_name = 'creator_profile'
+        and column_name = 'negative_balance_debits_enabled_at'`);
+    expect(columns).toEqual([
+      {
+        data_type: "timestamp with time zone",
+        is_nullable: "YES",
+        column_default: null,
+      },
+    ]);
+  });
+});

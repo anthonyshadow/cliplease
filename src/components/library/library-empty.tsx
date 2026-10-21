@@ -7,8 +7,8 @@ import { SyncButton } from "./sync-button";
 
 /**
  * The EmptyStates that replace the grid under the Library's h1 (04 §11.9, 05 §6.1 States): every post past the 30-day
- * rule (its Sync now stands in for Sync all, rate limit included), no search match, and the filtered accounts with no
- * videos. A sync that ends one hands the focus to the h1.
+ * rule (its Sync now stands in for Sync all, rate limit included; with no connected account the Reconnect banners are
+ * the action), no search match, and the filtered accounts with no videos. A sync that ends one focuses the h1.
  */
 export function LibraryEmpty({
   empty,
@@ -32,14 +32,16 @@ export function LibraryEmpty({
             </>
           }
           actions={
-            <SyncButton
-              all
-              label="Sync now"
-              variant="primary"
-              fullWidth
-              blockedHelper={blockedHelper}
-              focusAfterRemove={LIBRARY_TITLE_ID}
-            />
+            empty.anyConnected ? (
+              <SyncButton
+                all
+                label="Sync now"
+                variant="primary"
+                fullWidth
+                blockedHelper={blockedHelper}
+                focusAfterRemove={LIBRARY_TITLE_ID}
+              />
+            ) : undefined
           }
         />
       );

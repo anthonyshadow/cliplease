@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { readFile, rm } from "node:fs/promises";
+import { readFile, rm, utimes } from "node:fs/promises";
 import { eq } from "drizzle-orm";
 import { NextRequest } from "next/server";
 import {
@@ -21,7 +21,12 @@ import { env } from "../../src/server/env";
 import { contentDisposition } from "../../src/server/storage/content-disposition";
 import { handleDevStorage } from "../../src/server/storage/dev-route";
 import { localDriver } from "../../src/server/storage/index";
-import { PART_BYTES, PART_URL_BATCH } from "../../src/server/storage/limits";
+import {
+  ORIGINAL_MAX_BYTES,
+  PART_BYTES,
+  PART_URL_BATCH,
+  POSTER_MAX_BYTES,
+} from "../../src/server/storage/limits";
 import {
   type PosterTokenPayload,
   signPosterToken,
@@ -33,6 +38,7 @@ import {
   presignDownload,
   presignParts,
   presignUpload,
+  type StartUploadInput,
 } from "../../src/server/storage/uploads";
 import { mockNextHeaders } from "../helpers/auth";
 import { resetDb } from "../helpers/db";
@@ -42,12 +48,12 @@ import {
   insertUploadVideo,
   publishVideo,
 } from "../helpers/factories";
+import { captureLogEvents } from "../helpers/logs";
 import {
   assembleOnly,
   type Bytes,
   bytesOf,
   callUploadRoute,
-  captureLogEvents,
   devStorageSegments,
   fixture,
   getSigned,
@@ -216,6 +222,7 @@ describe("a 3-part original (16 + 16 + 8 MiB) through the routes and the dev sto
       await callUploadRoute("complete", {
         kind: "original",
         videoId: v.id,
+        uploadId: upload.uploadId,
         meta: { durationMs: 14_000, width: 720, height: 1280 },
       }),
       200,
@@ -256,10 +263,16 @@ describe("completeUpload (original)", () => {
     });
 
     for (const body of [
-      { kind: "original", videoId: v.id, etag: '"0"' },
       {
         kind: "original",
         videoId: v.id,
+        uploadId: upload.uploadId,
+        etag: '"0"',
+      },
+      {
+        kind: "original",
+        videoId: v.id,
+        uploadId: upload.uploadId,
         parts: [
           { partNumber: 1, etag: etags[1] },
           { partNumber: 2, etag: etags[2] },
@@ -268,6 +281,7 @@ describe("completeUpload (original)", () => {
       {
         kind: "original",
         videoId: v.id,
+        uploadId: upload.uploadId,
         meta: { durationMs: 1, width: 1, height: 1, etag: '"0"' },
       },
     ]) {
@@ -279,7 +293,11 @@ describe("completeUpload (original)", () => {
 
     const assemble = vi.spyOn(localDriver(), "completeMultipart");
     await expectJson(
-      await callUploadRoute("complete", { kind: "original", videoId: v.id }),
+      await callUploadRoute("complete", {
+        kind: "original",
+        videoId: v.id,
+        uploadId: upload.uploadId,
+      }),
       200,
       { ok: true },
     );
@@ -301,7 +319,11 @@ describe("completeUpload (original)", () => {
     const bytes = bytesOf(TOTAL);
     const upload = await startOriginal(c.actor, v.id, TOTAL);
     const complete = () =>
-      completeUpload(c.actor, { kind: "original", videoId: v.id });
+      completeUpload(c.actor, {
+        kind: "original",
+        videoId: v.id,
+        uploadId: upload.uploadId,
+      });
     const stillOpen = async () => {
       expect(await rowOf(v.id)).toMatchObject({
         originalStatus: "uploading",
@@ -376,7 +398,11 @@ describe("completeUpload (original)", () => {
     });
 
     const complete = () =>
-      completeUpload(c.actor, { kind: "original", videoId: v.id });
+      completeUpload(c.actor, {
+        kind: "original",
+        videoId: v.id,
+        uploadId: upload.uploadId,
+      });
     expect(await complete()).toEqual({ ok: false, code: "size_mismatch" });
     expect(await rowOf(v.id)).toMatchObject({
       ...NO_UPLOAD,
@@ -401,7 +427,11 @@ describe("completeUpload (original)", () => {
     });
 
     expect(
-      await completeUpload(c.actor, { kind: "original", videoId: v.id }),
+      await completeUpload(c.actor, {
+        kind: "original",
+        videoId: v.id,
+        uploadId: upload.uploadId,
+      }),
     ).toEqual({ ok: false, code: "bad_signature_bytes" });
     expect(await rowOf(v.id)).toMatchObject({
       ...NO_UPLOAD,
@@ -433,6 +463,7 @@ describe("completeUpload (original)", () => {
       await completeUpload(c.actor, {
         kind: "original",
         videoId: v.id,
+        uploadId: upload.uploadId,
         meta: { durationMs: 5, width: 5, height: 5 },
       }),
     ).toEqual({ ok: true });
@@ -440,6 +471,31 @@ describe("completeUpload (original)", () => {
     expect(await listFiles(objectPath(`originals/${c.creatorId}`))).toEqual([
       `${v.id}/${basename(upload.key)}`,
     ]);
+  });
+
+  it("answers 400 invalid to an original complete without its upload id, or with an empty or overlong one", async () => {
+    const me = await signedIn(disk);
+    const v = await newVideo(me.creatorId);
+    const upload = await startOriginal(me.actor, v.id, SMALL);
+    await sendParts(me.actor, {
+      videoId: v.id,
+      uploadId: upload.uploadId,
+      bytes: bytesOf(SMALL),
+    });
+    const open = await rowOf(v.id);
+
+    for (const uploadId of [undefined, "", "u".repeat(1025)]) {
+      await expectJson(
+        await callUploadRoute("complete", {
+          kind: "original",
+          videoId: v.id,
+          uploadId,
+        }),
+        400,
+        { code: "invalid" },
+      );
+    }
+    expect(await rowOf(v.id)).toEqual(open);
   });
 
   it.each([
@@ -460,7 +516,11 @@ describe("completeUpload (original)", () => {
 
       const results = await Promise.all(
         Array.from({ length: calls }, () =>
-          completeUpload(c.actor, { kind: "original", videoId: v.id }),
+          completeUpload(c.actor, {
+            kind: "original",
+            videoId: v.id,
+            uploadId: upload.uploadId,
+          }),
         ),
       );
       // Completes of one upload settle one after another (as on R2): the later ones find it done and answer ok too.
@@ -500,7 +560,11 @@ describe("completeUpload (original)", () => {
     });
 
     expect(
-      await completeUpload(c.actor, { kind: "original", videoId: v.id }),
+      await completeUpload(c.actor, {
+        kind: "original",
+        videoId: v.id,
+        uploadId: old.uploadId,
+      }),
     ).toEqual({ ok: false, code: "not_found" });
     if (!next) throw new Error("the new start didn't run");
     expect(next.key).not.toBe(old.key);
@@ -521,7 +585,11 @@ describe("completeUpload (original)", () => {
       bytes: bytesOf(TWO_PARTS),
     });
     expect(
-      await completeUpload(c.actor, { kind: "original", videoId: v.id }),
+      await completeUpload(c.actor, {
+        kind: "original",
+        videoId: v.id,
+        uploadId: next.uploadId,
+      }),
     ).toEqual({ ok: true });
     expect(await listFiles(objectPath(`originals/${c.creatorId}`))).toEqual([
       `${v.id}/${basename(next.key)}`,
@@ -547,7 +615,11 @@ describe("completeUpload (original)", () => {
     });
 
     expect(
-      await completeUpload(c.actor, { kind: "original", videoId: v.id }),
+      await completeUpload(c.actor, {
+        kind: "original",
+        videoId: v.id,
+        uploadId: upload.uploadId,
+      }),
     ).toEqual({ ok: false, code: "not_found" });
     expect(await rowOf(v.id)).toMatchObject(NO_ORIGINAL);
     expect(await pathExists(objectPath(upload.key))).toBe(false);
@@ -566,7 +638,11 @@ describe("completeUpload (original): races", () => {
     });
 
     const complete = () =>
-      completeUpload(c.actor, { kind: "original", videoId: v.id });
+      completeUpload(c.actor, {
+        kind: "original",
+        videoId: v.id,
+        uploadId: upload.uploadId,
+      });
     expect(await Promise.all([complete(), complete()])).toEqual([
       { ok: false, code: "bad_signature_bytes" },
       { ok: false, code: "bad_signature_bytes" },
@@ -599,7 +675,11 @@ describe("completeUpload (original): races", () => {
       reachHead = resolve;
     });
     const complete = () =>
-      completeUpload(c.actor, { kind: "original", videoId: v.id });
+      completeUpload(c.actor, {
+        kind: "original",
+        videoId: v.id,
+        uploadId: upload.uploadId,
+      });
     const calls: Promise<unknown>[] = [];
     // The call that assembles reads the bytes only once the other one, finding the parts gone and the row still
     // 'uploading', is about to HEAD the file; that HEAD runs once the first call has failed the file and deleted it.
@@ -658,7 +738,11 @@ describe("completeUpload (original): races", () => {
     );
 
     expect(
-      await completeUpload(c.actor, { kind: "original", videoId: v.id }),
+      await completeUpload(c.actor, {
+        kind: "original",
+        videoId: v.id,
+        uploadId: upload.uploadId,
+      }),
     ).toEqual({ ok: true });
     expect(resumed).toEqual({
       ok: true,
@@ -678,12 +762,216 @@ describe("completeUpload (original): races", () => {
     });
     // The resumed client's own complete is the no-op on a ready row.
     expect(
-      await completeUpload(c.actor, { kind: "original", videoId: v.id }),
+      await completeUpload(c.actor, {
+        kind: "original",
+        videoId: v.id,
+        uploadId: upload.uploadId,
+      }),
     ).toEqual({ ok: true });
     expect(await listFiles(objectPath(`originals/${c.creatorId}`))).toEqual([
       `${v.id}/${basename(upload.key)}`,
     ]);
     expect((await readFile(objectPath(upload.key))).equals(bytes)).toBe(true);
+  });
+});
+
+describe("completeUpload (original): the upload it names", () => {
+  it("answers not_found to a late complete naming an upload a new start replaced, and leaves the new one and its hints alone", async () => {
+    const c = await newCreator(disk);
+    const v = await newVideo(c.creatorId);
+    const first = await startOriginal(c.actor, v.id, SMALL);
+    await sendParts(c.actor, {
+      videoId: v.id,
+      uploadId: first.uploadId,
+      bytes: bytesOf(SMALL),
+    });
+    // Another tab or device starts again and sends every part of its file before the first one's complete lands.
+    const second = await startOriginal(c.actor, v.id, TWO_PARTS);
+    await sendParts(c.actor, {
+      videoId: v.id,
+      uploadId: second.uploadId,
+      bytes: bytesOf(TWO_PARTS),
+    });
+    const open = await rowOf(v.id);
+
+    expect(
+      await completeUpload(c.actor, {
+        kind: "original",
+        videoId: v.id,
+        uploadId: first.uploadId,
+        meta: { durationMs: 1000, width: 10, height: 20 },
+      }),
+    ).toEqual({ ok: false, code: "not_found" });
+    expect(await rowOf(v.id)).toEqual(open);
+    expect(open).toMatchObject({
+      originalStatus: "uploading",
+      originalUploadId: second.uploadId,
+      durationMs: null,
+      width: null,
+      height: null,
+    });
+    expect(
+      (await listFiles(uploadDirPath(second.uploadId))).filter((f) =>
+        f.endsWith(".part"),
+      ),
+    ).toEqual(["1.part", "2.part"]);
+
+    expect(
+      await completeUpload(c.actor, {
+        kind: "original",
+        videoId: v.id,
+        uploadId: second.uploadId,
+        meta: { durationMs: 2000, width: 30, height: 40 },
+      }),
+    ).toEqual({ ok: true });
+    expect(await rowOf(v.id)).toMatchObject({
+      ...NO_UPLOAD,
+      originalStatus: "ready",
+      originalObjectKey: second.key,
+      originalBytes: TWO_PARTS,
+      durationMs: 2000,
+      width: 30,
+      height: 40,
+    });
+    expect(
+      (await readFile(objectPath(second.key))).equals(bytesOf(TWO_PARTS)),
+    ).toBe(true);
+  });
+
+  it("answers ok to a complete naming a replaced upload once the new one is ready, and keeps the new one's hints", async () => {
+    const c = await newCreator(disk);
+    const v = await newVideo(c.creatorId);
+    const first = await startOriginal(c.actor, v.id, SMALL);
+    const second = await uploadOriginal(c.actor, v.id, bytesOf(TWO_PARTS), {
+      meta: { durationMs: 2000, width: 30, height: 40 },
+    });
+    expect(second.result).toEqual({ ok: true });
+    const ready = await rowOf(v.id);
+
+    // A ready row keeps no upload id to compare (03 §3.6): a retried complete of either upload is the no-op.
+    expect(
+      await completeUpload(c.actor, {
+        kind: "original",
+        videoId: v.id,
+        uploadId: first.uploadId,
+        meta: { durationMs: 1000, width: 10, height: 20 },
+      }),
+    ).toEqual({ ok: true });
+    expect(await rowOf(v.id)).toEqual(ready);
+  });
+
+  it("leaves an original uploading, never ready, when its video is disabled while complete checks it (Q-38 a)", async () => {
+    const c = await newCreator(disk);
+    const v = await newVideo(c.creatorId);
+    const upload = await startOriginal(c.actor, v.id, SMALL);
+    await sendParts(c.actor, {
+      videoId: v.id,
+      uploadId: upload.uploadId,
+      bytes: bytesOf(SMALL),
+    });
+    const driver = localDriver();
+    const realHead = driver.head;
+    vi.spyOn(driver, "head").mockImplementationOnce(async (key) => {
+      await disable(v.id);
+      return realHead(key);
+    });
+
+    expect(
+      await completeUpload(c.actor, {
+        kind: "original",
+        videoId: v.id,
+        uploadId: upload.uploadId,
+        meta: { durationMs: 1000, width: 10, height: 20 },
+      }),
+    ).toEqual({ ok: false, code: "not_found" });
+    expect(await rowOf(v.id)).toMatchObject({
+      status: "disabled",
+      originalStatus: "uploading",
+      originalUploadId: upload.uploadId,
+      durationMs: null,
+      width: null,
+      height: null,
+    });
+    expect(await pathExists(objectPath(upload.key))).toBe(false);
+
+    // Abort, still allowed on a disabled video, lets go of it.
+    expect(await abortUpload(c.actor, { videoId: v.id })).toEqual({ ok: true });
+    expect(await rowOf(v.id)).toMatchObject({
+      ...NO_ORIGINAL,
+      status: "disabled",
+    });
+    expect(await listFiles(objectPath(`originals/${c.creatorId}`))).toEqual([]);
+  });
+});
+
+describe("a resume that finds its parts gone", () => {
+  it("answers the failure a parallel complete just stored (422 bad_signature_bytes), not upload_expired", async () => {
+    const me = await signedIn(disk);
+    const v = await newVideo(me.creatorId);
+    const upload = await startOriginal(me.actor, v.id, TWO_PARTS);
+    await sendParts(me.actor, {
+      videoId: v.id,
+      uploadId: upload.uploadId,
+      bytes: new Uint8Array(TWO_PARTS),
+    });
+    const driver = localDriver();
+    const realListParts = driver.listParts;
+    let completed: Awaited<ReturnType<typeof completeUpload>> | undefined;
+    // The resume read the row while it was uploading; the complete fails the zero-filled file before the resume lists.
+    vi.spyOn(driver, "listParts").mockImplementationOnce(async (i) => {
+      completed = await completeUpload(me.actor, {
+        kind: "original",
+        videoId: v.id,
+        uploadId: upload.uploadId,
+      });
+      return realListParts(i);
+    });
+
+    await expectJson(
+      await callUploadRoute(
+        "start",
+        originalStart(v.id, TWO_PARTS, { resume: true }),
+      ),
+      422,
+      { code: "bad_signature_bytes" },
+    );
+    expect(completed).toEqual({ ok: false, code: "bad_signature_bytes" });
+    expect(await rowOf(v.id)).toMatchObject({
+      ...NO_UPLOAD,
+      originalStatus: "failed",
+      originalError: "bad_signature_bytes",
+      originalObjectKey: null,
+    });
+  });
+
+  it("still answers 410 upload_expired when a new start replaced the upload, and leaves the new one open", async () => {
+    const me = await signedIn(disk);
+    const v = await newVideo(me.creatorId);
+    await startOriginal(me.actor, v.id, TWO_PARTS);
+    const driver = localDriver();
+    const realListParts = driver.listParts;
+    let next: Awaited<ReturnType<typeof startOriginal>> | undefined;
+    vi.spyOn(driver, "listParts").mockImplementationOnce(async (i) => {
+      next = await startOriginal(me.actor, v.id, TWO_PARTS);
+      return realListParts(i);
+    });
+
+    await expectJson(
+      await callUploadRoute(
+        "start",
+        originalStart(v.id, TWO_PARTS, { resume: true }),
+      ),
+      410,
+      { code: "upload_expired" },
+    );
+    if (!next) throw new Error("the new start didn't run");
+    expect(await rowOf(v.id)).toMatchObject({
+      originalStatus: "uploading",
+      originalObjectKey: next.key,
+      originalUploadId: next.uploadId,
+      originalError: null,
+    });
+    expect(await pathExists(uploadDirPath(next.uploadId))).toBe(true);
   });
 });
 
@@ -733,7 +1021,11 @@ describe("a complete that died after assembling, before its database write", () 
     expect(await pathExists(objectPath(upload.key))).toBe(true);
 
     expect(
-      await completeUpload(c.actor, { kind: "original", videoId: v.id }),
+      await completeUpload(c.actor, {
+        kind: "original",
+        videoId: v.id,
+        uploadId: upload.uploadId,
+      }),
     ).toEqual({ ok: true });
     expect(await rowOf(v.id)).toMatchObject({
       ...NO_UPLOAD,
@@ -832,7 +1124,11 @@ describe("resume and expiry (07 D80)", () => {
       partNumbers: [3],
     });
     expect(
-      await completeUpload(c.actor, { kind: "original", videoId: v.id }),
+      await completeUpload(c.actor, {
+        kind: "original",
+        videoId: v.id,
+        uploadId: upload.uploadId,
+      }),
     ).toEqual({ ok: true });
     expect((await readFile(objectPath(upload.key))).equals(bytes)).toBe(true);
   });
@@ -875,7 +1171,11 @@ describe("resume and expiry (07 D80)", () => {
     expect(await pathExists(uploadDirPath(upload.uploadId))).toBe(false);
     // Complete on the expired row says so too.
     expect(
-      await completeUpload(c.actor, { kind: "original", videoId: v.id }),
+      await completeUpload(c.actor, {
+        kind: "original",
+        videoId: v.id,
+        uploadId: upload.uploadId,
+      }),
     ).toEqual({ ok: false, code: "upload_expired" });
   });
 
@@ -891,7 +1191,11 @@ describe("resume and expiry (07 D80)", () => {
     await startedHoursAgo(v.id, 25);
 
     expect(
-      await completeUpload(c.actor, { kind: "original", videoId: v.id }),
+      await completeUpload(c.actor, {
+        kind: "original",
+        videoId: v.id,
+        uploadId: upload.uploadId,
+      }),
     ).toEqual({ ok: false, code: "upload_expired" });
     expect(await rowOf(v.id)).toMatchObject({
       ...NO_UPLOAD,
@@ -915,7 +1219,11 @@ describe("resume and expiry (07 D80)", () => {
               c.actor,
               originalStart(v.id, SMALL, { resume: true }),
             )
-          : await completeUpload(c.actor, { kind: "original", videoId: v.id });
+          : await completeUpload(c.actor, {
+              kind: "original",
+              videoId: v.id,
+              uploadId: upload.uploadId,
+            });
       expect(result, call).toEqual({ ok: false, code: "upload_expired" });
       expect(await rowOf(v.id), call).toMatchObject({
         ...NO_UPLOAD,
@@ -1228,11 +1536,83 @@ describe("presignUpload (original): a new start", () => {
       bytes: bytesOf(SMALL),
     });
     expect(
-      await completeUpload(c.actor, { kind: "original", videoId: v.id }),
+      await completeUpload(c.actor, {
+        kind: "original",
+        videoId: v.id,
+        uploadId: third.uploadId,
+      }),
     ).toEqual({ ok: true });
     expect(await listFiles(objectPath(`originals/${c.creatorId}`))).toEqual([
       `${v.id}/${basename(third.key)}`,
     ]);
+  });
+});
+
+describe("presignUpload (original): a start whose transaction throws", () => {
+  it("aborts the new multipart upload and leaves the row as it was", async () => {
+    const c = await newCreator(disk);
+    const v = await newVideo(c.creatorId);
+    const before = await rowOf(v.id);
+    const driver = localDriver();
+    const realCreate = driver.createMultipart;
+    let created: string | undefined;
+    vi.spyOn(driver, "createMultipart").mockImplementationOnce(async (i) => {
+      const upload = await realCreate(i);
+      created = upload.uploadId;
+      return upload;
+    });
+    vi.spyOn(db, "transaction").mockRejectedValueOnce(
+      new Error("connection reset"),
+    );
+
+    await expect(
+      presignUpload(c.actor, originalStart(v.id, SMALL)),
+    ).rejects.toThrow("connection reset");
+    if (!created) throw new Error("no multipart upload was created");
+    expect(await pathExists(uploadDirPath(created))).toBe(false);
+    expect(await rowOf(v.id)).toEqual(before);
+    expect(await uploadsUnder(`originals/${c.creatorId}/${v.id}/`)).toEqual([]);
+  });
+});
+
+describe("presignUpload: the type and size checks behind the route's Zod", () => {
+  /** An input the route's schema would refuse, for the domain's own checks. */
+  const unchecked = (input: Record<string, unknown>) =>
+    input as unknown as StartUploadInput;
+
+  it("answers bad_type and too_large for an original or a poster, and opens or signs nothing", async () => {
+    const c = await newCreator(disk);
+    const v = await newVideo(c.creatorId);
+    const before = await rowOf(v.id);
+    const poster = {
+      kind: "poster",
+      videoId: v.id,
+      size: 1000,
+      contentType: "image/jpeg",
+      posterOrigin: "frame_capture",
+    };
+    const created = vi.spyOn(localDriver(), "createMultipart");
+    const signed = vi.spyOn(localDriver(), "presignPut");
+
+    for (const [input, code] of [
+      [
+        { ...originalStart(v.id, SMALL), contentType: "video/x-msvideo" },
+        "bad_type",
+      ],
+      [originalStart(v.id, ORIGINAL_MAX_BYTES + 1), "too_large"],
+      [originalStart(v.id, 0), "too_large"],
+      [{ ...poster, contentType: "image/png" }, "bad_type"],
+      [{ ...poster, size: POSTER_MAX_BYTES + 1 }, "too_large"],
+      [{ ...poster, size: 0 }, "too_large"],
+    ] as const) {
+      expect(
+        await presignUpload(c.actor, unchecked(input)),
+        JSON.stringify(input),
+      ).toEqual({ ok: false, code });
+    }
+    expect(created).not.toHaveBeenCalled();
+    expect(signed).not.toHaveBeenCalled();
+    expect(await rowOf(v.id)).toEqual(before);
   });
 });
 
@@ -1274,11 +1654,36 @@ describe("presignParts", () => {
       code: "not_found",
     });
     await expectJson(
-      await callUploadRoute("complete", { kind: "original", videoId: v.id }),
+      await callUploadRoute("complete", {
+        kind: "original",
+        videoId: v.id,
+        uploadId: upload.uploadId,
+      }),
       404,
       { code: "not_found" },
     );
     expect((await rowOf(v.id)).originalStatus).toBe("uploading");
+  });
+
+  it("answers upload_expired for its open upload once the 24 h window is over, and changes nothing (07 D80)", async () => {
+    const c = await newCreator(disk);
+    const v = await newVideo(c.creatorId);
+    const upload = await startOriginal(c.actor, v.id, TOTAL);
+    await startedHoursAgo(v.id, 25);
+    const open = await rowOf(v.id);
+    const call = (uploadId: string) =>
+      presignParts(c.actor, { videoId: v.id, uploadId, partNumbers: [1] });
+
+    expect(await call(upload.uploadId)).toEqual({
+      ok: false,
+      code: "upload_expired",
+    });
+    // Any other upload id is still not_found.
+    expect(await call(randomUUID())).toEqual({
+      ok: false,
+      code: "not_found",
+    });
+    expect(await rowOf(v.id)).toEqual(open);
   });
 
   it("refuses a video whose original isn't uploading", async () => {
@@ -1335,14 +1740,22 @@ describe("another creator's video", () => {
       }),
     ).toEqual(notFound);
     expect(
-      await completeUpload(other.actor, { kind: "original", videoId: v.id }),
+      await completeUpload(other.actor, {
+        kind: "original",
+        videoId: v.id,
+        uploadId: upload.uploadId,
+      }),
     ).toEqual(notFound);
     expect(await abortUpload(other.actor, { videoId: v.id })).toEqual(notFound);
 
     expect(await rowOf(v.id)).toEqual(open);
     expect(await pathExists(uploadDirPath(upload.uploadId))).toBe(true);
     expect(
-      await completeUpload(owner.actor, { kind: "original", videoId: v.id }),
+      await completeUpload(owner.actor, {
+        kind: "original",
+        videoId: v.id,
+        uploadId: upload.uploadId,
+      }),
     ).toEqual({ ok: true });
   });
 });
@@ -1555,6 +1968,18 @@ describe("posters (Q-34 a, Q-36 a)", () => {
       posterObjectKey: replaced.upload.key,
       posterOrigin: "frame_capture",
     });
+    // The refused PUT's object goes; a retried complete of the live poster is refused too and never deletes it.
+    expect(await pathExists(objectPath(next.key))).toBe(false);
+    expect(
+      await completeUpload(c.actor, {
+        kind: "poster",
+        videoId: live.id,
+        uploadToken: replaced.upload.uploadToken,
+      }),
+    ).toEqual({ ok: false, code: "not_found" });
+    expect(await listFiles(objectPath(`posters/${live.id}`))).toEqual([
+      basename(replaced.upload.key),
+    ]);
 
     const off = await newVideo(c.creatorId, { ...DISABLED });
     expect(
@@ -1566,6 +1991,111 @@ describe("posters (Q-34 a, Q-36 a)", () => {
         posterOrigin: "frame_capture",
       }),
     ).toEqual({ ok: false, code: "not_found" });
+  });
+});
+
+describe("posters no row points at", () => {
+  it("changes nothing on a video disabled while its poster is checked, and deletes the PUT's object (Q-38 a)", async () => {
+    const c = await newCreator(disk);
+    const v = await newVideo(c.creatorId);
+    const jpeg = await fixture("poster.jpg");
+    const current = await uploadPoster(c.actor, v.id, jpeg);
+    expect(current.result).toEqual({ ok: true });
+    const next = await startPoster(c.actor, v.id, jpeg.length);
+    expect((await putSigned(next.url, jpeg, next.headers)).status).toBe(200);
+    const driver = localDriver();
+    const realHead = driver.head;
+    vi.spyOn(driver, "head").mockImplementationOnce(async (key) => {
+      await disable(v.id);
+      return realHead(key);
+    });
+
+    expect(
+      await completeUpload(c.actor, {
+        kind: "poster",
+        videoId: v.id,
+        uploadToken: next.uploadToken,
+      }),
+    ).toEqual({ ok: false, code: "not_found" });
+    expect(await rowOf(v.id)).toMatchObject({
+      status: "disabled",
+      posterObjectKey: current.upload.key,
+      posterOrigin: "frame_capture",
+    });
+    expect(await listFiles(objectPath(`posters/${v.id}`))).toEqual([
+      basename(current.upload.key),
+    ]);
+  });
+
+  it("deletes the PUT's object when a valid token's video is gone", async () => {
+    const c = await newCreator(disk);
+    const v = await newVideo(c.creatorId);
+    const jpeg = await fixture("poster.jpg");
+    const upload = await startPoster(c.actor, v.id, jpeg.length);
+    expect((await putSigned(upload.url, jpeg, upload.headers)).status).toBe(
+      200,
+    );
+    await db.delete(video).where(eq(video.id, v.id));
+
+    expect(
+      await completeUpload(c.actor, {
+        kind: "poster",
+        videoId: v.id,
+        uploadToken: upload.uploadToken,
+      }),
+    ).toEqual({ ok: false, code: "not_found" });
+    expect(await pathExists(objectPath(upload.key))).toBe(false);
+  });
+
+  it("sweeps strays older than a token's lifetime at each poster start, never the live poster", async () => {
+    const c = await newCreator(disk);
+    const v = await newVideo(c.creatorId);
+    const jpeg = await fixture("poster.jpg");
+    const live = await uploadPoster(c.actor, v.id, jpeg);
+    expect(live.result).toEqual({ ok: true });
+    /** A poster PUT whose complete never came. */
+    const stray = async () => {
+      const upload = await startPoster(c.actor, v.id, jpeg.length);
+      expect((await putSigned(upload.url, jpeg, upload.headers)).status).toBe(
+        200,
+      );
+      return upload.key;
+    };
+    const age = (key: string, hours: number) => {
+      const at = new Date(Date.now() - hours * HOUR_MS);
+      return utimes(objectPath(key), at, at);
+    };
+    const old = await stray();
+    const fresh = await stray();
+    // Past the token's 1 h 15 min and the hour after it; the live poster is older still and stays.
+    await age(old, 3);
+    await age(live.upload.key, 5);
+
+    const next = await startPoster(c.actor, v.id, jpeg.length);
+    expect(await pathExists(objectPath(old))).toBe(false);
+    expect(await listFiles(objectPath(`posters/${v.id}`))).toEqual(
+      [basename(live.upload.key), basename(fresh)].sort(),
+    );
+
+    // A swap deletes the old live poster as replaced; the next start sweeps the now-aged stray, never the new live one.
+    expect((await putSigned(next.url, jpeg, next.headers)).status).toBe(200);
+    expect(
+      await completeUpload(c.actor, {
+        kind: "poster",
+        videoId: v.id,
+        uploadToken: next.uploadToken,
+      }),
+    ).toEqual({ ok: true });
+    expect((await rowOf(v.id)).posterObjectKey).toBe(next.key);
+    expect(await listFiles(objectPath(`posters/${v.id}`))).toEqual(
+      [basename(next.key), basename(fresh)].sort(),
+    );
+    await age(fresh, 3);
+    await age(next.key, 5);
+    await startPoster(c.actor, v.id, jpeg.length);
+    expect(await listFiles(objectPath(`posters/${v.id}`))).toEqual([
+      basename(next.key),
+    ]);
   });
 });
 
@@ -1789,7 +2319,7 @@ describe("the four upload routes", () => {
     const valid = {
       start: originalStart(v.id, SMALL),
       parts: { videoId: v.id, uploadId: randomUUID(), partNumbers: [1] },
-      complete: { kind: "original", videoId: v.id },
+      complete: { kind: "original", videoId: v.id, uploadId: randomUUID() },
       abort: { videoId: v.id },
     };
     for (const name of UPLOAD_ROUTE_NAMES) {
@@ -1825,7 +2355,10 @@ describe("the four upload routes", () => {
     for (const [name, body] of [
       ["start", originalStart(v.id, SMALL)],
       ["parts", { videoId: v.id, uploadId: upload.uploadId, partNumbers: [1] }],
-      ["complete", { kind: "original", videoId: v.id }],
+      [
+        "complete",
+        { kind: "original", videoId: v.id, uploadId: upload.uploadId },
+      ],
       ["abort", { videoId: v.id }],
       ["abort", { videoId: v.id, uploadId: upload.uploadId }],
     ] as const) {
@@ -1847,7 +2380,7 @@ describe("the four upload routes", () => {
     );
 
     const v = await newVideo(me.creatorId);
-    await startOriginal(me.actor, v.id, TWO_PARTS);
+    const open = await startOriginal(me.actor, v.id, TWO_PARTS);
     await expectJson(
       await callUploadRoute(
         "start",
@@ -1857,11 +2390,24 @@ describe("the four upload routes", () => {
       { code: "not_same_file" },
     );
     await expectJson(
-      await callUploadRoute("complete", { kind: "original", videoId: v.id }),
+      await callUploadRoute("complete", {
+        kind: "original",
+        videoId: v.id,
+        uploadId: open.uploadId,
+      }),
       422,
       { code: "parts_incomplete" },
     );
     await startedHoursAgo(v.id, 25);
+    await expectJson(
+      await callUploadRoute("parts", {
+        videoId: v.id,
+        uploadId: open.uploadId,
+        partNumbers: [1],
+      }),
+      410,
+      { code: "upload_expired" },
+    );
     await expectJson(
       await callUploadRoute(
         "start",
@@ -1870,6 +2416,87 @@ describe("the four upload routes", () => {
       410,
       { code: "upload_expired" },
     );
+  });
+
+  it("answer 400 bad_type and too_large on start (only an oversized size is too_large), and open or sign nothing", async () => {
+    const me = await signedIn(disk);
+    const v = await newVideo(me.creatorId);
+    const poster = {
+      kind: "poster",
+      videoId: v.id,
+      size: 1000,
+      contentType: "image/jpeg",
+      posterOrigin: "frame_capture",
+    };
+    const created = vi.spyOn(localDriver(), "createMultipart");
+    const signed = vi.spyOn(localDriver(), "presignPut");
+
+    for (const [body, code] of [
+      [
+        { ...originalStart(v.id, SMALL), contentType: "video/x-msvideo" },
+        "bad_type",
+      ],
+      [originalStart(v.id, ORIGINAL_MAX_BYTES + 1), "too_large"],
+      [originalStart(v.id, 0), "invalid"],
+      [{ ...poster, contentType: "image/png" }, "bad_type"],
+      [{ ...poster, size: POSTER_MAX_BYTES + 1 }, "too_large"],
+      [{ ...poster, size: 0 }, "invalid"],
+    ] as const) {
+      await expectJson(await callUploadRoute("start", body), 400, { code });
+    }
+    expect(created).not.toHaveBeenCalled();
+    expect(signed).not.toHaveBeenCalled();
+    expect(await rowOf(v.id)).toMatchObject({
+      ...NO_ORIGINAL,
+      posterObjectKey: null,
+    });
+    expect(await uploadsUnder(`originals/${me.creatorId}/${v.id}/`)).toEqual(
+      [],
+    );
+  });
+
+  it("answer 400 invalid to a body over 16 KiB, by its Content-Length or as it is read", async () => {
+    const me = await signedIn(disk);
+    const v = await newVideo(me.creatorId);
+    // Each body is valid but for its size: start would open an upload, abort answer 204, parts and complete 404.
+    const valid = {
+      start: originalStart(v.id, SMALL),
+      parts: { videoId: v.id, uploadId: randomUUID(), partNumbers: [1] },
+      complete: { kind: "original", videoId: v.id, uploadId: randomUUID() },
+      abort: { videoId: v.id },
+    };
+    const CAP = 16 * 1024;
+    for (const name of UPLOAD_ROUTE_NAMES) {
+      const json = JSON.stringify(valid[name]);
+      // JSON allows the leading whitespace.
+      await expectJson(
+        await callUploadRoute(
+          name,
+          `${" ".repeat(CAP + 1 - json.length)}${json}`,
+        ),
+        400,
+        { code: "invalid" },
+      );
+      await expectJson(
+        await callUploadRoute(name, json, undefined, {
+          "content-length": String(CAP + 1),
+        }),
+        400,
+        { code: "invalid" },
+      );
+    }
+    expect(await rowOf(v.id)).toMatchObject(NO_ORIGINAL);
+    expect(await uploadsUnder(`originals/${me.creatorId}/${v.id}/`)).toEqual(
+      [],
+    );
+
+    // Exactly the cap is read.
+    const abort = JSON.stringify(valid.abort);
+    const atCap = await callUploadRoute(
+      "abort",
+      `${" ".repeat(CAP - abort.length)}${abort}`,
+    );
+    expect(atCap.status).toBe(204);
   });
 
   it("answer 500 internal when the domain call throws, and log the error class only", async () => {
@@ -1885,6 +2512,7 @@ describe("the four upload routes", () => {
     const response = await callUploadRoute("complete", {
       kind: "original",
       videoId: v.id,
+      uploadId: upload.uploadId,
     });
     const { written, events } = logged();
     await expectJson(response, 500, { code: "internal" });

@@ -96,7 +96,10 @@ test("G.6: /dev/ui shows the shell and the primitives per tier", async ({
     // The NavBar demos sit inside <main>, so the page has no banner.
     await expectPageFrame(page, width, { banner: false });
     // Each demo sits in an overflow-hidden frame, which hides a row that runs past its bar from the page-level check.
-    for (const row of await page.locator("main header > div").all()) {
+    // One row per NavBar demo (public, admin, creator), so a markup change can't leave the loop with nothing to check.
+    const rows = await page.locator("main header > div").all();
+    expect(rows).toHaveLength(3);
+    for (const row of rows) {
       expect(
         await row.evaluate((el) => el.scrollWidth - el.clientWidth),
       ).toBeLessThanOrEqual(0);

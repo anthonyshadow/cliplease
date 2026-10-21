@@ -6,6 +6,7 @@ export const PART_BYTES = 16 * 1024 ** 2; // fixed 16 MiB parts; 2 GiB = 128 par
 export const PART_CONCURRENCY = 4;
 export const PART_URL_BATCH = 20; // ≤ 20 part URLs per /api/uploads/parts call
 export const PART_MAX_ATTEMPTS = 5; // backoff 1/2/4/8/16 s + jitter (P10c)
+export const PUT_STALL_MS = 60_000; // a PUT with no progress this long counts as a dropped connection
 export const UPLOAD_RESUME_WINDOW_MS = 86_400_000; // 24 h
 
 export const POSTER_MAX_BYTES = 2 * 1024 ** 2; // JPEG ≤ 2 MB

@@ -14,8 +14,10 @@ import {
   type UserRole,
 } from "@/lib/domain/values";
 import {
+  PAGE_PATH_HEADER,
   SESSION_EXPIRES_IN_S,
   SESSION_UPDATE_AGE_S,
+  safeNextPath,
   signInPath,
 } from "@/lib/sign-in";
 import type { Actor } from "./actor";
@@ -40,6 +42,8 @@ export type CreatorContext = {
     payoutCurrency: Currency;
     stripeAccountId: string | null;
     payoutsStatus: PayoutsStatus;
+    payoutsStatusSyncedAt: Date | null;
+    negativeBalanceDebitsEnabledAt: Date | null;
   };
 };
 
@@ -86,6 +90,8 @@ export const getCreatorContext = cache(
         payoutCurrency: profile.payoutCurrency,
         stripeAccountId: profile.stripeAccountId,
         payoutsStatus: profile.payoutsStatus,
+        payoutsStatusSyncedAt: profile.payoutsStatusSyncedAt,
+        negativeBalanceDebitsEnabledAt: profile.negativeBalanceDebitsEnabledAt,
       },
     };
   },
@@ -107,26 +113,31 @@ export async function hasStaleSessionCookie(): Promise<boolean> {
   );
 }
 
-/** The signed-in user, else a redirect to /sign-in?next=… */
-export async function requireUser(next = "/dashboard"): Promise<SessionUser> {
+/**
+ * The signed-in user, else a redirect to /sign-in?next=…: `next`, by default the page the proxy let through (its path
+ * and query), or /dashboard outside the proxy's matcher.
+ */
+export async function requireUser(next?: string): Promise<SessionUser> {
   const user = await getSessionUser();
-  if (!user) redirect(signInPath(next));
+  if (!user) {
+    redirect(
+      signInPath(next ?? safeNextPath((await headers()).get(PAGE_PATH_HEADER))),
+    );
+  }
   return user;
 }
 
 /** The creator, else /sign-in, or /onboarding when the user has no creator profile yet. */
-export async function requireCreator(
-  next = "/dashboard",
-): Promise<CreatorContext> {
+export async function requireCreator(next?: string): Promise<CreatorContext> {
   const user = await requireUser(next);
   const ctx = await getCreatorContext(user);
   if (!ctx) redirect("/onboarding");
   return ctx;
 }
 
-/** An admin, else /sign-in when nobody is signed in, or the 404 page for everyone else. */
-export async function requireAdmin(): Promise<SessionUser> {
-  const user = await requireUser("/admin");
+/** An admin, else /sign-in?next=… when nobody is signed in, or the 404 page for everyone else. */
+export async function requireAdmin(next?: string): Promise<SessionUser> {
+  const user = await requireUser(next);
   if (user.role !== "admin") notFound();
   return user;
 }

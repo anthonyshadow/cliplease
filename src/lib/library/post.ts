@@ -10,8 +10,9 @@ import { formatCompact, formatDuration, formatPostDate } from "../format";
 
 /**
  * 02 §5.4's LibraryPostDTO. Additive: `visibility` (the «Private» pill), `width`/`height` (the <img> size, 07 D150),
- * `thumbnailVersion` (when the stored thumbnail changed, so a sync retries a failed image) and `fetchedAt`. `thumbnailSrc` is null when
- * the post has no stored thumbnail: the tile shows the failed state without asking the proxy.
+ * `thumbnailVersion` (when the stored thumbnail changed, so a sync retries a failed image) and `fetchedAt`. `thumbnailSrc`
+ * carries the version as `?v=`, so a new image replaces the browser's cached one; it is null when the post has no stored
+ * thumbnail: the tile shows the failed state without asking the proxy.
  */
 export type LibraryPostDTO = {
   id: string;

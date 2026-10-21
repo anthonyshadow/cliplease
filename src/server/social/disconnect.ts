@@ -113,7 +113,10 @@ export async function disconnectSocialAccount(
   return { revoked: wiped ? revoked : "unsupported" };
 }
 
-/** 03 §9.3 step 1: revoke at the platform before the tokens are wiped; never inside a transaction, never fatal. */
+/**
+ * 03 §9.3 step 1: revoke at the platform before the tokens are wiped; never inside a transaction, never fatal. Nothing
+ * left to revoke (no token, or an expired one that can't be refreshed) is `unsupported`, like a platform with no revoke.
+ */
 async function revokeBeforeWipe(
   accountId: string,
   platform: string,
@@ -121,5 +124,7 @@ async function revokeBeforeWipe(
   const provider = getProvider(platform);
   if (!provider?.capabilities.canRevoke) return "unsupported";
   const tokens = await getTokenSetForRevoke(accountId);
-  return tokens ? revokeQuietly(provider, tokens, accountId) : "failed";
+  if (tokens === "none") return "unsupported";
+  if (tokens === "failed") return "failed";
+  return revokeQuietly(provider, tokens, accountId);
 }

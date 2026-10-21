@@ -26,11 +26,28 @@ import { insertCreator } from "../../helpers/factories";
 import { headers as requestHeaders } from "../../helpers/next-headers";
 
 // The session helpers (02 §5.1) against real sessions. Outside a request, redirect() and notFound() throw errors whose
-// digest names the outcome.
-vi.mock("next/headers", () => import("../../helpers/next-headers"));
+// digest names the outcome. headers() is the shared stand-in, plus the page the proxy forwards while `forwarded.page` is
+// set.
+const forwarded = vi.hoisted(() => ({ page: null as string | null }));
+vi.mock("next/headers", async () => {
+  const stub = await import("../../helpers/next-headers");
+  const { PAGE_PATH_HEADER } = await import("../../../src/lib/sign-in");
+  return {
+    headers: async () => {
+      const headers = await stub.headers();
+      if (forwarded.page !== null) {
+        headers.set(PAGE_PATH_HEADER, forwarded.page);
+      }
+      return headers;
+    },
+  };
+});
 
 afterAll(resetDb);
-beforeEach(() => mockNextHeaders(null));
+beforeEach(() => {
+  mockNextHeaders(null);
+  forwarded.page = null;
+});
 
 async function signedIn(email = newCreatorEmail()) {
   mockNextHeaders(await signInWithOtp(email));
@@ -51,11 +68,25 @@ describe("signed out", () => {
     ).rejects.toMatchObject(
       redirectTo("/sign-in?next=%2Fdashboard%2Flibrary%3Fplatform%3Dmock"),
     );
-    await expect(requireAdmin()).rejects.toMatchObject(
-      redirectTo("/sign-in?next=%2Fadmin"),
+    await expect(requireAdmin("/admin?tab=events")).rejects.toMatchObject(
+      redirectTo("/sign-in?next=%2Fadmin%3Ftab%3Devents"),
     );
     expect(await getCreatorForApi()).toBeNull();
     expect(await hasStaleSessionCookie()).toBe(false);
+  });
+
+  it("defaults next to the page the proxy forwarded, through safeNextPath; an explicit path still wins", async () => {
+    forwarded.page = "/admin?tab=events";
+    await expect(requireAdmin()).rejects.toMatchObject(
+      redirectTo("/sign-in?next=%2Fadmin%3Ftab%3Devents"),
+    );
+    await expect(requireUser("/onboarding")).rejects.toMatchObject(
+      redirectTo("/sign-in?next=%2Fonboarding"),
+    );
+    forwarded.page = "//evil.example/admin";
+    await expect(requireUser()).rejects.toMatchObject(
+      redirectTo("/sign-in?next=%2Fdashboard"),
+    );
   });
 
   it("tells a stale session cookie apart from none (the signed-out banner)", async () => {
@@ -94,6 +125,8 @@ describe("signed in", () => {
       payoutCurrency: "cad",
       stripeAccountId: null,
       payoutsStatus: "not_started",
+      payoutsStatusSyncedAt: null,
+      negativeBalanceDebitsEnabledAt: null,
     });
     expect(await getCreatorForApi()).toEqual(ctx);
     expect(toActor(ctx)).toEqual({
@@ -139,6 +172,9 @@ describe("signed in", () => {
   it("shows a creator the 404 on admin pages", async () => {
     await signedIn();
     await expect(requireAdmin()).rejects.toMatchObject(NOT_FOUND);
+    await expect(requireAdmin("/admin?tab=events")).rejects.toMatchObject(
+      NOT_FOUND,
+    );
   });
 
   it("lets an ADMIN_EMAILS user through requireAdmin, reading the role fresh", async () => {

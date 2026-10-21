@@ -57,6 +57,8 @@ export interface ObjectStorage {
   } | null>;
   /** A missing object is fine. */
   delete(key: string): Promise<void>;
+  /** Every object under a folder `prefix` (ending in `/`) and when it was written; [] when there is none. */
+  list(prefix: string): Promise<Array<{ key: string; lastModified: Date }>>;
 }
 
 let local: LocalStorage | undefined;

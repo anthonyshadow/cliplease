@@ -153,11 +153,14 @@ test("J5: a title makes a draft, sample.mp4 uploads in parts, the cover is store
     partCount: 1,
     doneParts: [],
   });
+  const { key, uploadId } = start as { key: string; uploadId: string };
   await partPut;
   const completeBody = (await completed).postDataJSON() as Record<
     string,
     unknown
   >;
+  // It names the upload start opened, so it can't finish another one.
+  expect(completeBody).toMatchObject({ kind: "original", videoId, uploadId });
   expect(completeBody).not.toHaveProperty("parts");
   expect(completeBody).not.toHaveProperty("etag");
   expect(JSON.stringify(completeBody)).not.toMatch(/etag/i);
@@ -165,7 +168,6 @@ test("J5: a title makes a draft, sample.mp4 uploads in parts, the cover is store
   const coverPath = await waitForAttached(page, posterStored);
 
   // On disk: the original at its server key (no trace of the file's name), no multipart folder left, one cover.
-  const { key, uploadId } = start as { key: string; uploadId: string };
   expect(key).toMatch(
     new RegExp(`^originals/[0-9a-f-]{36}/${videoId}/[0-9a-f-]{36}\\.mp4$`),
   );
@@ -454,6 +456,8 @@ test("Q-41: Replace keeps a cover the creator chose and reads no new frame", asy
   await (await chooser).setFiles(SAMPLE_MP4);
   await replaced;
   await expect(page.getByText(/^Original attached/).first()).toBeVisible();
+  // A frame read runs alongside the upload and can land after its complete: give one the time to show.
+  await waitInPage(page, 1_500);
   // No frame was read for the cover: no "can't preview" line, no poster upload, and the chosen cover still shows.
   await expect(page.getByText(CANT_PREVIEW, { exact: true })).toHaveCount(0);
   await expect(coverImage(page)).toBeVisible();

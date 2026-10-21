@@ -9,6 +9,7 @@ import type { Actor } from "../auth/actor";
 import { uniqueViolationConstraint } from "../db-errors";
 import { errorName, logEvent } from "../log";
 import { AlreadyLinkedError } from "./errors";
+import { urlWithoutNul, withoutNul } from "./text";
 import { sealTokenColumns, tokenUpdateColumns } from "./tokens";
 import type {
   RevokeOutcome,
@@ -25,12 +26,34 @@ type LinkResult = { socialAccountId: string; created: boolean };
 /** The profile columns an adapter's SocialProfile fills; a connect and every sync write them (03 DB1). */
 export function profileColumns(profile: SocialProfile) {
   return {
-    username: profile.username,
-    displayName: profile.displayName,
-    avatarUrl: profile.avatarUrl,
-    profileUrl: profile.profileUrl,
-    accountType: profile.accountType,
+    username: withoutNul(profile.username),
+    displayName: withoutNul(profile.displayName),
+    avatarUrl: urlWithoutNul(profile.avatarUrl),
+    profileUrl: urlWithoutNul(profile.profileUrl),
+    accountType: withoutNul(profile.accountType),
   };
+}
+
+/**
+ * Whether a live account (any creator's, in any status but disconnected) holds this platform account: the rule of the
+ * unique index social_account_live_provider_account_uidx. A refused connect gives its tokens back only when none does.
+ */
+export async function isPlatformAccountLive(
+  platform: SocialProviderId,
+  externalAccountId: string,
+): Promise<boolean> {
+  const [row] = await db
+    .select({ id: socialAccount.id })
+    .from(socialAccount)
+    .where(
+      and(
+        eq(socialAccount.provider, platform),
+        eq(socialAccount.providerAccountId, externalAccountId),
+        ne(socialAccount.status, "disconnected"),
+      ),
+    )
+    .limit(1);
+  return row !== undefined;
 }
 
 type LinkInput = {
@@ -142,8 +165,8 @@ function linkOnce({
 }
 
 /**
- * Revokes tokens we won't keep (a refused connect, 07 D37; a Disconnect, 03 §9.3): best effort, so a failure is logged
- * by name only (never a token) and reported as `failed`.
+ * Revokes tokens we won't keep (a refused connect no live account shares, 07 D37 as amended by the owner; a Disconnect,
+ * 03 §9.3): best effort, so a failure is logged by name only (never a token) and reported as `failed`.
  */
 export async function revokeQuietly(
   provider: SocialProvider,

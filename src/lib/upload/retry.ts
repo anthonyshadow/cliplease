@@ -53,13 +53,17 @@ export function wait(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-/** `promise`'s value, or null once `ms` passed first; the timer goes as soon as either settles. */
-export function within<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+/** `promise`'s value, or `late` once `ms` passed first; the timer goes as soon as either settles. */
+export function within<T, L>(
+  promise: Promise<T>,
+  ms: number,
+  late: L,
+): Promise<T | L> {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const late = new Promise<null>((resolve) => {
-    timer = setTimeout(() => resolve(null), ms);
+  const timedOut = new Promise<L>((resolve) => {
+    timer = setTimeout(() => resolve(late), ms);
   });
-  return Promise.race([promise, late]).finally(() => clearTimeout(timer));
+  return Promise.race([promise, timedOut]).finally(() => clearTimeout(timer));
 }
 
 const isFailure = (error: unknown): error is SendFailure =>
@@ -80,7 +84,9 @@ type RetryWatch = {
  * Sends one part until it is stored (07 D80): a network error or a 403 gets the part's one re-sign (`resign`, a fresh URL
  * from /api/uploads/parts) and every later retry reuses that URL; a 5xx, 408 or 429 waits and retries without one. The
  * waits are RETRY_DELAYS_MS plus jitter; after PART_MAX_ATTEMPTS retries the part is 'paused'. A failure while the browser
- * is offline spends nothing: it waits for `waitForOnline` and sends again. Rejects with an AbortError on `signal`.
+ * is offline spends nothing: it waits for `waitForOnline` and sends again. Time offline can outlast the URL, so after it
+ * the next failure gets a re-sign again; so does one after a re-sign that brought no URL. Rejects with an AbortError on
+ * `signal`.
  */
 export async function sendPartWithRetry(
   i: RetryWatch & {
@@ -119,32 +125,37 @@ export async function sendPartWithRetry(
     // Offline (the 'offline' event can come after the failure): nothing is spent; send again once back online.
     if (!i.isOnline()) {
       await i.waitForOnline(i.signal);
+      resigned = false;
       continue;
     }
     if (retries >= PART_MAX_ATTEMPTS) return "paused";
     retries += 1;
     i.onRetrying?.(retries);
     if (!resigned && (status === null || status === 403)) {
-      resigned = true;
       try {
         const fresh = await i.resign();
         if (fresh === null) return "gone";
         url = fresh;
+        resigned = true;
       } catch (error) {
         if (i.signal.aborted) throw abortError();
-        // No fresh URL this time: keep the old one; the waits go on.
+        // No fresh URL this time: keep the old one; the waits go on, and the next failure asks again.
         if (!isFailure(error)) throw error;
       }
     }
     await wait(retryDelayMs(retries, i.random), i.signal);
-    if (!i.isOnline()) await i.waitForOnline(i.signal);
+    if (!i.isOnline()) {
+      await i.waitForOnline(i.signal);
+      resigned = false;
+    }
   }
 }
 
 /**
- * A route call that is safe to repeat (part URLs, complete), by sendPartWithRetry's rules: a dropped connection
- * (`network`) is called again after the same waits, up to PART_MAX_ATTEMPTS retries, and one while offline waits for the
- * connection without spending a retry. Any other answer comes back as it is; an abort of `signal` ends it as canceled.
+ * A route call that is safe to repeat (part URLs, a resume's start, complete), by sendPartWithRetry's rules: a dropped
+ * connection (`network`) is called again after the same waits, up to PART_MAX_ATTEMPTS retries, and one while offline
+ * waits for the connection without spending a retry. Any other answer comes back as it is; an abort of `signal` ends it
+ * as canceled.
  */
 export async function withRetries<T>(
   call: () => Promise<ApiResult<T>>,

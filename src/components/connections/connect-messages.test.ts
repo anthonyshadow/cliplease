@@ -4,6 +4,7 @@ import { CONNECT_ERROR_CODES } from "@/lib/domain/values";
 import {
   accountName,
   CONNECT_ERROR_MESSAGES,
+  capNote,
   cardState,
   connectErrorBanner,
   connectErrorCode,
@@ -146,6 +147,13 @@ describe("the account card (04 §9.18, §11.7, §11.8; 07 D43)", () => {
     expect(liveVideosSentence(3, "@maya.films")).toBe(
       '3 live videos came from @maya.films. They stay live and keep their Verified label, marked "no longer linked". Licenses already sold don\'t change.',
     );
+  });
+
+  it("shows the cap note from the cap on, with the count held once Load older videos or new posts pass it (01 J3.11, 07 D13)", () => {
+    expect(capNote(199, 200)).toBeNull();
+    expect(capNote(200, 200)).toBe("Showing your newest 200 videos.");
+    expect(capNote(210, 200)).toBe("Showing your newest 210 videos.");
+    expect(capNote(300, 200)).toBe("Showing your newest 300 videos.");
   });
 
   it("titles the sheet and the toast with the account (owner answer Q-19 a)", () => {

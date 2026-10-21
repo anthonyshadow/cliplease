@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 import { accountCard, linkDemoAccount, SYNC_LINE } from "./helpers/connections";
 import { collectConsoleErrors } from "./helpers/console";
 import { signUpCreator, uniqueLongHandle } from "./helpers/creator";
@@ -8,8 +8,9 @@ import {
   expectPageFrame,
   expectReadingPage,
   expectSettingsColumn,
+  TIERS,
 } from "./helpers/layout";
-import { pressAndSettle } from "./helpers/press";
+import { pressAndSettle, pressLocator } from "./helpers/press";
 
 // G.6 for P05's and P06's pages (07 D154), on all four projects: each test signs up its own creator with signUpCreator.
 // The profile step stays in responsive.spec.ts (its /onboarding route lands on ?step=profile); Connections has its own
@@ -18,6 +19,36 @@ test.use({ reducedMotion: "reduce" });
 
 // 43 characters, no break opportunity.
 const LONG_NAME = "Dailylaughsproductionsandfriendsofthestudio";
+
+/**
+ * Below lg, the TabBar tells assistive tech where the page is, not only with color and the 2 px bar: the current tab's
+ * link is aria-current="page", or, for a page in the More sheet, the More tab is aria-current="true" and the sheet's
+ * row for the page is aria-current="page".
+ */
+async function expectTabBarCurrent(
+  page: Page,
+  current: string,
+  { inMoreSheet }: { inMoreSheet: boolean },
+) {
+  const tabBar = page.locator("[data-tabbar]");
+  await expect(tabBar.locator("[aria-current]")).toHaveCount(1);
+  if (!inMoreSheet) {
+    await expect(
+      tabBar.getByRole("link", { name: current, exact: true }),
+    ).toHaveAttribute("aria-current", "page");
+    return;
+  }
+  const more = tabBar.getByRole("button", { name: "More", exact: true });
+  await expect(more).toHaveAttribute("aria-current", "true");
+  await pressLocator(more);
+  const sheet = page.getByRole("dialog", { name: "More" });
+  await expect(
+    sheet.getByRole("link", { name: current, exact: true }),
+  ).toHaveAttribute("aria-current", "page");
+  await expect(sheet.locator("[aria-current]")).toHaveCount(1);
+  await page.keyboard.press("Escape");
+  await expect(sheet).toBeHidden();
+}
 
 test("G.6: the connect and payouts steps keep one centered 640 px column at every tier", async ({
   page,
@@ -65,6 +96,9 @@ test("G.6: Settings keeps a left-aligned 640 px column and the creator chrome at
     await expectPageFrame(page, width, { banner: true });
     await expectSettingsColumn(page, width);
     await expectCreatorChrome(page, width);
+    if (width < TIERS.desktop) {
+      await expectTabBarCurrent(page, "Settings", { inMoreSheet: true });
+    }
   });
   expect(errors).toEqual([]);
 });
@@ -74,7 +108,10 @@ test("G.6: the Inbox and the Library show the payouts banner and the creator chr
 }, testInfo) => {
   const errors = collectConsoleErrors(page);
   await signUpCreator(page, { payouts: false });
-  for (const path of ["/dashboard", "/dashboard/library"]) {
+  for (const [path, tab] of [
+    ["/dashboard", "Inbox"],
+    ["/dashboard/library", "Library"],
+  ] as const) {
     await page.goto(path);
     const banner = page.getByText(
       "Set up payouts so you can approve requests (about 2 min)",
@@ -83,6 +120,9 @@ test("G.6: the Inbox and the Library show the payouts banner and the creator chr
       await expectPageFrame(page, width, { banner: true });
       await expectCreatorChrome(page, width);
       await expect(banner).toBeVisible();
+      if (width < TIERS.desktop) {
+        await expectTabBarCurrent(page, tab, { inMoreSheet: false });
+      }
     });
   }
   expect(errors).toEqual([]);

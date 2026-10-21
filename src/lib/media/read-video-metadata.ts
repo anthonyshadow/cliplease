@@ -1,6 +1,7 @@
 // Display hints and a cover frame from the creator's own file (research/infra.md §3), read while the upload runs and never
 // blocking it. Browser only: import it from client components. The hints are never trusted for pricing or security.
 import { POSTER_MAX_BYTES } from "../upload/limits";
+import { within } from "../upload/retry";
 import { drawScaled, jpegWithin } from "./canvas";
 import { isBlankFrame, samplePoints, seekTime } from "./frame";
 
@@ -18,8 +19,8 @@ export type VideoMeta = {
 
 type Wait = "ok" | "error" | "timeout";
 
-/** Resolves on `event` (ok), the element's `error`, or the shared deadline. */
-function waitFor(video: HTMLVideoElement, event: string, deadline: number) {
+/** Resolves on `event` (ok), the element's `error`, or after `ms` (what is left of the shared deadline). */
+function waitFor(video: HTMLVideoElement, event: string, ms: number) {
   return new Promise<Wait>((resolve) => {
     const done = (result: Wait) => {
       clearTimeout(timer);
@@ -29,23 +30,10 @@ function waitFor(video: HTMLVideoElement, event: string, deadline: number) {
     };
     const onEvent = () => done("ok");
     const onError = () => done("error");
-    const timer = setTimeout(
-      () => done("timeout"),
-      Math.max(0, deadline - Date.now()),
-    );
+    const timer = setTimeout(() => done("timeout"), ms);
     video.addEventListener(event, onEvent);
     video.addEventListener("error", onError);
   });
-}
-
-/** `promise`, or undefined once the deadline passes (play() can hang on a frame the browser can't paint). */
-function beforeDeadline<T>(promise: Promise<T>, deadline: number) {
-  return Promise.race([
-    promise,
-    new Promise<undefined>((resolve) =>
-      setTimeout(() => resolve(undefined), Math.max(0, deadline - Date.now())),
-    ),
-  ]);
 }
 
 const failed = (w: Wait): VideoMeta["posterError"] =>
@@ -86,6 +74,7 @@ export async function readVideoMetadata(
   } = {},
 ): Promise<VideoMeta> {
   const deadline = Date.now() + timeoutMs;
+  const left = () => Math.max(0, deadline - Date.now());
   const meta: VideoMeta = {
     durationMs: null,
     width: null,
@@ -98,7 +87,7 @@ export async function readVideoMetadata(
   video.playsInline = true;
   video.preload = "metadata";
   try {
-    const loading = waitFor(video, "loadedmetadata", deadline);
+    const loading = waitFor(video, "loadedmetadata", left());
     video.src = url;
     const loaded = await loading;
     if (loaded === "ok") {
@@ -125,15 +114,15 @@ export async function readVideoMetadata(
     video.preload = "auto";
     const target = seekTime(video.duration);
     if (video.currentTime !== target) {
-      const seeking = waitFor(video, "seeked", deadline);
+      const seeking = waitFor(video, "seeked", left());
       video.currentTime = target;
       const seeked = await seeking;
       if (seeked !== "ok") return { ...meta, posterError: failed(seeked) };
     }
-    // iOS Safari may not paint the frame until playback starts once.
+    // iOS Safari may not paint the frame until playback starts once; play() can hang on a frame it can't paint.
     if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
       try {
-        await beforeDeadline(video.play(), deadline);
+        await within(video.play(), left(), undefined);
         video.pause();
       } catch {
         // Playback refused: draw what is there.
@@ -144,9 +133,10 @@ export async function readVideoMetadata(
     const pixels = canvas && samplePixels(canvas);
     if (!canvas || !pixels) return { ...meta, posterError: "decode_error" };
     if (isBlankFrame(pixels)) return { ...meta, posterError: "blank_frame" };
-    const jpeg = await beforeDeadline(
+    const jpeg = await within(
       jpegWithin(canvas, POSTER_MAX_BYTES),
-      deadline,
+      left(),
+      undefined,
     );
     if (jpeg === undefined) return { ...meta, posterError: "timeout" };
     return jpeg

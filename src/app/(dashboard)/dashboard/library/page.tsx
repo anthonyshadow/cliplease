@@ -14,10 +14,10 @@ import { LibraryEmpty } from "@/components/library/library-empty";
 import { LibraryGrid } from "@/components/library/library-grid";
 import {
   accountLabels,
-  filterForAccounts,
   LIBRARY_TITLE,
   libraryChips,
   libraryEmptyState,
+  libraryRedirect,
   librarySyncState,
   loadOlder,
   stripHref,
@@ -60,8 +60,10 @@ export default async function LibraryPage({
   const filter = LibraryFilterSchema.parse(params);
   const library = await listLibraryPosts(toActor(ctx), filter);
   const { accounts, posts, allExpired, visibleCount } = library;
-  const kept = filterForAccounts(filter, accounts);
-  if (libraryHref(kept) !== libraryHref(filter)) redirect(libraryHref(kept));
+  // The posts query runs beside the summaries: on the rare redirect it reads nothing, which costs less than waiting for
+  // the summaries before the posts on every load.
+  const to = libraryRedirect(filter, accounts, posts.length);
+  if (to) redirect(to);
 
   const errorBanner = connectErrorBanner(params.error);
   const connectedToast = connectedToastMessage(params.connected);

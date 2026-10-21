@@ -1,5 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { expect, type Page, type TestInfo } from "@playwright/test";
+import {
+  type BrowserContext,
+  expect,
+  type Page,
+  type TestInfo,
+} from "@playwright/test";
 import { signInPath } from "../../../src/lib/sign-in";
 import { readSignInCode } from "../../helpers/read-latest-email";
 
@@ -58,4 +63,18 @@ export async function signInWithEmail(
   const code = await requestCode(page, email, next);
   await page.getByLabel("Code", { exact: true }).fill(code);
   await page.waitForURL((url) => url.pathname !== "/sign-in");
+}
+
+/** Gives `context` a signed-looking session cookie for a session that no longer exists, as after a sign-out elsewhere. */
+export function addStaleSessionCookie(
+  context: BrowserContext,
+  baseURL: string | undefined,
+): Promise<void> {
+  return context.addCookies([
+    {
+      name: "better-auth.session_token",
+      value: "ended.c2lnbmF0dXJl",
+      url: baseURL,
+    },
+  ]);
 }

@@ -14,6 +14,7 @@ class FakeVideo extends EventTarget {
   videoWidth = 720;
   videoHeight = 1280;
   readyState = 4;
+  plays = 0;
   answer: "loadedmetadata" | "error" | null = "loadedmetadata";
   seeks: number[] = [];
   private time = 0;
@@ -40,6 +41,13 @@ class FakeVideo extends EventTarget {
   load() {
     log.push("load");
   }
+
+  play() {
+    this.plays += 1;
+    return Promise.resolve();
+  }
+
+  pause() {}
 }
 
 function fakeCanvas() {
@@ -87,6 +95,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -129,6 +138,20 @@ describe("readVideoMetadata (research/infra.md §3)", () => {
       ...[1, 1, 1, 1],
     ]);
     expect(grid?.context.getImageData.mock.calls).toEqual([[0, 0, 4, 4]]);
+  });
+
+  it("leaves no timer once it has the frame, even after starting playback to paint it", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    video.readyState = 1;
+    let settled = false;
+    const reading = readVideoMetadata(file).finally(() => {
+      settled = true;
+    });
+    while (!settled) await vi.advanceTimersByTimeAsync(1);
+    const meta = await reading;
+    expect(meta.poster).toEqual(expect.any(Blob));
+    expect(video.plays).toBe(1);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("refuses a black frame", async () => {

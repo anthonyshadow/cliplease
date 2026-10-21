@@ -26,22 +26,23 @@ export async function GET(
   request: NextRequest,
   ctx: RouteContext<"/api/connect/[provider]/start">,
 ) {
+  const search = request.nextUrl.searchParams;
+  const returnTo = parseReturnTo(search.get("returnTo"));
   const creator = await getCreatorForApi();
   if (!creator) {
+    // Back to the page the connect started from once signed in; the creator taps Connect again there.
     return NextResponse.redirect(
-      new URL(signInPath("/dashboard/connections"), env.APP_URL),
+      new URL(signInPath(returnTo.pathname + returnTo.search), env.APP_URL),
       302,
     );
   }
   const provider = getProvider((await ctx.params).provider);
   if (!provider) return new NextResponse(null, { status: 404 });
 
-  const search = request.nextUrl.searchParams;
   const q = startQuery.parse({
     switch: search.get("switch"),
     insights: search.get("insights"),
   });
-  const returnTo = parseReturnTo(search.get("returnTo"));
   const state = randomBytes(32).toString("base64url");
   const pkce = provider.capabilities.usesPkce ? createPkcePair() : null;
   // Optional scopes only on request (?insights=1; Instagram views, 07 D83).

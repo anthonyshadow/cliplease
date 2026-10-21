@@ -2,7 +2,12 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { type ActionResult, fieldError, formText } from "@/lib/result";
+import {
+  type ActionResult,
+  fieldError,
+  formText,
+  GENERIC_ERROR_MESSAGE,
+} from "@/lib/result";
 import { displayNameMessage } from "@/lib/validation/display-name";
 import { displayNameSchema } from "@/lib/validation/profile";
 import { requireCreator, toActor } from "@/server/auth/session";
@@ -28,15 +33,24 @@ export async function saveDisplayName(
   return { ok: true, data: undefined };
 }
 
-const timeZoneInput = z.object({ timeZone: z.string().max(64) });
+const timeZoneInput = z.object({ timeZone: z.string() });
 
-/** Emails → Update from this device (07 D84): the browser's zone; an unknown one becomes UTC. */
+/**
+ * Emails → Update from this device (07 D84): the browser's zone. An unknown one, or one over 64 characters, becomes UTC
+ * (normalizeTimeZone, as onboarding does); only a non-string is refused.
+ */
 export async function updateTimeZoneFromDevice(input: {
   timeZone: string;
 }): Promise<ActionResult> {
-  const { timeZone } = timeZoneInput.parse(input);
   const ctx = await requireCreator("/dashboard/settings");
-  await updateTimeZone(toActor(ctx), { timeZone });
+  const parsed = timeZoneInput.safeParse(input);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: { code: "invalid_input", message: GENERIC_ERROR_MESSAGE },
+    };
+  }
+  await updateTimeZone(toActor(ctx), parsed.data);
   revalidatePath("/dashboard/settings");
   return { ok: true, data: undefined };
 }

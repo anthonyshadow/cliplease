@@ -1,27 +1,23 @@
-import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { DrizzleQueryError, sql } from "drizzle-orm";
 import { DatabaseError } from "pg";
 import { assert, expect } from "vitest";
 import { db, pool } from "../../src/db/client";
-import { checkTestDatabase } from "./test-database";
+import { checkTestDatabaseFiles } from "./test-database";
 
-const LOCAL_ENV = fileURLToPath(new URL("../../.env.local", import.meta.url));
+const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 
 /**
- * The integration guard: APP_ENV=test and a database that isn't the development one in .env.local. It checks the
- * connection string the pool actually uses, not only the environment.
+ * The integration guard: APP_ENV=test and the database .env.test names, never the development one in .env.local. It
+ * checks the connection string the pool actually uses, not only the environment.
  */
 export function assertTestDatabase(): void {
   const { APP_ENV, DATABASE_URL_UNPOOLED } = process.env;
-  checkTestDatabase(
-    {
-      APP_ENV,
-      DATABASE_URL: pool.options.connectionString,
-      DATABASE_URL_UNPOOLED,
-    },
-    existsSync(LOCAL_ENV) ? readFileSync(LOCAL_ENV, "utf8") : undefined,
-  );
+  checkTestDatabaseFiles(REPO_ROOT, {
+    APP_ENV,
+    DATABASE_URL: pool.options.connectionString,
+    DATABASE_URL_UNPOOLED,
+  });
 }
 
 /** Empties every table in schema public (Drizzle's journal lives in schema drizzle and stays). */

@@ -1,6 +1,7 @@
 // The browser's side of P10a's upload routes: JSON POSTs and progress-reporting PUTs. Browser only: import it from client
 // code. Errors carry a code, never a URL, a key or an upload id.
 import { UPLOAD_ROUTE_CODES, type UploadErrorCode } from "./codes";
+import { PUT_STALL_MS } from "./limits";
 
 export type UploadResult = { ok: true } | { ok: false; code: UploadErrorCode };
 export type ApiResult<T> =
@@ -67,7 +68,8 @@ export async function completeUpload(
 /**
  * One PUT with XMLHttpRequest, for its upload progress (`onProgress` gets the bytes sent so far). Only `headers` are
  * set: a part PUT passes none, so a type-less `file.slice()` goes with no Content-Type (07 D80 gotchas). `ok` means
- * the server answered, with any status; the caller judges the status.
+ * the server answered, with any status; the caller judges the status. A PUT with no progress for PUT_STALL_MS (and no
+ * answer that long once the body is sent) is aborted as `network`: a half-open connection never errors by itself.
  */
 export function putWithProgress(
   url: string,
@@ -88,8 +90,28 @@ export function putWithProgress(
       return;
     }
     const xhr = new XMLHttpRequest();
+    let stalled = false;
+    // One timer, not one per progress event (several a second): fired before PUT_STALL_MS of quiet, it re-arms for the
+    // rest. performance.now() is monotonic, as timers are: a clock change neither ends nor stretches the wait.
+    let lastProgress = performance.now();
+    const progressed = () => {
+      lastProgress = performance.now();
+    };
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const watch = (ms: number) => {
+      timer = setTimeout(() => {
+        const left = lastProgress + PUT_STALL_MS - performance.now();
+        if (left > 0) {
+          watch(Math.ceil(left));
+        } else {
+          stalled = true;
+          xhr.abort();
+        }
+      }, ms);
+    };
     const abort = () => xhr.abort();
     const finish = (result: PutResult) => {
+      clearTimeout(timer);
       signal?.removeEventListener("abort", abort);
       resolve(result);
     };
@@ -98,11 +120,17 @@ export function putWithProgress(
       xhr.setRequestHeader(name, value);
     }
     // Listeners on xhr.upload go on before send(), or some browsers never report progress.
-    xhr.upload.onprogress = (event) => onProgress?.(event.loaded);
+    xhr.upload.onprogress = (event) => {
+      progressed();
+      onProgress?.(event.loaded);
+    };
+    xhr.upload.onload = progressed;
     xhr.onload = () => finish({ ok: true, status: xhr.status });
     xhr.onerror = () => finish({ ok: false, code: "network" });
-    xhr.onabort = () => finish({ ok: false, code: "canceled" });
+    xhr.onabort = () =>
+      finish({ ok: false, code: stalled ? "network" : "canceled" });
     signal?.addEventListener("abort", abort, { once: true });
+    watch(PUT_STALL_MS);
     xhr.send(body);
   });
 }

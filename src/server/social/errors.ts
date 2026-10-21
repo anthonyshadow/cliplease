@@ -18,10 +18,21 @@ export class SocialPermissionError extends Error {
   }
 }
 
+/** The wait a rate limit gets when the platform gives none, or one we can't read. */
+export const DEFAULT_RETRY_AFTER_SEC = 60;
+/** The longest wait we accept: the longest documented one is YouTube's daily quota reset. */
+export const MAX_RETRY_AFTER_SEC = 86_400;
+
 export class SocialRateLimitError extends Error {
-  constructor(readonly retryAfterSec: number) {
+  /** Whole seconds within [0, MAX_RETRY_AFTER_SEC], so no platform can block an account for longer. */
+  readonly retryAfterSec: number;
+
+  constructor(retryAfterSec: number) {
     super("rate_limited");
     this.name = "SocialRateLimitError";
+    this.retryAfterSec = Number.isFinite(retryAfterSec)
+      ? Math.min(Math.max(Math.ceil(retryAfterSec), 0), MAX_RETRY_AFTER_SEC)
+      : DEFAULT_RETRY_AFTER_SEC;
   }
 }
 

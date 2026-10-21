@@ -15,10 +15,10 @@ import {
   presignParts,
 } from "../../src/server/storage/uploads";
 import { resetDb } from "../helpers/db";
+import { captureLogEvents } from "../helpers/logs";
 import {
   assembleOnly,
   bytesOf,
-  captureLogEvents,
   MiB,
   newCreator,
   newDraft,
@@ -190,9 +190,13 @@ describe("no progress (null)", () => {
     const ready = await newDraft(disk, c);
     await uploadOriginal(c.actor, ready, bytesOf(SMALL));
     const failed = await newDraft(disk, c);
-    await startOriginal(c.actor, failed, SMALL);
+    const { uploadId } = await startOriginal(c.actor, failed, SMALL);
     await startedHoursAgo(failed, 25);
-    await completeUpload(c.actor, { kind: "original", videoId: failed });
+    await completeUpload(c.actor, {
+      kind: "original",
+      videoId: failed,
+      uploadId,
+    });
 
     for (const [status, videoId] of [
       ["none", none],

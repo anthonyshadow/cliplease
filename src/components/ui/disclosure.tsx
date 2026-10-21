@@ -3,7 +3,6 @@
 import { ChevronDown } from "lucide-react";
 import { Collapsible } from "radix-ui";
 import type { ReactNode } from "react";
-import { cn } from "@/lib/utils";
 import { Button } from "./button";
 
 /** Radix Collapsible with a `tertiary sm` trigger and a 16 px ChevronDown, e.g. the Inbox "Details" (04 §9.11). */
@@ -19,18 +18,16 @@ export function Disclosure({
   children: ReactNode;
 }) {
   return (
-    <Collapsible.Root
-      defaultOpen={defaultOpen}
-      className={cn("group", className)}
-    >
+    <Collapsible.Root defaultOpen={defaultOpen} className={className}>
       <Collapsible.Trigger asChild>
         <Button variant="tertiary" size="sm">
           {label}
+          {/* Turned by its own trigger's state, so a closed Disclosure inside an open one keeps its chevron down. */}
           <ChevronDown
             aria-hidden
             size={16}
             strokeWidth={2}
-            className="transition-transform duration-250 ease-out group-data-[state=open]:rotate-180"
+            className="transition-transform duration-250 ease-out [[data-state=open]>&]:rotate-180"
           />
         </Button>
       </Collapsible.Trigger>

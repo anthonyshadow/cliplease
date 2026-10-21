@@ -81,11 +81,15 @@ type Runtime = {
    * of which could otherwise end the upload it opens (STOP_WAIT_MS at most for each).
    */
   cancelled: Promise<unknown> | null;
+  /** The last run was in complete: every part went, so a Try again asks complete first (its answer may be lost). */
+  reachedComplete: boolean;
   /** The cover's owner: the frame being read or the cover being stored. A newer one aborts it and takes its place. */
   cover: AbortController | null;
   /** Covers go one after another, so the last one chosen is the one stored (P10a keeps the last complete). */
   coverChain: Promise<void>;
   lastCover: { blob: Blob; origin: PosterOrigin } | null;
+  /** Images picked so far: one still being encoded when a newer one is picked is dropped. */
+  picks: number;
 };
 
 const EMPTY: UploadsSnapshot = { originals: {}, covers: {} };
@@ -102,9 +106,11 @@ function runtimeOf(videoId: string): Runtime {
       original: null,
       running: null,
       cancelled: null,
+      reachedComplete: false,
       cover: null,
       coverChain: Promise.resolve(),
       lastCover: null,
+      picks: 0,
     };
     runtimes.set(videoId, runtime);
   }
@@ -216,8 +222,8 @@ const PROGRESS_EVERY_MS = 100;
 /**
  * One start's onProgress: its entry's `sent` while that start still owns the entry. The run's first report replaces it
  * (a resume starts from the server's stored bytes); after that the bar never goes back while parts retry. `latest()` is
- * the run's newest report (the entry's bytes before the first), which a pause shows at once: the server's stored bytes
- * once the parts in flight stopped.
+ * the run's newest report (the entry's bytes before the first), which a pause shows at once (the server's stored bytes
+ * once the parts in flight stopped), and so does a repair pass coming back from complete.
  */
 function throttledProgress(videoId: string, owns: () => boolean) {
   let pending: number | null = null;
@@ -283,7 +289,7 @@ function readFile(file: File, poster: boolean) {
  * Starts (or restarts, or resumes) the original's upload and, when `captureCover`, reads a frame for the cover alongside
  * it (07 D19; owner answer Q-41: the File step passes false when the creator chose the current cover). Any upload already
  * running for the video is stopped first. A resume sends only the parts the server lacks of the upload this device
- * started (its hint), from the `sent` bytes.
+ * started (its hint), from the `sent` bytes; with `completeFirst`, it asks complete first.
  */
 export function startOriginalUpload(i: {
   videoId: string;
@@ -292,6 +298,7 @@ export function startOriginalUpload(i: {
   contentType: OriginalMime;
   captureCover: boolean;
   resume?: { uploadId: string | null; sent: number };
+  completeFirst?: boolean;
 }) {
   watchBrowser();
   const runtime = runtimeOf(i.videoId);
@@ -299,12 +306,13 @@ export function startOriginalUpload(i: {
   const controller = new AbortController();
   runtime.original = controller;
   runtime.last = { title: i.title, file: i.file, contentType: i.contentType };
+  runtime.reachedComplete = false;
   setOriginal(i.videoId, {
     videoId: i.videoId,
     title: i.title,
     fileName: i.file.name,
     size: i.file.size,
-    phase: "uploading",
+    phase: i.completeFirst ? "checking" : "uploading",
     pausedBy: null,
     uploadId: i.resume?.uploadId ?? null,
     sent: Math.min(i.resume?.sent ?? 0, i.file.size),
@@ -373,6 +381,7 @@ export function startOriginalUpload(i: {
       meta: hints,
       resume: i.resume ? true : undefined,
       expectedUploadId: i.resume?.uploadId ?? undefined,
+      completeFirst: i.completeFirst,
       signal: controller.signal,
       onProgress: progress.report,
       onStarted: (uploadId) => {
@@ -381,6 +390,7 @@ export function startOriginalUpload(i: {
       },
       onStatus: (status) => {
         if (!owns()) return;
+        runtime.reachedComplete = status === "checking";
         if (status === "checking") {
           patchOriginal(i.videoId, { phase: "checking", sent: i.file.size });
         } else if (status === "paused") {
@@ -390,12 +400,14 @@ export function startOriginalUpload(i: {
             sent: progress.latest(),
           });
         } else {
-          // Going again after a pause shows on the card again, even after its ×.
+          // Going again after a pause shows on the card again, even after its ×. A repair pass after complete shows
+          // the bytes the server holds, not a full bar.
           const was = snapshot.originals[i.videoId]?.phase;
           patchOriginal(i.videoId, {
             phase: status,
             pausedBy: null,
             ...(was === "paused" ? { seen: false } : {}),
+            ...(was === "checking" ? { sent: progress.latest() } : {}),
           });
         }
       },
@@ -475,7 +487,7 @@ export function cancelOriginalUpload(
   // went out; unnamed only when this tab's start never answered; the page's paused upload only when this tab has none of
   // its own. An abort that didn't reach the server leaves the upload to the next start or its 24 hours.
   const named = (
-    running ? within(running, STOP_WAIT_MS) : Promise.resolve(null)
+    running ? within(running, STOP_WAIT_MS, null) : Promise.resolve(null)
   ).then((opened) =>
     opened === undefined
       ? undefined
@@ -485,7 +497,7 @@ export function cancelOriginalUpload(
     id === undefined ? true : abortOriginalUpload(videoId, id),
   );
   const settled = named.then((id) =>
-    id === null ? within(aborted, STOP_WAIT_MS) : undefined,
+    id === null ? within(aborted, STOP_WAIT_MS, null) : undefined,
   );
   runtime.cancelled = settled;
   void settled.then(() => {
@@ -494,23 +506,25 @@ export function cancelOriginalUpload(
   return aborted;
 }
 
-// The failures after which the server may still hold the upload's parts: Try again resumes it.
+// The failures after which the server may still hold the upload's parts: Try again resumes it. A sign-out goes through
+// sign in, a full page load: the hint resumes it after.
 const RESUMES_ON_RETRY: readonly (UploadErrorCode | null)[] = [
   "network",
   "internal",
-  "unauthorized",
 ];
 
 /**
  * Try again with the file already chosen, if the tab still holds it: a resume of the open upload when the failure left
- * it on the server (a gone upload then answers upload_expired), else from zero. A cover already stored came from that
- * file.
+ * it on the server (a gone upload then answers upload_expired), else from zero. A failure while complete ran asks
+ * complete again first: the upload may be assembled already, and starting again would replace it. A cover already
+ * stored came from that file.
  */
 export function retryOriginalUpload(
   videoId: string,
   captureCover: boolean,
 ): boolean {
-  const { last } = runtimeOf(videoId);
+  const runtime = runtimeOf(videoId);
+  const { last } = runtime;
   if (!last) return false;
   const entry = snapshot.originals[videoId];
   const resumes =
@@ -524,6 +538,7 @@ export function retryOriginalUpload(
     resume: resumes
       ? { uploadId: entry.uploadId, sent: entry.sent }
       : undefined,
+    completeFirst: resumes && runtime.reachedComplete,
   });
   return true;
 }
@@ -575,7 +590,12 @@ function uploadCover(videoId: string, blob: Blob, origin: PosterOrigin) {
  * that can't be used only adds its error line: the cover already stored or on its way stays as it is.
  */
 export async function pickCover(videoId: string, file: File) {
+  const runtime = runtimeOf(videoId);
+  runtime.picks += 1;
+  const pick = runtime.picks;
   const encoded = await encodeImageToJpeg(file);
+  // A newer pick decides, its error line included.
+  if (runtime.picks !== pick) return;
   if (!encoded.ok) {
     const current = snapshot.covers[videoId];
     setCover(
@@ -615,5 +635,17 @@ export function useUploads(): UploadsSnapshot {
     subscribe,
     () => snapshot,
     () => EMPTY,
+  );
+}
+
+const subscribeOnline = (listener: () => void) =>
+  browserNetwork.onChange(() => listener());
+
+/** Whether the browser is online, following its online and offline events; online on the server. */
+export function useBrowserOnline(): boolean {
+  return useSyncExternalStore(
+    subscribeOnline,
+    browserNetwork.isOnline,
+    () => true,
   );
 }

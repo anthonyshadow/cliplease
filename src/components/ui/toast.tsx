@@ -52,14 +52,15 @@ export function toast(message: string, options?: { action?: ToastAction }) {
 }
 
 /**
- * Shows `message` once when it mounts: for a page the server renders after an outcome (a return from payout setup, a
- * connect). The guard keeps Strict Mode's second effect run from showing it twice.
+ * Shows `message` once when it mounts, and once for each new `message` after that: for a page the server renders after
+ * an outcome (a return from payout setup, a connect). The guard keeps Strict Mode's second effect run from showing it
+ * twice.
  */
 export function ToastOnMount({ message }: { message: string }) {
-  const shown = useRef(false);
+  const shown = useRef<string | null>(null);
   useEffect(() => {
-    if (shown.current) return;
-    shown.current = true;
+    if (shown.current === message) return;
+    shown.current = message;
     toast(message);
   }, [message]);
   return null;

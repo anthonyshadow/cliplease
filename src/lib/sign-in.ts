@@ -4,10 +4,14 @@ import { DAY_MS } from "./time";
 
 const DEFAULT_NEXT = "/dashboard";
 
+/** The page (path and query) of a request src/proxy.ts lets through: requireUser's default `next`. */
+export const PAGE_PATH_HEADER = "x-page-path";
+
 /**
  * `next` when it is a same-site relative path, else /dashboard. The raw string is returned, never a normalized one
  * (normalizing turns `/..//evil.com` into `//evil.com`): printable ASCII only, a single leading slash, no backslash
- * anywhere, no dot segments, and never back to /sign-in.
+ * anywhere, no dot segments, never back to /sign-in, and never an API route (also percent-encoded): sign-in lands on
+ * pages only, since a route's GET can start work (/api/stripe/onboarding creates a payout account).
  */
 export function safeNextPath(next: string | null | undefined): string {
   if (typeof next !== "string" || next === "") return DEFAULT_NEXT;
@@ -18,6 +22,7 @@ export function safeNextPath(next: string | null | undefined): string {
   const path = next.split(/[?#]/, 1)[0];
   if (/(^|\/)(\.|%2e){1,2}(\/|$)/i.test(path)) return DEFAULT_NEXT;
   if (/^\/sign-in(?:[/?#]|$)/i.test(next)) return DEFAULT_NEXT;
+  if (/^\/(a|%61)(p|%70)(i|%69)(\/|%2f|$)/i.test(path)) return DEFAULT_NEXT;
   return next;
 }
 

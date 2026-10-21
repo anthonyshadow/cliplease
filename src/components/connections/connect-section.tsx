@@ -78,10 +78,7 @@ export function ConnectSection(
     state: cardState(a),
     syncProblem: a.syncProblem,
     syncText: syncLine(a, now),
-    capNote:
-      a.hasOlder && a.postCount >= SOCIAL_SYNC_MAX_POSTS
-        ? capNote(SOCIAL_SYNC_MAX_POSTS)
-        : null,
+    capNote: a.hasOlder ? capNote(a.postCount, SOCIAL_SYNC_MAX_POSTS) : null,
     reconnectHref: connectStartHref(a.platform, returnTo),
     liveVideoCount: a.liveVideoCount ?? 0,
     focusAfterRemove: CONNECTIONS_TITLE_ID,

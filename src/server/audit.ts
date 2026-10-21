@@ -37,20 +37,16 @@ export function auditActorType(actor: Actor): {
   }
 }
 
-/**
- * Inserts one audit_event. `action` must look like scope.action (checked before the insert). `data` is redacted, so
- * tokens, secrets and emails never reach it.
- */
-export async function writeAudit(
-  exec: AuditExecutor,
-  actor: Actor,
-  entry: {
-    action: string;
-    entityType: string;
-    entityId: string;
-    data?: Record<string, unknown>;
-  },
-): Promise<void> {
+/** One audit entry: what happened to which entity, with optional data (redacted on the way in). */
+export type AuditEntry = {
+  action: string;
+  entityType: string;
+  entityId: string;
+  data?: Record<string, unknown>;
+};
+
+/** The audit_event row for `entry`, after the scope.action check and the redaction. */
+function auditRow(actor: Actor, entry: AuditEntry) {
   if (!SCOPED_NAME.test(entry.action)) {
     throw new Error(
       `audit action "${entry.action}" must look like scope.action`,
@@ -62,12 +58,35 @@ export async function writeAudit(
     { ...entry.data, ...(source ? { source } : {}) },
     { keepKeys: ["code"] },
   );
-  await exec.insert(auditEvent).values({
+  return {
     actorType,
     actorUserId,
     action: entry.action,
     entityType: entry.entityType,
     entityId: entry.entityId,
     data: data as Record<string, unknown>,
-  });
+  };
+}
+
+/**
+ * Inserts one audit_event. `action` must look like scope.action (checked before the insert). `data` is redacted, so
+ * tokens, secrets and emails never reach it.
+ */
+export async function writeAudit(
+  exec: AuditExecutor,
+  actor: Actor,
+  entry: AuditEntry,
+): Promise<void> {
+  await exec.insert(auditEvent).values(auditRow(actor, entry));
+}
+
+/** writeAudit for many entries by one actor, in one INSERT (none for an empty list); every action is checked first. */
+export async function writeAudits(
+  exec: AuditExecutor,
+  actor: Actor,
+  entries: readonly AuditEntry[],
+): Promise<void> {
+  const rows = entries.map((entry) => auditRow(actor, entry));
+  if (rows.length === 0) return;
+  await exec.insert(auditEvent).values(rows);
 }

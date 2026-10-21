@@ -26,6 +26,7 @@ import {
   syncSocialAccount,
 } from "../../../src/server/social/sync";
 import { storeTokens } from "../../../src/server/social/tokens";
+import { redirectTo } from "../../helpers/actions";
 import { mockNextHeaders, signedInCreator } from "../../helpers/auth";
 import {
   accountRow,
@@ -46,6 +47,7 @@ import {
   insertUploadVideo,
   insertVideoPosting,
 } from "../../helpers/factories";
+import { captureLogEvents } from "../../helpers/logs";
 
 // The sync engine under every mock scenario (02 §7.5, 03 §7.2, 07 D02, D13, D68, D72), against the test database. Each
 // case has its own creator and Demo account, with mock tokens sealed as the callback seals them.
@@ -56,6 +58,7 @@ afterAll(resetDb);
 beforeEach(() => mockNextHeaders(null));
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.useRealTimers();
   setMockScenarioForTests(null);
 });
 
@@ -138,6 +141,56 @@ describe("default", () => {
     await disconnectWhere(eq(socialAccount.id, d.account.id));
     expect(await sync(d)).toEqual({ ok: false, reason: "not_found" });
     expect(profile).not.toHaveBeenCalled();
+  });
+
+  it("stores platform text without NUL bytes, and leaves out a post whose id holds one", async () => {
+    const d = await demoAccount();
+    const realProfile = mockProvider.getProfile.bind(mockProvider);
+    vi.spyOn(mockProvider, "getProfile").mockImplementation(async (token) => ({
+      ...(await realProfile(token)),
+      username: "demo\u0000creator",
+      avatarUrl: "mock://avatar/\u000001",
+    }));
+    const realList = mockProvider.listPosts.bind(mockProvider);
+    vi.spyOn(mockProvider, "listPosts").mockImplementation(async (t, i) => {
+      const page = await realList(t, i);
+      return {
+        ...page,
+        posts: page.posts.map((post) => {
+          if (post.externalId.endsWith("_01")) {
+            return {
+              ...post,
+              title: "Bay\u0000",
+              caption: "Morning\u0000 light",
+            };
+          }
+          if (post.externalId.endsWith("_02")) {
+            return { ...post, externalId: `${post.externalId}\u0000` };
+          }
+          return post;
+        }),
+      };
+    });
+    const logs = captureLogEvents("social.post_skipped");
+    const result = await sync(d);
+    const { events } = logs();
+    expect(result).toMatchObject({ ok: true, kept: 24, upserted: 23 });
+    expect(events).toEqual([
+      expect.objectContaining({
+        level: "warn",
+        socialAccountId: d.account.id,
+        count: 1,
+      }),
+    ]);
+    expect(await accountRow(d.account.id)).toMatchObject({
+      username: "democreator",
+      avatarUrl: null,
+    });
+    expect(await postNumber(d.account.id, "01")).toMatchObject({
+      title: "Bay",
+      caption: "Morning light",
+    });
+    expect(await postsOf(d.account.id)).toHaveLength(23);
   });
 
   it("lets the system actor sync any account", async () => {
@@ -249,15 +302,19 @@ describe("maxPosts and older runs (07 D13)", () => {
     expect(endless).toHaveBeenCalledTimes(1);
   });
 
-  it("an older run that reaches the end leaves the newer posts it never listed", async () => {
+  it("an older run never sweeps: the newer posts it never listed stay, even one the platform removed", async () => {
     const d = await demoAccount();
     await sync(d, { maxPosts: 12 });
+    setMockScenarioForTests("post_removed");
     expect(await sync(d, { mode: "older", maxPosts: 50 })).toMatchObject({
       ok: true,
       removed: 0,
       hasOlder: false,
     });
     expect(await postsOf(d.account.id)).toHaveLength(24);
+    expect(await postNumber(d.account.id, "05")).toMatchObject({
+      status: "available",
+    });
 
     // Nothing older is left: the run lists nothing and still deletes nothing.
     expect(await sync(d, { mode: "older" })).toMatchObject({
@@ -517,6 +574,23 @@ describe("single-flight lease (03 §7.2)", () => {
     expect((await accountRow(d.account.id)).syncStartedAt).toBeNull();
   });
 
+  it("reads a block by the database's clock: an app clock running ahead still gets rate_limited", async () => {
+    const d = await demoAccount();
+    await db
+      .update(socialAccount)
+      .set({ syncBlockedUntil: sql`now() + interval '30 seconds'` })
+      .where(eq(socialAccount.id, d.account.id));
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.now() + MINUTE_MS);
+    const profile = vi.spyOn(mockProvider, "getProfile");
+    const result = await sync(d);
+    expect(result).toMatchObject({ ok: false, reason: "rate_limited" });
+    expect(result.ok === false && result.retryAfterSec).toBeGreaterThan(20);
+    expect(result.ok === false && result.retryAfterSec).toBeLessThanOrEqual(30);
+    expect(profile).not.toHaveBeenCalled();
+    expect((await accountRow(d.account.id)).syncStartedAt).toBeNull();
+  });
+
   it("takes over a lease older than 2 minutes, never a newer one", async () => {
     const d = await demoAccount();
     const lease = (age: string) =>
@@ -558,6 +632,29 @@ describe("the callback's first sync (07 D13)", () => {
 });
 
 describe("the sync actions (02 §6.1)", () => {
+  it("sends a signed-out caller to sign in and syncs nothing", async () => {
+    const { syncAccount, syncAllAccounts } = await import(
+      "../../../src/app/(dashboard)/dashboard/_actions/social"
+    );
+    const d = await demoAccount();
+    const profile = vi.spyOn(mockProvider, "getProfile");
+    mockNextHeaders(null);
+    await expect(
+      syncAccount({ socialAccountId: d.account.id }),
+    ).rejects.toMatchObject(
+      redirectTo("/sign-in?next=%2Fdashboard%2Fconnections"),
+    );
+    await expect(syncAllAccounts()).rejects.toMatchObject(
+      redirectTo("/sign-in?next=%2Fdashboard%2Flibrary"),
+    );
+    expect(profile).not.toHaveBeenCalled();
+    expect(await accountRow(d.account.id)).toMatchObject({
+      lastSyncedAt: null,
+      syncStartedAt: null,
+    });
+    expect(await postsOf(d.account.id)).toEqual([]);
+  });
+
   it("syncAccount syncs the creator's account and refreshes the page", async () => {
     const { syncAccount } = await import(
       "../../../src/app/(dashboard)/dashboard/_actions/social"

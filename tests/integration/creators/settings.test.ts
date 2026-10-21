@@ -7,6 +7,7 @@ import {
 } from "../../../src/app/(dashboard)/dashboard/settings/actions";
 import { db } from "../../../src/db/client";
 import { auditEvent, creatorProfile, user } from "../../../src/db/schema";
+import { GENERIC_ERROR_MESSAGE } from "../../../src/lib/result";
 import { DISPLAY_NAME_COPY } from "../../../src/lib/validation/display-name";
 import { requireUser } from "../../../src/server/auth/session";
 import {
@@ -117,7 +118,32 @@ describe("Settings actions", () => {
     expect(revalidatePath).toHaveBeenCalledWith("/dashboard", "layout");
   });
 
-  it("Update from this device stores the browser's zone and refuses one over 64 characters (02 §6.1)", async () => {
+  it("Save tidies the name like a title, so hidden characters never reach the database (owner answer Q-43 a)", async () => {
+    const { owner, creatorId } = await signedInCreator();
+
+    expect(
+      await saveDisplayName(
+        null,
+        formOf({ displayName: "\u202eMaya\u0000 R.\u200b\nFilms" }),
+      ),
+    ).toEqual({ ok: true, data: undefined });
+    expect((await profile(creatorId)).displayName).toBe("Maya R. Films");
+    const [row] = await db.select().from(user).where(eq(user.id, owner.id));
+    expect(row.name).toBe("Maya R. Films");
+
+    expect(
+      await saveDisplayName(null, formOf({ displayName: "\u200b\u2066 " })),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        message: DISPLAY_NAME_COPY.empty,
+        fields: { displayName: [DISPLAY_NAME_COPY.empty] },
+      },
+    });
+    expect((await profile(creatorId)).displayName).toBe("Maya R. Films");
+  });
+
+  it("Update from this device stores the browser's zone, and one over 64 characters as UTC (07 D84)", async () => {
     const { creatorId } = await signedInCreator();
 
     expect(
@@ -126,17 +152,37 @@ describe("Settings actions", () => {
     expect((await profile(creatorId)).timeZone).toBe("Europe/Paris");
     expect(revalidatePath).toHaveBeenCalledWith("/dashboard/settings");
 
-    await expect(
-      updateTimeZoneFromDevice({ timeZone: "A".repeat(65) }),
-    ).rejects.toThrow();
-    expect((await profile(creatorId)).timeZone).toBe("Europe/Paris");
-    expect(await updates(creatorId)).toEqual([{ fields: ["timeZone"] }]);
+    expect(
+      await updateTimeZoneFromDevice({ timeZone: "A".repeat(65) }),
+    ).toEqual({ ok: true, data: undefined });
+    expect((await profile(creatorId)).timeZone).toBe("UTC");
+    expect(await updates(creatorId)).toEqual([
+      { fields: ["timeZone"] },
+      { fields: ["timeZone"] },
+    ]);
+  });
+
+  it("Update from this device refuses a zone that isn't a string without throwing or writing", async () => {
+    const { creatorId } = await signedInCreator();
+
+    expect(
+      await updateTimeZoneFromDevice({ timeZone: 42 as unknown as string }),
+    ).toEqual({
+      ok: false,
+      error: { code: "invalid_input", message: GENERIC_ERROR_MESSAGE },
+    });
+    expect((await profile(creatorId)).timeZone).toBe("America/Toronto");
+    expect(await updates(creatorId)).toEqual([]);
+    expect(revalidatePath).not.toHaveBeenCalled();
   });
 
   it("sends a signed-out caller to sign-in before any write", async () => {
     const toSignIn = redirectTo("/sign-in?next=%2Fdashboard%2Fsettings");
     await expect(
       updateTimeZoneFromDevice({ timeZone: "Europe/Paris" }),
+    ).rejects.toMatchObject(toSignIn);
+    await expect(
+      updateTimeZoneFromDevice({ timeZone: 42 as unknown as string }),
     ).rejects.toMatchObject(toSignIn);
     await expect(
       saveDisplayName(null, formOf({ displayName: "Maya" })),

@@ -11,9 +11,12 @@ export const originalKey = (
   ext: "mp4" | "mov",
 ) => `originals/${creatorId}/${videoId}/${randomUUID()}.${ext}`;
 
+/** `posters/{videoId}/`: the folder every poster of the video goes in (the stray sweep lists it). */
+export const posterPrefix = (videoId: string) => `posters/${videoId}/`;
+
 /** `posters/{videoId}/{uuid}.jpg`. */
 export const posterKey = (videoId: string) =>
-  `posters/${videoId}/${randomUUID()}.jpg`;
+  `${posterPrefix(videoId)}${randomUUID()}.jpg`;
 
 const POSTER_KEY = /^posters\/([0-9a-f-]{36})\/[0-9a-f-]{36}\.jpg$/;
 

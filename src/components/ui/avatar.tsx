@@ -1,22 +1,8 @@
 "use client";
 
 import { Avatar as AvatarPrimitive } from "radix-ui";
+import { initials } from "@/lib/initials";
 import { cn } from "@/lib/utils";
-
-// Splits by what a reader sees as one character, so an emoji, a flag or an accented letter stays whole.
-const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
-
-function initials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  const letters =
-    parts.length > 1 ? [parts[0], parts[parts.length - 1]] : parts;
-  return letters
-    .map((part) => {
-      const [first] = graphemes.segment(part);
-      return first ? first.segment.toUpperCase() : "";
-    })
-    .join("");
-}
 
 /** Round avatar with an initials fallback on `fill`. Size with a `size-*` class (default 40 px). */
 export function Avatar({
@@ -44,7 +30,10 @@ export function Avatar({
         />
       ) : null}
       <AvatarPrimitive.Fallback
-        delayMs={src ? 300 : 0}
+        // Without an image the initials render at once, in the server HTML too; with one they wait 300 ms, so they
+        // don't flash before the photo. Keyed on the image, so one that goes away shows them at once too.
+        key={src ? "image" : "none"}
+        delayMs={src ? 300 : undefined}
         className="flex size-full items-center justify-center text-caption text-ink-2"
       >
         <span aria-hidden>{initials(name)}</span>

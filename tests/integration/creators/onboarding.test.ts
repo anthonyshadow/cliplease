@@ -313,6 +313,24 @@ describe("the profile step's action", () => {
     expect(profile).toMatchObject({ handle, timeZone: "Europe/Paris" });
   });
 
+  it("tidies the display name like a title, so hidden characters never reach the database (owner answer Q-43 a)", async () => {
+    const owner = await signedIn();
+    await expect(
+      completeOnboardingAction(
+        null,
+        formOf({
+          displayName: "Maya\u0000 R.\u202e",
+          handle: uniqueTestHandle(),
+          ageConfirmed: "on",
+          timeZone: "Europe/Paris",
+        }),
+      ),
+    ).rejects.toMatchObject(redirectTo("/onboarding?step=connect"));
+    const [profile] = await profilesOf(owner.id);
+    expect(profile.displayName).toBe("Maya R.");
+    expect((await userAndSessions(owner.id)).row.name).toBe("Maya R.");
+  });
+
   it("answers a reserved or a just-taken handle with its field error, and a second onboarding with /dashboard", async () => {
     const owner = await signedIn();
     const form = (handle: string) =>

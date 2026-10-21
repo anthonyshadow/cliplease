@@ -5,6 +5,7 @@ import {
   readFile,
   rm,
   stat,
+  utimes,
   writeFile,
 } from "node:fs/promises";
 import os from "node:os";
@@ -683,6 +684,62 @@ describe("objects", () => {
     expect(await store.head(POSTER_KEY)).toBeNull();
     await expect(store.delete(POSTER_KEY)).resolves.toBeUndefined();
     await expect(store.delete(KEY)).resolves.toBeUndefined();
+  });
+
+  describe("list", () => {
+    const FOLDER = "posters/22222222-2222-4222-8222-222222222222/";
+    const OTHER_POSTER =
+      "posters/22222222-2222-4222-8222-222222222222/66666666-6666-4666-8666-666666666666.jpg";
+
+    it("lists every object under the folder, sorted, with its mtime; nothing outside it", async () => {
+      await store.putSmall(OTHER_POSTER, bytes(2, 1), "image/jpeg");
+      await store.putSmall(POSTER_KEY, bytes(1, 1), "image/jpeg");
+      await store.putSmall(
+        "posters/88888888-8888-4888-8888-888888888888/99999999-9999-4999-8999-999999999999.jpg",
+        bytes(1, 1),
+        "image/jpeg",
+      );
+      const at = new Date("2026-01-02T03:04:05.000Z");
+      await utimes(path.join(root, POSTER_KEY), at, at);
+
+      const listed = await store.list(FOLDER);
+      expect(listed.map((o) => o.key)).toEqual([POSTER_KEY, OTHER_POSTER]);
+      expect(listed[0]?.lastModified).toEqual(at);
+      expect(listed[1]?.lastModified).toBeInstanceOf(Date);
+    });
+
+    it("lists objects in nested folders by their whole key", async () => {
+      await store.putSmall(KEY, bytes(1, 1), "video/mp4");
+      expect(
+        (
+          await store.list("originals/11111111-1111-4111-8111-111111111111/")
+        ).map((o) => o.key),
+      ).toEqual([KEY]);
+    });
+
+    it("leaves out a write still in its temp file", async () => {
+      await store.putSmall(POSTER_KEY, bytes(1, 1), "image/jpeg");
+      await writeFile(path.join(root, `${OTHER_POSTER}.tmp`), "x");
+      expect((await store.list(FOLDER)).map((o) => o.key)).toEqual([
+        POSTER_KEY,
+      ]);
+    });
+
+    it("is [] for a folder that doesn't exist", async () => {
+      expect(await store.list(FOLDER)).toEqual([]);
+    });
+
+    it.each([
+      "posters/22222222-2222-4222-8222-222222222222",
+      "posters/",
+      "/",
+      "posters/../",
+      "secrets/x/",
+    ])("refuses the prefix %j with StorageKeyError", async (prefix) => {
+      expect(await rejection(store.list(prefix))).toBeInstanceOf(
+        StorageKeyError,
+      );
+    });
   });
 });
 

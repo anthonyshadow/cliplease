@@ -90,6 +90,8 @@ let locks: { release: Mock<() => void> }[];
 let nav: { userAgent: string };
 let doc: { visibilityState: string };
 
+type Encoded = Awaited<ReturnType<typeof encodeImageToJpeg>>;
+
 const frame = new Blob(["frame"], { type: "image/jpeg" });
 const picked = new Blob(["picked"], { type: "image/jpeg" });
 const video = (name = "a.mp4") =>
@@ -307,6 +309,49 @@ describe("the cover (owner answer Q-41 a)", () => {
     expect(cover()).toMatchObject({ phase: "done", origin: "frame_capture" });
   });
 
+  it("stores the last image picked, even when an earlier one finishes encoding after it", async () => {
+    const slow = Promise.withResolvers<Encoded>();
+    const fast = Promise.withResolvers<Encoded>();
+    const first = new Blob(["first"], { type: "image/jpeg" });
+    m.encodeImageToJpeg
+      .mockReturnValueOnce(slow.promise)
+      .mockReturnValueOnce(fast.promise);
+    const picks = [
+      store.pickCover(VIDEO_ID, image()),
+      store.pickCover(VIDEO_ID, image()),
+    ];
+    fast.resolve({ ok: true, blob: picked });
+    slow.resolve({ ok: true, blob: first });
+    await Promise.all(picks);
+    await flush();
+
+    expect(m.uploadFile).toHaveBeenCalledTimes(1);
+    expect(m.uploadFile.mock.calls[0]?.[0].body).toBe(picked);
+    expect(m.uploadFile.mock.calls[0]?.[0].signal?.aborted).toBe(false);
+
+    covers[0]?.resolve({ ok: true });
+    await flush();
+    expect(m.uploadFile).toHaveBeenCalledTimes(1);
+    expect(cover()).toMatchObject({
+      phase: "done",
+      origin: "creator_image",
+      error: null,
+    });
+  });
+
+  it("adds no error line to a newer pick when an earlier image fails late", async () => {
+    const slow = Promise.withResolvers<Encoded>();
+    m.encodeImageToJpeg
+      .mockReturnValueOnce(slow.promise)
+      .mockResolvedValueOnce({ ok: true, blob: picked });
+    const earlier = store.pickCover(VIDEO_ID, image());
+    await store.pickCover(VIDEO_ID, image());
+    slow.resolve({ ok: false, code: "bad_type" });
+    await earlier;
+
+    expect(cover()).toMatchObject({ origin: "creator_image", error: null });
+  });
+
   it("retries the last cover after a failed upload", async () => {
     start(true);
     reads[0]?.resolve(meta(frame));
@@ -360,7 +405,7 @@ describe("the original (owner answer Q-42)", () => {
     expect(cover()).toMatchObject({ phase: "done", origin: "frame_capture" });
   });
 
-  it.each(["network", "internal", "unauthorized"] as const)(
+  it.each(["network", "internal"] as const)(
     "resumes the open upload on Try again after %s, from the bytes sent",
     async (code) => {
       fakeTimeouts();
@@ -384,6 +429,8 @@ describe("the original (owner answer Q-42)", () => {
         resume: true,
         expectedUploadId: "upload-1",
       });
+      // The parts were still going: no complete first.
+      expect(latest().input.completeFirst).toBeFalsy();
       expect(latest().input.file).toBe(file);
       expect(original()).toMatchObject({
         phase: "uploading",
@@ -393,6 +440,58 @@ describe("the original (owner answer Q-42)", () => {
       });
     },
   );
+
+  it.each(["network", "internal"] as const)(
+    "asks complete first on Try again after %s while complete ran: the upload may be assembled already",
+    async (code) => {
+      const file = video();
+      start(false, file);
+      latest().input.onStarted?.("upload-1");
+      latest().input.onStatus?.("checking");
+      latest().answer.resolve({ ok: false, code });
+      await flush();
+      expect(original()).toMatchObject({ phase: "error", error: code });
+
+      expect(store.retryOriginalUpload(VIDEO_ID, false)).toBe(true);
+      expect(latest().input).toMatchObject({
+        resume: true,
+        expectedUploadId: "upload-1",
+        completeFirst: true,
+      });
+      expect(latest().input.file).toBe(file);
+      // Checking, with no Cancel, from the start.
+      expect(original()).toMatchObject({
+        phase: "checking",
+        error: null,
+        uploadId: "upload-1",
+        sent: 100,
+      });
+      await expect(store.cancelOriginalUpload(VIDEO_ID)).resolves.toBe(false);
+
+      for (const read of reads) read.resolve(meta(null));
+      latest().input.onStatus?.("checking");
+      latest().answer.resolve({ ok: true });
+      await flush();
+      expect(original()?.phase).toBe("done");
+    },
+  );
+
+  it("resumes without complete first when a repair pass's parts failed after complete", async () => {
+    start(false);
+    latest().input.onStarted?.("upload-1");
+    latest().input.onStatus?.("checking");
+    latest().input.onStatus?.("uploading");
+    latest().answer.resolve({ ok: false, code: "internal" });
+    await flush();
+
+    expect(store.retryOriginalUpload(VIDEO_ID, false)).toBe(true);
+    expect(latest().input).toMatchObject({
+      resume: true,
+      expectedUploadId: "upload-1",
+    });
+    expect(latest().input.completeFirst).toBeFalsy();
+    expect(original()?.phase).toBe("uploading");
+  });
 
   it.each([
     ["upload_expired", "upload_expired", "upload-1"],
@@ -693,6 +792,27 @@ describe("the original (owner answer Q-42)", () => {
     expect(original()?.sent).toBe(25);
   });
 
+  it("drops the full bar to the stored bytes when a repair pass leaves complete, then climbs from there", () => {
+    fakeTimeouts();
+    start(false);
+    const { onProgress, onStatus } = latest().input;
+    onProgress?.(80, 100);
+    vi.advanceTimersByTime(100);
+    onStatus?.("checking");
+    expect(original()).toMatchObject({ phase: "checking", sent: 100 });
+
+    // The repair pass reports the server's stored bytes, then says it uploads.
+    onProgress?.(40, 100);
+    onStatus?.("uploading");
+    expect(original()).toMatchObject({ phase: "uploading", sent: 40 });
+    vi.advanceTimersByTime(100);
+    expect(original()?.sent).toBe(40);
+
+    onProgress?.(60, 100);
+    vi.advanceTimersByTime(100);
+    expect(original()?.sent).toBe(60);
+  });
+
   it("replaces a resume's starting bytes with its first report, even below them", () => {
     fakeTimeouts();
     start(false, video(), VIDEO_ID, { uploadId: "upload-1", sent: 80 });
@@ -833,6 +953,26 @@ describe("retrying and paused (07 D80, owner answers Q-45, Q-46, Q-47)", () => {
     expect(original()?.phase).toBe("uploading");
   });
 
+  it("stays paused when the back-online resume's start gets no answer, and tries again at the next online", async () => {
+    start(false);
+    latest().input.onStarted?.("upload-1");
+    latest().answer.resolve({ ok: false, code: "paused" });
+    await flush();
+
+    network.set(true);
+    expect(m.uploadOriginal).toHaveBeenCalledTimes(2);
+    latest().answer.resolve({ ok: false, code: "paused" });
+    await flush();
+    expect(original()).toMatchObject({ phase: "paused", pausedBy: "retries" });
+
+    network.set(true);
+    expect(m.uploadOriginal).toHaveBeenCalledTimes(3);
+    expect(latest().input).toMatchObject({
+      resume: true,
+      expectedUploadId: "upload-1",
+    });
+  });
+
   it("leaves an offline pause to the running call when the browser is back", () => {
     start(false);
     network.set(false);
@@ -885,6 +1025,16 @@ describe("retrying and paused (07 D80, owner answers Q-45, Q-46, Q-47)", () => {
 
     await store.cancelOriginalUpload(VIDEO_ID);
     expect(announced()).toEqual([]);
+  });
+});
+
+describe("useBrowserOnline", () => {
+  it("follows the browser's connection", () => {
+    expect(store.useBrowserOnline()).toBe(true);
+    network.set(false);
+    expect(store.useBrowserOnline()).toBe(false);
+    network.set(true);
+    expect(store.useBrowserOnline()).toBe(true);
   });
 });
 

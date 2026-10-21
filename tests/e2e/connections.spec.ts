@@ -110,6 +110,48 @@ test("J2: connect Demo, see its card, sync it, and disconnect it from the menu",
   expect(errors).toEqual([]);
 });
 
+test("J2: a Disconnect that can't reach the server says so in the sheet, the page stays, and a retry disconnects", async ({
+  page,
+}) => {
+  // The cut-off action is the one failure the browser may log.
+  const errors = collectConsoleErrors(page, [{ abortedUnder: CONNECTIONS }]);
+  await signUpCreator(page);
+  await page.goto(CONNECTIONS);
+  await linkDemoAccount(page, CONNECTIONS);
+  // Cut off the first Server Action this page sends: the Disconnect.
+  let cut = false;
+  await page.route(
+    (url) => url.pathname === CONNECTIONS,
+    async (route) => {
+      if (!cut && isServerAction(route.request())) {
+        cut = true;
+        await route.abort("failed");
+        return;
+      }
+      await route.fallback();
+    },
+  );
+  const sheet = await openDisconnectSheet(page, "@demo.creator");
+  await pressButton(page, "Disconnect");
+  // A refusal in the sheet, not the error page: the sheet, the card and the title are all still here (behind the
+  // modal sheet they are hidden from the accessibility tree, so they are found by tag).
+  await expect(sheet.getByRole("alert")).toHaveText(
+    "Something went wrong. Try again.",
+  );
+  await expect(sheet).toBeVisible();
+  await expect(page.locator("main article")).toHaveCount(1);
+  await expect(page.locator("main h1")).toHaveText(/^Connections\./);
+  expect(cut).toBe(true);
+  await page.unrouteAll({ behavior: "wait" });
+
+  await pressAndSettle(page, "Disconnect");
+  await expect(
+    page.getByText("Disconnected @demo.creator.", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("article")).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
 test("J2.12: a second tap while a sync runs only says it is already syncing", async ({
   page,
 }) => {

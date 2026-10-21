@@ -34,6 +34,9 @@ export const auth = betterAuth({
       },
     },
   },
+  // Only updateProfile writes user.name, in step with the display name (02 §5.2); Better Auth's own /update-user would
+  // take any name or image unchecked, and the app never calls it.
+  disabledPaths: ["/update-user"],
   // Better Auth's defaults, stated (owner answer, P04): 7 days, extended at most once a day while used (SessionRefresh).
   // No cookie cache, so a role change applies on the next request (02 §5.1).
   session: {
@@ -46,9 +49,16 @@ export const auth = betterAuth({
     storage: "database",
     customRules: signInRateLimits(env.APP_ENV),
   },
+  // The limiter's client IP. Vercel replaces x-forwarded-for with the one client address, which Better Auth 1.7.7
+  // trusts; behind a proxy that appends to it (a CDN, a tunnel) set trustedProxies, or every visitor shares one
+  // bucket per path (research/stripe-renewals.md §5.3 item 3).
+  advanced: { ipAddress: { ipAddressHeaders: ["x-forwarded-for"] } },
   databaseHooks: {
     user: {
       create: {
+        // A first sign-in's body can carry a name and an image; neither is kept: user.name stays "" until onboarding
+        // sets the display name (P05), and the app shows no user image.
+        before: async () => ({ data: { name: "", image: null } }),
         // Both ADMIN_EMAILS addresses become admins on their first sign-in (07 D88); env.ts lowercases the list. A
         // failure is not caught: the sign-in fails loudly, and `bun run db:seed` promotes users who already exist.
         after: async (created) => {

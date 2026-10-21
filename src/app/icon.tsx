@@ -14,10 +14,10 @@ export default function Icon() {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        borderRadius: 8,
+        borderRadius: 8, // design-ok: ImageResponse can't read CSS variables
         background: "#111111", // design-ok: ImageResponse can't read CSS variables
         color: "#FFFFFF", // design-ok: ImageResponse can't read CSS variables
-        fontSize: 22,
+        fontSize: 22, // design-ok: ImageResponse can't read CSS variables
       }}
     >
       {APP_NAME.charAt(0)}

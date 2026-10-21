@@ -1,6 +1,7 @@
 // The payments seam (02 §5.8, 07 §8.2): one driver per currency, so e2e runs the whole flow without Stripe (ADR-21).
 // P05 declares what Phase A uses; the renewal methods, SavedCard, the renewal checkout fields and the
 // payment_method.automatically_updated event arrive with P22c and P22e, CREATOR_FIXABLE_TRANSFER_CODES with P24.
+import "server-only";
 import type { Currency, PayoutsStatus } from "@/lib/domain/values";
 
 export type PiStatus =

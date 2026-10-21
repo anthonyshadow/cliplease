@@ -2,7 +2,7 @@
 
 import { Ellipsis, TriangleAlert } from "lucide-react";
 import Link from "next/link";
-import { type ReactNode, useRef, useState, useTransition } from "react";
+import { type ReactNode, useRef, useState } from "react";
 import { disconnectAccount } from "@/app/(dashboard)/dashboard/_actions/social";
 import { SyncButton } from "@/components/library/sync-button";
 import { SyncStatus } from "@/components/library/sync-status";
@@ -13,6 +13,7 @@ import { ConfirmSheet } from "@/components/ui/confirm-sheet";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "@/components/ui/menu";
 import { StatusPill } from "@/components/ui/status-pill";
 import { toast } from "@/components/ui/toast";
+import { usePendingAction } from "@/components/ui/use-pending-action";
 import { PLATFORM_LABELS } from "@/lib/brand";
 import type { SocialProviderId } from "@/lib/domain/values";
 import { ConnectLink } from "./connect-link";
@@ -193,23 +194,26 @@ function ActionRow({
 }) {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
+  const [pending, run] = usePendingAction();
   const menuTrigger = useRef<HTMLButtonElement>(null);
   const opening = useRef(false);
   const disconnected = useRef(false);
 
-  const disconnect = () =>
-    startTransition(async () => {
-      setError(null);
-      const result = await disconnectAccount({ socialAccountId: account.id });
-      if (!result.ok) {
-        setError(result.error.message);
-        return;
-      }
-      disconnected.current = true;
-      toast(disconnectedToast(account.name));
-      setSheetOpen(false);
-    });
+  const disconnect = async () => {
+    setError(null);
+    const result = await run(() =>
+      disconnectAccount({ socialAccountId: account.id }),
+    );
+    // Null: Next is on its way to sign-in.
+    if (result === null) return;
+    if (!result.ok) {
+      setError(result.error.message);
+      return;
+    }
+    disconnected.current = true;
+    toast(disconnectedToast(account.name));
+    setSheetOpen(false);
+  };
 
   const sentence = liveVideosSentence(account.liveVideoCount, account.name);
   const instagram = account.platform === "instagram";
@@ -263,7 +267,7 @@ function ActionRow({
         confirmLoadingLabel="Disconnecting…"
         onConfirm={(event) => {
           event.preventDefault();
-          disconnect();
+          void disconnect();
         }}
         cancelLabel="Keep connected"
         onCloseAutoFocus={(event) => {

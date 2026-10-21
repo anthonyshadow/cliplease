@@ -12,6 +12,7 @@ const testEnv: Parameters<typeof createPaymentsRegistry>[0] = {
   APP_ENV: "test",
   PAYMENTS_DRIVER: "fake",
   ENABLED_CURRENCIES: ["cad"],
+  APP_URL: "http://fake.test",
 };
 
 describe("paymentsDriver registry (07 D95)", () => {
@@ -65,8 +66,9 @@ describe("the fake driver (07 D35)", () => {
         displayName: "Maya R.",
       }),
     ).resolves.toBe("acct_fake_c1");
-    await expect(fake.createOnboardingLink("acct_fake_c1")).resolves.toMatch(
-      /\/dashboard\/settings\?payouts=returned$/,
+    // The injected APP_URL, not the process env's.
+    await expect(fake.createOnboardingLink("acct_fake_c1")).resolves.toBe(
+      "http://fake.test/dashboard/settings?payouts=returned",
     );
     await expect(fake.fetchPayoutsStatus("acct_fake_c1")).resolves.toEqual({
       status: "active",

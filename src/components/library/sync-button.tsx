@@ -1,14 +1,14 @@
 "use client";
 
 import { RefreshCw } from "lucide-react";
-import { useId, useLayoutEffect, useRef, useState } from "react";
+import { useId, useLayoutEffect, useRef } from "react";
 import {
   syncAccount,
   syncAllAccounts,
 } from "@/app/(dashboard)/dashboard/_actions/social";
 import { Button } from "@/components/ui/button";
-import { runAction } from "@/components/ui/run-action";
 import { toast } from "@/components/ui/toast";
+import { usePendingAction } from "@/components/ui/use-pending-action";
 import type { ActionResult } from "@/lib/result";
 import { type AccountSyncOutcome, ALREADY_SYNCING } from "./library-messages";
 import { useLibrarySync } from "./library-sync";
@@ -63,7 +63,7 @@ export function SyncButton({
   onSettled?: (outcomes: AccountSyncOutcome[] | null) => void;
 }) {
   const library = useLibrarySync();
-  const [pending, setPending] = useState(false);
+  const [pending, run] = usePendingAction();
   const helperId = useId();
   const wrapper = useRef<HTMLDivElement>(null);
   const fallback = useRef(focusAfterRemove);
@@ -79,11 +79,9 @@ export function SyncButton({
     };
   }, []);
 
-  // The Button ignores taps while it is loading, and React renders the first tap's state before the next one.
   const sync = async () => {
-    setPending(true);
     library?.start();
-    const result = await runAction(() => runSync(target));
+    const result = await run(() => runSync(target));
     const outcomes = result?.ok ? result.data : null;
     if (result && !result.ok) toast(result.error.message);
     else if (
@@ -93,7 +91,6 @@ export function SyncButton({
     ) {
       toast(ALREADY_SYNCING);
     }
-    setPending(false);
     library?.settle(outcomes, target.all === true);
     onSettled?.(outcomes);
   };

@@ -1,6 +1,5 @@
 import "server-only";
 import type { Currency } from "@/lib/domain/values";
-import { env } from "@/server/env";
 import type { PaymentsDriver } from "./driver";
 
 const notYet = (method: string, prompt: string) => async (): Promise<never> => {
@@ -10,12 +9,15 @@ const notYet = (method: string, prompt: string) => async (): Promise<never> => {
 /**
  * The stateless fake (07 D35, D95) for development and test, in either currency. Payouts: the account id is derived from
  * the creator id, setup returns straight to Settings and payouts are always on. Checkout and money movements arrive with
- * P16 (checkout and authorizations), P19b (transfers) and P21b (refunds and reversals).
+ * P16 (checkout and authorizations), P19b (transfers) and P21b (refunds and reversals). `appUrl` is the app's origin,
+ * as the Stripe driver takes it.
  */
 export function createFakeDriver({
   currency,
+  appUrl,
 }: {
   currency: Currency;
+  appUrl: string;
 }): PaymentsDriver {
   return {
     name: "fake",
@@ -27,7 +29,7 @@ export function createFakeDriver({
       return { ok: true };
     },
     async createOnboardingLink() {
-      return `${env.APP_URL}/dashboard/settings?payouts=returned`;
+      return `${appUrl}/dashboard/settings?payouts=returned`;
     },
     async fetchPayoutsStatus() {
       return { status: "active", payoutsActive: true, needsInfo: false };

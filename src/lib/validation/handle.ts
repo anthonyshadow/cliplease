@@ -10,7 +10,11 @@ export const SLUG_MAX_LENGTH = 60;
 const HANDLE_MIN = 3;
 const HANDLE_MAX = 30;
 
-/** 01 J1's list plus the product name (07 D20, D100): one set for onboarding and the server. */
+/**
+ * 01 J1's list word for word plus APP_NAME lowercased (07 D20, D100): one set for onboarding and the server. Entries the
+ * length or character rules refuse first ("sign-in", "sign-up", "r", "l", "u") stay so the set matches the spec; the
+ * listed "cliplease" is also today's APP_NAME, and stays reserved after a rename.
+ */
 export const RESERVED_HANDLES: ReadonlySet<string> = new Set([
   "admin",
   "api",

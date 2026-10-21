@@ -1,9 +1,14 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { db, pool } from "../../../src/db/client";
 import { socialAccount } from "../../../src/db/schema";
 import { DAY_MS, MINUTE_MS } from "../../../src/lib/time";
 import { decryptSecret } from "../../../src/server/crypto/token-cipher";
+import {
+  SocialAuthError,
+  SocialUpstreamError,
+} from "../../../src/server/social/errors";
+import { linkAccount } from "../../../src/server/social/link";
 import {
   mockProvider,
   mockTokensFor,
@@ -12,9 +17,14 @@ import {
 import {
   accessTokenAad,
   getFreshAccessToken,
+  markNeedsReconnect,
   refreshTokenAad,
 } from "../../../src/server/social/tokens";
-import { accountRow, insertDemoAccount } from "../../helpers/connect-flow";
+import {
+  accountRow,
+  auditsOf,
+  insertDemoAccount,
+} from "../../helpers/connect-flow";
 import { resetDb } from "../../helpers/db";
 import { insertCreator } from "../../helpers/factories";
 
@@ -33,8 +43,16 @@ async function expiredDemoAccount() {
   const creator = await insertCreator();
   const expired = { accessTokenExpiresAt: new Date(Date.now() - MINUTE_MS) };
   const { id } = await insertDemoAccount(creator, expired);
-  return { id, old: mockTokensFor(creator.userId, "t1", expired) };
+  return { id, creator, old: mockTokensFor(creator.userId, "t1", expired) };
 }
+
+/** The refresh's 10 s deadline, already passed. */
+const deadlinePassed = () =>
+  vi
+    .spyOn(AbortSignal, "timeout")
+    .mockReturnValue(
+      AbortSignal.abort(new DOMException("timed out", "TimeoutError")),
+    );
 
 describe("getFreshAccessToken under rotating_refresh (07 D12)", () => {
   it("10 concurrent calls make one refresh and all get its token", async () => {
@@ -49,9 +67,9 @@ describe("getFreshAccessToken under rotating_refresh (07 D12)", () => {
     const real = mockProvider.refreshToken.bind(mockProvider);
     const refresh = vi
       .spyOn(mockProvider, "refreshToken")
-      .mockImplementation(async (t) => {
+      .mockImplementation(async (t, opts) => {
         await new Promise((resolve) => setTimeout(resolve, 300));
-        return real(t);
+        return real(t, opts);
       });
 
     const tokens = await Promise.all(
@@ -102,5 +120,91 @@ describe("getFreshAccessToken under rotating_refresh (07 D12)", () => {
       name: "SocialAuthError",
     });
     expect(refresh).not.toHaveBeenCalled();
+  });
+});
+
+describe("the refresh deadline (07 D12, ADR-13)", () => {
+  it("stores a token set that arrives after the deadline, so a rotated refresh token is never dropped", async () => {
+    const { id, old } = await expiredDemoAccount();
+    deadlinePassed();
+    const real = mockProvider.refreshToken.bind(mockProvider);
+    // An adapter that answers although its signal aborted.
+    const refresh = vi
+      .spyOn(mockProvider, "refreshToken")
+      .mockImplementation(async (t) =>
+        real(t, { signal: new AbortController().signal }),
+      );
+    const token = await getFreshAccessToken(id);
+    expect(refresh.mock.calls[0]?.[1].signal.aborted).toBe(true);
+    expect(token).not.toBe(old.accessToken);
+    const row = await accountRow(id);
+    expect(
+      decryptSecret(row.accessTokenEnc as string, accessTokenAad(id)),
+    ).toBe(token);
+    expect(
+      decryptSecret(row.refreshTokenEnc as string, refreshTokenAad(id)),
+    ).not.toBe(old.refreshToken);
+  });
+
+  it("gives up with SocialUpstreamError when the deadline aborts the call, and keeps the row as it was", async () => {
+    const { id } = await expiredDemoAccount();
+    const before = await accountRow(id);
+    deadlinePassed();
+    await expect(getFreshAccessToken(id)).rejects.toBeInstanceOf(
+      SocialUpstreamError,
+    );
+    expect(await accountRow(id)).toEqual(before);
+  });
+});
+
+describe("markNeedsReconnect fenced on the refused tokens (07 D12b)", () => {
+  it("marks the account only while it still holds the tokens that were refused", async () => {
+    const { id } = await expiredDemoAccount();
+    const { tokenRefreshedAt } = await accountRow(id);
+    await markNeedsReconnect(id, new Date(Date.now() + MINUTE_MS));
+    expect((await accountRow(id)).status).toBe("connected");
+    expect(await auditsOf(id, "social_account.needs_reconnect")).toEqual([]);
+
+    await markNeedsReconnect(id, tokenRefreshedAt);
+    expect((await accountRow(id)).status).toBe("needs_reconnect");
+    expect(await auditsOf(id, "social_account.needs_reconnect")).toHaveLength(
+      1,
+    );
+  });
+
+  it("leaves a reconnect that lands while a refresh is refused connected", async () => {
+    const { id, creator } = await expiredDemoAccount();
+    const fresh = mockTokensFor(creator.userId, "t2");
+    let reconnect: Promise<unknown> = Promise.resolve();
+    vi.spyOn(mockProvider, "refreshToken").mockImplementation(async () => {
+      // The reconnect's UPDATE waits on this refresh's row lock and stores its tokens once the refresh gives up.
+      reconnect = linkAccount({
+        creatorId: creator.id,
+        platform: "mock",
+        tokens: fresh,
+        profile: await mockProvider.getProfile(fresh.accessToken),
+      });
+      await vi.waitFor(
+        async () => {
+          const { rows } = await db.execute<{ n: number }>(
+            sql`select count(*)::int as n from pg_stat_activity where wait_event_type = 'Lock' and query like 'update "social_account"%'`,
+          );
+          expect(rows[0]?.n).toBeGreaterThan(0);
+        },
+        { timeout: 10_000, interval: 20 },
+      );
+      throw new SocialAuthError();
+    });
+    // The call failed, but the account is fine: an upstream error, never a prompt to reconnect.
+    await expect(getFreshAccessToken(id)).rejects.toBeInstanceOf(
+      SocialUpstreamError,
+    );
+    await reconnect;
+    const row = await accountRow(id);
+    expect(row.status).toBe("connected");
+    expect(
+      decryptSecret(row.accessTokenEnc as string, accessTokenAad(id)),
+    ).toBe(fresh.accessToken);
+    expect(await auditsOf(id, "social_account.needs_reconnect")).toEqual([]);
   });
 });

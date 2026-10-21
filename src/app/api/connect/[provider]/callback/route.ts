@@ -1,11 +1,15 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import type { ConnectErrorCode } from "@/lib/domain/values";
+import type { ConnectErrorCode, SocialProviderId } from "@/lib/domain/values";
 import { getCreatorForApi, toActor } from "@/server/auth/session";
 import { env } from "@/server/env";
 import { errorName, logEvent } from "@/server/log";
 import { AlreadyLinkedError } from "@/server/social/errors";
-import { linkAccount, revokeQuietly } from "@/server/social/link";
+import {
+  isPlatformAccountLive,
+  linkAccount,
+  revokeQuietly,
+} from "@/server/social/link";
 import {
   OAUTH_COOKIE,
   OAUTH_COOKIE_PATH,
@@ -36,11 +40,23 @@ function connectionsUrl(code: ConnectErrorCode): URL {
   return url;
 }
 
-/** The value, or null when the platform call throws. */
-async function orNull<T>(run: () => Promise<T>): Promise<T | null> {
+/**
+ * The value, or null when the platform call throws: logged by stage and error class only (a wrong client secret or
+ * redirect URI shows up here; a code reused by Back is the creator's, hence warn).
+ */
+async function attempt<T>(
+  stage: "exchange" | "profile",
+  platform: SocialProviderId,
+  run: () => Promise<T>,
+): Promise<T | null> {
   try {
     return await run();
-  } catch {
+  } catch (err) {
+    logEvent("warn", "social.connect_failed", {
+      provider: platform,
+      stage,
+      reason: errorName(err),
+    });
     return null;
   }
 }
@@ -76,7 +92,7 @@ async function landing(request: NextRequest, param: string): Promise<URL> {
   const { code, error } = q.data;
   if (error) return fail("denied");
   if (!code) return fail("provider_error");
-  const tokens = await orNull(() =>
+  const tokens = await attempt("exchange", provider.platform, () =>
     provider.exchangeCode({
       code,
       codeVerifier: cookie.codeVerifier,
@@ -86,20 +102,41 @@ async function landing(request: NextRequest, param: string): Promise<URL> {
   if (!tokens) return fail("provider_error");
 
   // A connect we refuse (07 D37: missing_scope, already_linked; ig_personal and no_channel from P28/P27) gives the new
-  // tokens back. A failure does not: on a reconnect a revoke would end the grant the live account still uses.
-  const refuse = async (reason: "missing_scope" | "already_linked") => {
-    await revokeQuietly(provider, tokens);
+  // tokens back only when we know the platform account and no live ClipLease account holds it (owner answer, amending
+  // 07 D37 and 02 §7.2): on Google and TikTok a revoke ends the whole grant, and a live account still uses it. Otherwise
+  // the tokens are dropped unstored. A failure never revokes, for the same reason.
+  const refuse = async (
+    reason: "missing_scope" | "already_linked",
+    externalAccountId: string | null,
+  ) => {
+    if (
+      externalAccountId !== null &&
+      !(await isPlatformAccountLive(provider.platform, externalAccountId))
+    ) {
+      await revokeQuietly(provider, tokens);
+    } else {
+      logEvent("info", "social.revoke_skipped", {
+        provider: provider.platform,
+        reason,
+      });
+    }
     return fail(reason);
   };
+  const readProfile = () =>
+    attempt("profile", provider.platform, () =>
+      provider.getProfile(tokens.accessToken),
+    );
   if (!provider.requiredScopes.every((s) => tokens.scopes.includes(s))) {
-    return refuse("missing_scope");
+    // Without the scope the profile may not be readable: then the account is unknown and nothing is revoked.
+    const profile = await readProfile();
+    return refuse("missing_scope", profile?.externalAccountId ?? null);
   }
   // Only scopes we asked for and were granted (owner answer Q3 a; an optional one not granted is not an error).
   const scopes = tokens.scopes.filter((s) =>
     cookie.requestedScopes.includes(s),
   );
 
-  const profile = await orNull(() => provider.getProfile(tokens.accessToken));
+  const profile = await readProfile();
   if (!profile) return fail("provider_error");
   let socialAccountId: string;
   try {
@@ -110,9 +147,12 @@ async function landing(request: NextRequest, param: string): Promise<URL> {
       profile,
     }));
   } catch (err) {
-    if (err instanceof AlreadyLinkedError) return refuse("already_linked");
+    if (err instanceof AlreadyLinkedError) {
+      return refuse("already_linked", profile.externalAccountId);
+    }
     logEvent("error", "social.connect_failed", {
       provider: provider.platform,
+      stage: "link",
       reason: errorName(err),
     });
     return fail("provider_error");

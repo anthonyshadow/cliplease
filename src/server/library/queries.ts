@@ -29,6 +29,7 @@ import {
   type LibraryFilter,
 } from "../../lib/library/filter";
 import type { LibraryPostDTO } from "../../lib/library/post";
+import { isUuid } from "../../lib/validation/uuid";
 import { type Actor, requireCreatorActor } from "../auth/actor";
 import { deriveConnectionState } from "../social/connection-state";
 import {
@@ -106,8 +107,9 @@ export async function listAccountSummaries(
           visiblePostsWhere(actor.creatorId),
         ),
       ),
-      // The database's clock, the one that set sync_blocked_until and sync_started_at.
-      now: sql<Date>`now()`,
+      // The database's clock, the one that set sync_blocked_until and sync_started_at. A raw timestamptz comes back
+      // as text; mapWith reads it the way a timestamp column does.
+      now: sql`now()`.mapWith((value: string) => new Date(value)),
     })
     .from(socialAccount)
     .where(
@@ -118,7 +120,7 @@ export async function listAccountSummaries(
     )
     .orderBy(...CONNECTIONS_ORDER);
   return rows.map(({ avatarUrl, now, ...row }) => {
-    const state = deriveConnectionState(row, new Date(now));
+    const state = deriveConnectionState(row, now);
     return {
       id: row.id,
       platform: row.platform,
@@ -193,12 +195,19 @@ function toPostDTO({
   accountStatus: _,
   ...row
 }: PostRow): LibraryPostDTO {
+  const thumbnailVersion = thumbnailFetchedAt?.toISOString() ?? null;
+  // The proxy streams the stored URL (07 D42); with none, the tile shows its failed state without asking. The version
+  // in the query (the route ignores it) gets past the proxy's hour of browser cache once a sync stores a new image.
+  const version = thumbnailVersion
+    ? `?v=${encodeURIComponent(thumbnailVersion)}`
+    : "";
   return {
     ...row,
     fetchedAt: fetchedAt.toISOString(),
-    // The proxy streams the stored URL (07 D42); with none, the tile shows its failed state without asking.
-    thumbnailSrc: thumbnailUrl ? `/api/library/thumbnails/${row.id}` : null,
-    thumbnailVersion: thumbnailFetchedAt?.toISOString() ?? null,
+    thumbnailSrc: thumbnailUrl
+      ? `/api/library/thumbnails/${row.id}${version}`
+      : null,
+    thumbnailVersion,
     postedAt: postedAt?.toISOString() ?? null,
     video: videoId && videoStatus ? { id: videoId, status: videoStatus } : null,
   };
@@ -312,17 +321,21 @@ export async function getLibraryPost(
   postId: string,
 ): Promise<(LibraryPostDTO & { accountStatus: SocialAccountStatus }) | null> {
   const { creatorId } = requireCreatorActor(a);
+  if (!isUuid(postId)) return null;
   const [row] = await selectPosts()
     .where(and(eq(socialPost.id, postId), visiblePostsWhere(creatorId)))
     .limit(1);
   return row ? { ...toPostDTO(row), accountStatus: row.accountStatus } : null;
 }
 
-/** Published videos with a verified posting, counted per account (07 D72); `accountId` narrows it to one. */
-async function liveVideoCounts(
-  creatorId: string,
-  accountId?: string,
-): Promise<Map<string, number>> {
+/**
+ * The Disconnect sheet's "{n} live videos came from @{username}" for every account, in one query: published videos with
+ * a verified posting, counted per account (07 D72).
+ */
+export async function countLiveVideosByAccount(
+  a: Actor,
+): Promise<ReadonlyMap<string, number>> {
+  const { creatorId } = requireCreatorActor(a);
   const rows = await db
     .select({
       accountId: videoPosting.socialAccountId,
@@ -335,30 +348,10 @@ async function liveVideoCounts(
         eq(videoPosting.creatorId, creatorId),
         eq(videoPosting.verification, "verified"),
         eq(video.status, "published"),
-        accountId ? eq(videoPosting.socialAccountId, accountId) : undefined,
       ),
     )
     .groupBy(videoPosting.socialAccountId);
   return new Map(
     rows.flatMap((r) => (r.accountId ? [[r.accountId, r.live] as const] : [])),
   );
-}
-
-/** The Disconnect sheet's "{n} live videos came from @{username}" for every account, in one query. */
-export async function countLiveVideosByAccount(
-  a: Actor,
-): Promise<ReadonlyMap<string, number>> {
-  return liveVideoCounts(requireCreatorActor(a).creatorId);
-}
-
-/** The same count for one account. */
-export async function countLiveVideosFromAccount(
-  a: Actor,
-  accountId: string,
-): Promise<number> {
-  const counts = await liveVideoCounts(
-    requireCreatorActor(a).creatorId,
-    accountId,
-  );
-  return counts.get(accountId) ?? 0;
 }

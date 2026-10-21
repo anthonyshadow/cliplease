@@ -411,6 +411,36 @@ export function createLocalStorage({
       await rm(objectPath(key), { force: true });
     },
 
+    async list(prefix) {
+      if (!prefix.endsWith("/")) throw new StorageKeyError();
+      const folder = prefix.slice(0, -1);
+      const dir = objectPath(folder);
+      const names = await unlessMissing(
+        () => readdir(dir, { recursive: true }),
+        [],
+      );
+      const listed = await Promise.all(
+        names
+          // A write still in its temp file is no object yet.
+          .filter((name) => !name.endsWith(".tmp"))
+          .map(async (name) => {
+            const info = await unlessMissing(
+              () => stat(path.join(dir, name)),
+              null,
+            );
+            return info?.isFile()
+              ? {
+                  key: `${folder}/${name.split(path.sep).join("/")}`,
+                  lastModified: info.mtime,
+                }
+              : null;
+          }),
+      );
+      return listed
+        .filter((o) => o !== null)
+        .sort((a, b) => a.key.localeCompare(b.key));
+    },
+
     async receiveObject(key, body, length) {
       const target = objectPath(key);
       if (await unlessMissing(() => stat(target), null)) {

@@ -21,6 +21,8 @@ describe("safeNextPath", () => {
     "/dashboard?x=a%2Fb",
     "/dashboard/v1.2",
     "/dashboard?q=../x",
+    "/apis",
+    "/dashboard?next=/api/x",
   ])("keeps the same-site path %s", (next) => {
     expect(safeNextPath(next)).toBe(next);
   });
@@ -44,6 +46,12 @@ describe("safeNextPath", () => {
     ["a relative path", "dashboard"],
     ["the sign-in page", "/sign-in?next=/x"],
     ["the sign-in page, uppercase", "/SIGN-IN"],
+    ["an API route", "/api/stripe/onboarding"],
+    ["an API route with a query", "/api/connect/mock/start?x=1"],
+    ["the API root", "/api"],
+    ["an API route, uppercase", "/API/stripe/onboarding"],
+    ["a percent-encoded API route", "/%61pi/stripe/onboarding"],
+    ["an API route with an encoded slash", "/api%2Fstripe/onboarding"],
   ])("refuses %s", (_case, next) => {
     expect(safeNextPath(next)).toBe("/dashboard");
   });

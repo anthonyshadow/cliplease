@@ -116,6 +116,34 @@ describe("logEvent (02 §9.9)", () => {
     expect(JSON.stringify(line)).not.toContain("maya@example.com");
   });
 
+  it("never throws on a bigint or an invalid Date", () => {
+    const { lines } = capture();
+    expect(() =>
+      logEvent("warn", "test.odd", { n: BigInt(1), at: new Date(Number.NaN) }),
+    ).not.toThrow();
+    expect(lines()[0]).toMatchObject({ n: "1", at: "Invalid Date" });
+  });
+
+  it("writes the event with logError when a field can't be serialized, instead of throwing", () => {
+    const { lines } = capture();
+    const field = {
+      toJSON() {
+        throw new Error("boom");
+      },
+    };
+    expect(() =>
+      logEvent("error", "test.unserializable", { field, videoId: "v1" }),
+    ).not.toThrow();
+    const written = lines();
+    expect(written).toHaveLength(1);
+    expect(written[0]).toMatchObject({
+      level: "error",
+      event: "test.unserializable",
+      logError: "unserializable_fields",
+    });
+    expect(typeof written[0]?.ts).toBe("string");
+  });
+
   it("refuses an event name that isn't scope.action, and fields can't override ts, level or event", () => {
     const { lines } = capture();
     for (const bad of ["Seed Applied", "sync", "sync.", "Sync.started"]) {

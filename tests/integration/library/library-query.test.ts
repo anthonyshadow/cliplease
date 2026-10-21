@@ -61,6 +61,10 @@ const filterOf = (params: Record<string, string | string[]>) =>
 const updatePosts = (set: PgUpdateSetSource<typeof socialPost>, where: SQL) =>
   db.update(socialPost).set(set).where(where);
 
+/** The proxy URL with the stored thumbnail's version in the query, so a new one gets past the browser's cache. */
+const thumbnailSrcOf = (id: string, version: string | null | undefined) =>
+  `/api/library/thumbnails/${id}?v=${encodeURIComponent(version ?? "")}`;
+
 /** A creator with no accounts, and its actor. */
 async function newCreator() {
   const creator = await insertCreator();
@@ -87,7 +91,10 @@ describe("listLibraryPosts: order and the tile DTO (03 §7.2)", () => {
       title: null,
       captionExcerpt: SNOW_CAPTION,
       permalink: post01.permalink,
-      thumbnailSrc: `/api/library/thumbnails/${post01.id}`,
+      thumbnailSrc: thumbnailSrcOf(
+        post01.id,
+        post01.thumbnailFetchedAt?.toISOString(),
+      ),
       thumbnailVersion: post01.thumbnailFetchedAt?.toISOString(),
       width: 720,
       height: 1280,
@@ -125,7 +132,7 @@ describe("listLibraryPosts: order and the tile DTO (03 §7.2)", () => {
     ).toEqual(
       posts
         .filter((p) => p.id !== post05.id)
-        .map((p) => `/api/library/thumbnails/${p.id}`),
+        .map((p) => thumbnailSrcOf(p.id, p.thumbnailVersion)),
     );
   });
 });
@@ -385,9 +392,11 @@ describe("the 30-day rule and allExpired (07 D13)", () => {
     expect(library).toMatchObject({
       posts: [],
       nextCursor: null,
-      platformCounts: {},
       allExpired: true,
     });
+    // Exact: inside toMatchObject an empty object matches any. The linked platform keeps its chip at 0 (05 §6.1).
+    expect(library.platformCounts).toEqual({ mock: 0 });
+    expect(library.visibleCount).toBe(0);
     expect(library.accounts.map((a) => a.postCount)).toEqual([0]);
   });
 
@@ -402,21 +411,25 @@ describe("the 30-day rule and allExpired (07 D13)", () => {
       { status: "stale", postedAt: null, fetchedAt: DAYS_AGO_31 },
       inArray(socialPost.id, ids(rows.slice(12))),
     );
-    expect(await listLibraryPosts(d.actor, {})).toMatchObject({
+    const hidden = await listLibraryPosts(d.actor, {});
+    expect(hidden).toMatchObject({
       posts: [],
       nextCursor: null,
-      platformCounts: {},
       allExpired: false,
     });
+    expect(hidden.platformCounts).toEqual({ mock: 0 });
+    expect(hidden.visibleCount).toBe(0);
 
     // A connected account that never synced: no posts at all.
     const never = await demoAccount();
-    expect(await listLibraryPosts(never.actor, {})).toMatchObject({
+    const empty = await listLibraryPosts(never.actor, {});
+    expect(empty).toMatchObject({
       posts: [],
       nextCursor: null,
-      platformCounts: {},
       allExpired: false,
     });
+    expect(empty.platformCounts).toEqual({ mock: 0 });
+    expect(empty.visibleCount).toBe(0);
 
     const { actor } = await newCreator();
     expect(await listLibraryPosts(actor, {})).toEqual({
@@ -572,7 +585,7 @@ describe("re-syncing the same posts (J3.8)", () => {
 });
 
 describe("getLibraryPost (built with the Library, owner answer Q-27)", () => {
-  it("reads the creator's own visible post with its account status; null for anyone else's, an unknown or an expired one", async () => {
+  it("reads the creator's own visible post with its account status; null for anyone else's, an unknown, a non-uuid or an expired one", async () => {
     const d = await syncedDemo();
     const other = await syncedDemo();
     const post01 = await postNumber(d.account.id, "01");
@@ -593,6 +606,10 @@ describe("getLibraryPost (built with the Library, owner answer Q-27)", () => {
 
     expect(await getLibraryPost(other.actor, post01.id)).toBeNull();
     expect(await getLibraryPost(d.actor, randomUUID())).toBeNull();
+    // Not a uuid: null before any query (Postgres would refuse it).
+    for (const id of ["abc", ""]) {
+      expect(await getLibraryPost(d.actor, id)).toBeNull();
+    }
 
     const post02 = await postNumber(d.account.id, "02");
     await updatePosts({ fetchedAt: DAYS_AGO_31 }, eq(socialPost.id, post02.id));

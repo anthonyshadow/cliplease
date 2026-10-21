@@ -21,7 +21,8 @@ export type UploadRouteCode = (typeof UPLOAD_ROUTE_CODES)[number];
 /**
  * Every way an upload can end without success: the routes' codes plus the browser's own. `paused`: a part ran out of
  * retries (the upload and its resume hint stay; P10c). `stale_upload`: a resume found another upload open on the video
- * than the one this device started, so nothing was sent.
+ * than the one this device started, so nothing was sent; or the upload stopped being open while its parts went (a 404),
+ * so complete never ran.
  */
 export type UploadErrorCode =
   | UploadRouteCode

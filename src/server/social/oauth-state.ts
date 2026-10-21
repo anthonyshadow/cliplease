@@ -1,7 +1,7 @@
 import "server-only";
-import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { SOCIAL_PROVIDERS } from "../../lib/domain/values";
+import { bytesEqual } from "../crypto/hmac";
 import {
   createTokenCipher,
   deriveSubkey,
@@ -72,9 +72,7 @@ export function stateMatches(
   expected: string,
 ): boolean {
   if (!received) return false;
-  const a = Buffer.from(received);
-  const b = Buffer.from(expected);
-  return a.length === b.length && timingSafeEqual(a, b);
+  return bytesEqual(Buffer.from(received), Buffer.from(expected));
 }
 
 /** The cookie's attributes; Secure only when the app is served over https. */

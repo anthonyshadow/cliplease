@@ -4,6 +4,7 @@ import { type MouseEvent, useEffect, useRef, useState } from "react";
 import { loadMoreLibraryPosts } from "@/app/(dashboard)/dashboard/library/actions";
 import { LIBRARY_GRID } from "@/components/layout/gutter";
 import { Button } from "@/components/ui/button";
+import { isPlainClick } from "@/components/ui/plain-click";
 import { runAction } from "@/components/ui/run-action";
 import { toast } from "@/components/ui/toast";
 import {
@@ -56,8 +57,12 @@ export function LibraryGrid({
       ]
     : posts;
   const pageCursor = extra ? extra.cursor : nextCursor;
-  const [pending, setPending] = useState(false);
-  const loading = useRef(false);
+  // A load belongs to the first page it started from: a new filter or a recent sync shows a grid that isn't busy.
+  const [pendingFor, setPendingFor] = useState<string | null>(null);
+  const pending = pendingFor === firstPage;
+  const loadingFor = useRef<string | null>(null);
+  const shownFor = useRef(firstPage);
+  shownFor.current = firstPage;
   const focusId = useRef<string | null>(null);
 
   // The first tile a load added takes the focus once it is on the page.
@@ -68,10 +73,10 @@ export function LibraryGrid({
   });
 
   const loadFrom = async (from: string) => {
-    if (loading.current) return;
-    loading.current = true;
-    setPending(true);
+    if (loadingFor.current === firstPage) return;
     const startedFor = firstPage;
+    loadingFor.current = startedFor;
+    setPendingFor(startedFor);
     const result = await runAction(() =>
       loadMoreLibraryPosts({
         platform: filter.platform,
@@ -80,24 +85,31 @@ export function LibraryGrid({
         cursor: from,
       }),
     );
-    loading.current = false;
-    setPending(false);
+    if (loadingFor.current === startedFor) {
+      loadingFor.current = null;
+      setPendingFor(null);
+    }
+    // The grid it was for is gone: its page, its focus and its error would land on another one.
+    if (shownFor.current !== startedFor) return;
     if (result && !result.ok) toast(result.error.message);
     if (!result?.ok) return;
     const page = result.data;
     focusId.current = page.posts[0]?.id ?? null;
-    // Kept for the first page it followed: if a sync replaced that page meanwhile, the server's page shows instead.
-    setAppended((before) => ({
-      firstPage: startedFor,
-      posts: [
-        ...(before?.firstPage === startedFor ? before.posts : []),
-        ...page.posts,
-      ],
-      cursor: page.nextCursor,
-    }));
+    // A second load from the same cursor (a filter left and come back to while the first was out) adds nothing twice.
+    setAppended((before) => {
+      const held = before?.firstPage === startedFor ? before.posts : [];
+      const seen = new Set(held.map((q) => q.id));
+      return {
+        firstPage: startedFor,
+        posts: [...held, ...page.posts.filter((p) => !seen.has(p.id))],
+        cursor: page.nextCursor,
+      };
+    });
   };
 
   const showMore = (event: MouseEvent<HTMLAnchorElement>) => {
+    // A new tab or window follows the link to the next page.
+    if (!isPlainClick(event)) return;
     event.preventDefault();
     if (pageCursor) loadFrom(pageCursor);
   };

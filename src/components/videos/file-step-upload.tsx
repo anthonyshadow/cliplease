@@ -29,13 +29,14 @@ import {
   readResumeHint,
 } from "@/lib/upload/resume";
 import { useUploadElsewhere } from "@/lib/upload/tab-presence";
-import { browserHints, browserNetwork } from "@/lib/upload/upload-original";
+import { browserHints } from "@/lib/upload/upload-original";
 import {
   cancelOriginalUpload,
   markOriginalSeen,
   resumeOriginalUpload,
   retryOriginalUpload,
   startOriginalUpload,
+  useBrowserOnline,
   useUploads,
 } from "@/lib/upload/upload-store";
 import type { CreatorVideoDTO } from "@/server/videos/queries";
@@ -145,6 +146,7 @@ export function FileStepUpload({
   const entry = originals[video.id] ?? null;
   const cover = covers[video.id] ?? null;
   const otherTab = useUploadElsewhere(video.id);
+  const online = useBrowserOnline();
   // The iPhone hint is a device check, read after hydration (07 D152).
   const ios = useClientValue(
     () => isIosDevice(navigator.userAgent, navigator.maxTouchPoints),
@@ -181,14 +183,14 @@ export function FileStepUpload({
     problem: problem !== null,
     otherTab,
     tabCover: cover !== null,
-    online: browserNetwork.isOnline(),
+    online,
   });
   const ready = box.kind === "done";
   const resumable = progress?.state === "resumable" ? progress : null;
 
-  // A hint that names nothing to resume goes.
+  // A hint that names nothing to resume goes, unless another tab has written a newer one since.
   useEffect(() => {
-    if (clearHint) clearResumeHint(browserHints(), video.id);
+    if (clearHint) clearResumeHint(browserHints(), video.id, clearHint);
   }, [clearHint, video.id]);
 
   // How it ended shows here, so the floating card won't show it again. Ended while this page was open: fetch it again.

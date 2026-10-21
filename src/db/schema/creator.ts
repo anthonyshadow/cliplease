@@ -37,6 +37,7 @@ export const creatorProfile = pgTable(
     autoApprove: boolean("auto_approve").notNull().default(false), // 07 D81: can be turned on only while payouts are active (code)
     payoutCurrency: currencyEnum("payout_currency").notNull().default("cad"), // 07 D94: prices, license page, platform account; immutable once stripe_account_id is set or any license_request exists (code)
     stripeAccountId: text("stripe_account_id"), // acct_… (Accounts v2 id) on the payout_currency's platform account, created on first "Set up payouts"
+    negativeBalanceDebitsEnabledAt: tstz("negative_balance_debits_enabled_at"), // 07 D139: when Stripe accepted debit_negative_balances on stripe_account_id; null → re-attempted (owner answer)
     payoutsStatus: payoutsStatusEnum("payouts_status")
       .notNull()
       .default("not_started"),

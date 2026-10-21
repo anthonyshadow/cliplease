@@ -7,7 +7,6 @@ import { readdir, readFile, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { eq, sql } from "drizzle-orm";
 import { NextRequest } from "next/server";
-import { vi } from "vitest";
 import {
   GET as devStorageGET,
   PUT as devStoragePUT,
@@ -248,6 +247,7 @@ export async function uploadOriginal(
   const result = await completeUpload(actor, {
     kind: "original",
     videoId,
+    uploadId: upload.uploadId,
     meta: opts.meta,
   });
   return { upload, result };
@@ -305,40 +305,20 @@ export const UPLOAD_ROUTE_NAMES = Object.keys(
 
 /**
  * POSTs `body` to /api/uploads/<name> through its handler, with the session the mocked next/headers holds. A string
- * body is sent as is; anything else as JSON. The Content-Type is application/json unless given.
+ * body is sent as is; anything else as JSON. The Content-Type is application/json unless given; `headers` adds others.
  */
 export function callUploadRoute(
   name: UploadRouteName,
   body: unknown,
   contentType = "application/json",
+  headers: Record<string, string> = {},
 ): Promise<Response> {
   const request = new Request(new URL(`/api/uploads/${name}`, env.APP_URL), {
     method: "POST",
-    headers: { "content-type": contentType },
+    headers: { ...headers, "content-type": contentType },
     body: typeof body === "string" ? body : JSON.stringify(body),
   });
   return UPLOAD_ROUTES[name](request);
-}
-
-// --- What the server logs ----------------------------------------------------------------------------------------------
-
-/**
- * Silences stderr and records what is written to it from now on. The returned function restores it and gives back all
- * of it (`written`, for what a log line must not carry) and the lines that log `event`, parsed (`events`).
- */
-export function captureLogEvents(event: string) {
-  const stderr = vi
-    .spyOn(process.stderr, "write")
-    .mockImplementation(() => true);
-  return () => {
-    const written = stderr.mock.calls.map(([chunk]) => String(chunk)).join("");
-    stderr.mockRestore();
-    const events = written
-      .split("\n")
-      .filter((line) => line.includes(`"${event}"`))
-      .map((line) => JSON.parse(line) as unknown);
-    return { written, events };
-  };
 }
 
 // --- Creators and videos -----------------------------------------------------------------------------------------------

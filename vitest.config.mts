@@ -25,6 +25,7 @@ export default defineConfig({
             "src/**/*.test.ts",
             "src/**/*.test.tsx",
             "tests/unit/**/*.test.ts",
+            "tests/unit/**/*.test.tsx",
           ],
         },
       },
@@ -37,6 +38,8 @@ export default defineConfig({
           // The files share one test database, so they run one at a time. Vitest's default `isolate: true` must stay:
           // each file gets its own pool, which its setup ends after the file.
           fileParallelism: false,
+          // The test-run lock, held for the whole run: test:int and test:e2e share the database and .data.
+          globalSetup: ["./tests/setup/test-run-lock.ts"],
           // Joined after the root setupFiles (extends: true), so load-env.ts runs first.
           setupFiles: ["./tests/setup/integration.ts"],
           // A Neon compute waking from sleep can take several seconds.

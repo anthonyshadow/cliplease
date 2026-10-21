@@ -116,6 +116,73 @@ const lastPick = (page: Page) =>
     () => (window as Window & { e2ePicks?: Picked[] }).e2ePicks?.at(-1) ?? null,
   );
 
+type PartTwoEvent = { at: number; what: "resigned" | "sent" };
+
+/**
+ * Records in the page (from the next load on) when a re-sign of part 2 alone answers and when part 2's PUT is sent, by
+ * performance.now(). The retry's wait lies between the two, with no Playwright interception inside it (handing a 16 MiB
+ * body through it takes seconds on Chromium).
+ */
+async function recordPartTwoTimes(page: Page) {
+  await page.addInitScript(() => {
+    const events: PartTwoEvent[] = [];
+    Object.assign(window, { e2ePartTwo: events });
+    const realFetch = window.fetch;
+    window.fetch = async (input, init) => {
+      const response = await realFetch(input, init);
+      const url = input instanceof Request ? input.url : String(input);
+      if (
+        url.endsWith("/api/uploads/parts") &&
+        typeof init?.body === "string"
+      ) {
+        const asked = JSON.parse(init.body) as { partNumbers: number[] };
+        if (asked.partNumbers.join() === "2") {
+          events.push({ at: performance.now(), what: "resigned" });
+        }
+      }
+      return response;
+    };
+    const urls = new WeakMap<XMLHttpRequest, string>();
+    const proto = XMLHttpRequest.prototype;
+    const realOpen: (
+      this: XMLHttpRequest,
+      method: string,
+      url: string | URL,
+      ...rest: unknown[]
+    ) => void = proto.open;
+    const realSend = proto.send;
+    proto.open = function (
+      this: XMLHttpRequest,
+      method: string,
+      url: string | URL,
+      ...rest: unknown[]
+    ) {
+      urls.set(this, `${method} ${url}`);
+      realOpen.call(this, method, url, ...rest);
+    };
+    proto.send = function (this: XMLHttpRequest, body) {
+      const request = urls.get(this) ?? "";
+      if (request.startsWith("PUT ") && request.includes("partNumber=2&")) {
+        events.push({ at: performance.now(), what: "sent" });
+      }
+      realSend.call(this, body);
+    };
+  });
+}
+
+/** The page's first re-sign of part 2 and part 2's first send after it, in ms (recordPartTwoTimes). */
+const partTwoTimes = (page: Page) =>
+  page.evaluate(() => {
+    const events =
+      (window as Window & { e2ePartTwo?: PartTwoEvent[] }).e2ePartTwo ?? [];
+    const resigned = events.find((e) => e.what === "resigned")?.at;
+    const sent =
+      resigned === undefined
+        ? undefined
+        : events.find((e) => e.what === "sent" && e.at > resigned)?.at;
+    return { resigned, sent };
+  });
+
 /**
  * Chooses the 40 MiB file with its part URL requests cut off, and reloads once the first one has failed (so none is in
  * flight then): start has opened the upload on the server and written the hint, and no part is sent, so the paused box
@@ -145,15 +212,14 @@ test("a failed part is retried through a re-signed URL; after a reload the same 
   const big = await bigFile();
   const other = await writeTestMp4(testInfo.outputPath("other.mp4"), MIB);
   await recordPicks(page);
+  await recordPartTwoTimes(page);
   await signUpCreator(page, { payouts: false });
   const videoId = await createDraft(page);
 
   // Phase 1: part 2's first send and every part 3 fail as dropped connections.
-  const sendTimes: number[] = [];
-  const parts = await routePartPuts(page, (part, before) => {
-    if (part === 2) sendTimes.push(Date.now());
-    return (part === 2 && before === 0) || part === 3 ? "abort" : "continue";
-  });
+  const parts = await routePartPuts(page, (part, before) =>
+    (part === 2 && before === 0) || part === 3 ? "abort" : "continue",
+  );
   const stored = trackStoredParts(page);
   const asked = trackPartUrlRequests(page);
   const uploadId = await chooseOriginal(page, big);
@@ -167,8 +233,11 @@ test("a failed part is retried through a re-signed URL; after a reload the same 
   expect(parts.sent(2)).toBe(2);
   expect(asked[0]).toEqual([1, 2, 3]);
   expect(asked).toContainEqual([2]);
-  const [first = 0, second = 0] = sendTimes;
-  expect(second - first).toBeGreaterThanOrEqual(1000);
+  const { resigned, sent } = await partTwoTimes(page);
+  if (resigned === undefined || sent === undefined) {
+    throw new Error("part 2 was never re-signed and sent again");
+  }
+  expect(sent - resigned).toBeGreaterThanOrEqual(1000);
   await expect(retryingLine(page)).toBeVisible();
 
   // The hint holds exactly the four keys.

@@ -11,13 +11,14 @@ import {
 import { db } from "../../../src/db/client";
 import { socialAccount, video, videoPosting } from "../../../src/db/schema";
 import { MINUTE_MS } from "../../../src/lib/time";
-import { countLiveVideosFromAccount } from "../../../src/server/library/queries";
+import { countLiveVideosByAccount } from "../../../src/server/library/queries";
 import { disconnectSocialAccount } from "../../../src/server/social/disconnect";
 import {
   mockProvider,
   setMockScenarioForTests,
 } from "../../../src/server/social/providers/mock";
 import { syncSocialAccount } from "../../../src/server/social/sync";
+import { redirectTo } from "../../helpers/actions";
 import { mockNextHeaders, signedInCreator } from "../../helpers/auth";
 import {
   accountRow,
@@ -106,7 +107,7 @@ describe("disconnectSocialAccount (03 §9.3)", () => {
   it("scrubs a referenced post to stale, deletes the other 23 and leaves the video and its posting alone (b)", async () => {
     const s = await syncedDemo();
     const { post, video: before, posting } = await publishedVideoOnPost01(s);
-    expect(await countLiveVideosFromAccount(s.actor, s.account.id)).toBe(1);
+    expect((await countLiveVideosByAccount(s.actor)).get(s.account.id)).toBe(1);
 
     await disconnectSocialAccount(s.account.id, s.actor);
     const rows = await postsOf(s.account.id);
@@ -204,6 +205,46 @@ describe("disconnectSocialAccount (03 §9.3)", () => {
     ).toEqual([]);
   });
 
+  it("records unsupported, with no platform call, when there is nothing to revoke", async () => {
+    // A needs_reconnect account whose token expired can't be refreshed; the purge cron (07 D47) leaves none at all.
+    const expired = await expiredDemo();
+    const wiped = await demoAccount();
+    await db
+      .update(socialAccount)
+      .set({ status: "needs_reconnect" })
+      .where(eq(socialAccount.id, expired.account.id));
+    await db
+      .update(socialAccount)
+      .set({
+        status: "needs_reconnect",
+        accessTokenEnc: null,
+        refreshTokenEnc: null,
+      })
+      .where(eq(socialAccount.id, wiped.account.id));
+    const refresh = vi.spyOn(mockProvider, "refreshToken");
+    const revoke = vi.spyOn(mockProvider, "revoke");
+    for (const s of [expired, wiped]) {
+      expect(await disconnectSocialAccount(s.account.id, s.actor)).toEqual({
+        revoked: "unsupported",
+      });
+      expect((await accountRow(s.account.id)).status).toBe("disconnected");
+      expect(
+        await auditsOf(s.account.id, "social_account.disconnected"),
+      ).toEqual([
+        {
+          actorType: "creator",
+          data: {
+            socialAccountId: s.account.id,
+            provider: "mock",
+            revoked: "unsupported",
+          },
+        },
+      ]);
+    }
+    expect(refresh).not.toHaveBeenCalled();
+    expect(revoke).not.toHaveBeenCalled();
+  });
+
   it("never writes a token to the logs or the console (J2.19)", async () => {
     const s = await demoAccount();
     const written: string[] = [];
@@ -265,6 +306,25 @@ describe("disconnectSocialAccount (03 §9.3)", () => {
 });
 
 describe("the disconnectAccount action", () => {
+  it("sends a signed-out caller to sign in and disconnects nothing", async () => {
+    const { disconnectAccount } = await import(
+      "../../../src/app/(dashboard)/dashboard/_actions/social"
+    );
+    const { account } = await demoAccount();
+    const revoke = vi.spyOn(mockProvider, "revoke");
+    mockNextHeaders(null);
+    await expect(
+      disconnectAccount({ socialAccountId: account.id }),
+    ).rejects.toMatchObject(
+      redirectTo("/sign-in?next=%2Fdashboard%2Fconnections"),
+    );
+    expect(revoke).not.toHaveBeenCalled();
+    const row = await accountRow(account.id);
+    expect(row.status).toBe("connected");
+    expect(row.accessTokenEnc).toBe(account.accessTokenEnc);
+    expect(row.refreshTokenEnc).toBe(account.refreshTokenEnc);
+  });
+
   it("disconnects the creator's account, refuses another's, and refreshes the page", async () => {
     const { disconnectAccount } = await import(
       "../../../src/app/(dashboard)/dashboard/_actions/social"

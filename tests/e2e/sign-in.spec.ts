@@ -5,6 +5,7 @@ import { readSignInCode, wrongCode } from "../helpers/read-latest-email";
 import { collectConsoleErrors } from "./helpers/console";
 import { atEveryWidth, expectPageFrame } from "./helpers/layout";
 import {
+  addStaleSessionCookie,
   e2eAdminEmail,
   requestCode,
   signInWithEmail,
@@ -65,13 +66,7 @@ test.describe("signed out", () => {
     context,
     baseURL,
   }) => {
-    await context.addCookies([
-      {
-        name: "better-auth.session_token",
-        value: "ended.c2lnbmF0dXJl",
-        url: baseURL,
-      },
-    ]);
+    await addStaleSessionCookie(context, baseURL);
     await page.goto("/dashboard");
     await expect(page).toHaveURL("/sign-in?next=%2Fdashboard");
     await expect(page.getByRole("status")).toHaveText(SIGNED_OUT);
@@ -83,8 +78,7 @@ test.describe("signed out", () => {
   test("the proxy keeps the whole path and query in next", async ({
     request,
   }) => {
-    // Only src/proxy.ts can answer these: the pages' own guards know their path but not the query, and
-    // /dashboard/nope has no page at all.
+    // Only src/proxy.ts can answer these without a cookie: /dashboard/nope has no page at all.
     for (const [path, next] of [
       ["/dashboard?from=x", "%2Fdashboard%3Ffrom%3Dx"],
       ["/dashboard/nope?x=1", "%2Fdashboard%2Fnope%3Fx%3D1"],
@@ -262,6 +256,11 @@ test.describe("signed in", () => {
 
     await page.goto("/sign-in?next=%2Fonboarding");
     await expect(page).toHaveURL("/onboarding?step=profile");
+    // Sign-in never lands on an API route: a GET there can start work (Set up payouts creates a Stripe account).
+    const payoutStarts = countRequests(page, "/api/stripe/onboarding");
+    await page.goto("/sign-in?next=%2Fapi%2Fstripe%2Fonboarding");
+    await expect(page).toHaveURL("/onboarding?step=profile");
+    expect(payoutStarts.count).toBe(0);
 
     const admin = await page.goto("/admin");
     expect(admin?.status()).toBe(404);

@@ -1,7 +1,11 @@
 import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MOCK_SOCIAL_SCENARIOS } from "../../env";
-import { SocialAuthError, SocialRateLimitError } from "../errors";
+import {
+  SocialAuthError,
+  SocialRateLimitError,
+  SocialUpstreamError,
+} from "../errors";
 import { createPkcePair } from "../pkce";
 import type { TokenSet } from "../types";
 import {
@@ -14,6 +18,8 @@ import {
 import { MOCK_POSTS, MOCK_THUMB_TONES, mockThumbnailSvg } from "./mock-data";
 
 const REDIRECT = "http://localhost:3100/api/connect/mock/callback";
+/** A refresh's deadline that hasn't passed. */
+const IN_TIME = { signal: new AbortController().signal };
 
 /** The code the mock's authorize step hands back for `userId`. */
 function authorizeCode(userId: string, challenge: string, second = false) {
@@ -105,16 +111,26 @@ describe("identity (07 D36)", () => {
   it("parses the seed's token values", async () => {
     const profile = await mockProvider.getProfile("mock_access_c4180ab2_seed");
     expect(profile.externalAccountId).toBe("mock_acct_c4180ab2");
-    const refreshed = await mockProvider.refreshToken({
-      accessToken: "mock_access_c4180ab2_seed",
-      accessTokenExpiresAt: null,
-      refreshToken: "mock_refresh_c4180ab2_seed",
-      refreshTokenExpiresAt: null,
-      scopes: ["mock.read"],
-    });
+    const refreshed = await mockProvider.refreshToken(
+      {
+        accessToken: "mock_access_c4180ab2_seed",
+        accessTokenExpiresAt: null,
+        refreshToken: "mock_refresh_c4180ab2_seed",
+        refreshTokenExpiresAt: null,
+        scopes: ["mock.read"],
+      },
+      IN_TIME,
+    );
     expect(refreshed.accessToken).toMatch(
       /^mock_access_c4180ab2_[0-9a-f]{16}$/,
     );
+  });
+
+  it("refuses a refresh whose deadline has passed", async () => {
+    const tokens = await connect("user-a");
+    await expect(
+      mockProvider.refreshToken(tokens, { signal: AbortSignal.abort() }),
+    ).rejects.toBeInstanceOf(SocialUpstreamError);
   });
 
   it("refuses a PKCE mismatch, a bad code and a token of the wrong kind", async () => {
@@ -235,9 +251,9 @@ describe("scenarios (07 D36)", () => {
   it("expired: refresh and listing need a reconnect", async () => {
     const tokens = await connect("user-a");
     setMockScenarioForTests("expired");
-    await expect(mockProvider.refreshToken(tokens)).rejects.toBeInstanceOf(
-      SocialAuthError,
-    );
+    await expect(
+      mockProvider.refreshToken(tokens, IN_TIME),
+    ).rejects.toBeInstanceOf(SocialAuthError);
     await expect(
       mockProvider.listPosts(tokens.accessToken, { cursor: null }),
     ).rejects.toBeInstanceOf(SocialAuthError);
@@ -279,11 +295,13 @@ describe("scenarios (07 D36)", () => {
   it("rotating_refresh: a refresh token works once", async () => {
     const tokens = await connect("user-a");
     setMockScenarioForTests("rotating_refresh");
-    const next = await mockProvider.refreshToken(tokens);
-    await expect(mockProvider.refreshToken(tokens)).rejects.toBeInstanceOf(
-      SocialAuthError,
-    );
-    await expect(mockProvider.refreshToken(next)).resolves.toMatchObject({
+    const next = await mockProvider.refreshToken(tokens, IN_TIME);
+    await expect(
+      mockProvider.refreshToken(tokens, IN_TIME),
+    ).rejects.toBeInstanceOf(SocialAuthError);
+    await expect(
+      mockProvider.refreshToken(next, IN_TIME),
+    ).resolves.toMatchObject({
       scopes: ["mock.read"],
     });
   });

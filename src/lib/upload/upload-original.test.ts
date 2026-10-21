@@ -160,6 +160,8 @@ let calls: Call[];
 let events: string[];
 let progress: [number, number][];
 let startAnswer: () => Response;
+/** A parts call's answer, or null for fresh URLs. */
+let partsAnswer: (partNumbers: number[]) => Response | null;
 let completeAnswer: () => Response;
 let abortAnswer: () => Response;
 let network: ReturnType<typeof fakeNetwork>;
@@ -184,6 +186,7 @@ beforeEach(() => {
   events = [];
   progress = [];
   startAnswer = () => json(multipart());
+  partsAnswer = () => null;
   completeAnswer = () => json({ ok: true });
   abortAnswer = () => new Response(null, { status: 204 });
   network = fakeNetwork();
@@ -219,6 +222,8 @@ beforeEach(() => {
       if (route === "parts") {
         // A part signed again gets a new URL.
         const { partNumbers } = body as { partNumbers: number[] };
+        const answer = partsAnswer(partNumbers);
+        if (answer) return answer;
         const urls = partNumbers.map((n) => {
           const count = (signed.get(n) ?? 0) + 1;
           signed.set(n, count);
@@ -309,8 +314,9 @@ describe("uploadOriginal (02 §5.9, 07 D80)", () => {
     expect(events.indexOf("status:checking")).toBeLessThan(
       events.indexOf("complete"),
     );
+    // Named, so it finishes this upload only (owner decision).
     expect(bodiesOf("complete")).toEqual([
-      { kind: "original", videoId: VIDEO_ID, meta: META },
+      { kind: "original", videoId: VIDEO_ID, uploadId: "u", meta: META },
     ]);
   });
 
@@ -319,7 +325,7 @@ describe("uploadOriginal (02 §5.9, 07 D80)", () => {
       ok: true,
     });
     expect(bodiesOf("complete")).toEqual([
-      { kind: "original", videoId: VIDEO_ID },
+      { kind: "original", videoId: VIDEO_ID, uploadId: "u" },
     ]);
   });
 
@@ -355,12 +361,13 @@ describe("uploadOriginal (02 §5.9, 07 D80)", () => {
     expect(FakeXhr.all).toEqual([]);
   });
 
-  it("is network when fetch rejects", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(() => Promise.reject(new TypeError("Failed to fetch"))),
+  it("is network when fetch rejects, never sending a fresh start again", async () => {
+    const rejecting = vi.fn(() =>
+      Promise.reject(new TypeError("Failed to fetch")),
     );
+    vi.stubGlobal("fetch", rejecting);
     expect(await upload()).toEqual({ ok: false, code: "network" });
+    expect(rejecting).toHaveBeenCalledTimes(1);
   });
 
   it("is internal when start's partCount disagrees with the plan", async () => {
@@ -459,26 +466,62 @@ describe("retries (07 D80, owner answer Q-45 a)", () => {
     expect(savedHint()).toEqual(HINT);
   });
 
-  it.each([
-    ["ok", () => json({ ok: true }), { ok: true }],
+  it.each<[string, () => void]>([
     [
-      "upload_expired",
-      () => json({ code: "upload_expired" }, 410),
-      { ok: false, code: "upload_expired" },
+      "a part PUT",
+      () => {
+        FakeXhr.answer = (part) => (part === 2 ? 404 : 200);
+      },
     ],
-  ] as const)(
-    "goes straight to complete when a part answers 404, which answers %s",
-    async (_, answer, result) => {
-      FakeXhr.answer = (part) => (part === 2 ? 404 : 200);
-      completeAnswer = answer;
-      expect(await upload()).toEqual(result);
-      expect(FakeXhr.sendsOf(2)).toHaveLength(1);
-      expect(bodiesOf("parts")).toHaveLength(1);
-      expect(statuses()).toEqual(["uploading", "checking"]);
-      expect(bodiesOf("complete")).toHaveLength(1);
+    [
+      "the part URLs",
+      () => {
+        partsAnswer = () => json({ code: "not_found" }, 404);
+      },
+    ],
+    [
+      "a part's re-sign",
+      () => {
+        FakeXhr.answer = (part) => (part === 2 ? 403 : 200);
+        partsAnswer = (partNumbers) =>
+          partNumbers.length === 1 ? json({ code: "not_found" }, 404) : null;
+      },
+    ],
+  ])(
+    "ends as stale_upload with no complete when %s answers 404: the upload isn't open any more",
+    async (_, setup) => {
+      setup();
+      expect(await upload()).toEqual({ ok: false, code: "stale_upload" });
+      expect(FakeXhr.sendsOf(2).length).toBeLessThanOrEqual(1);
+      expect(statuses()).not.toContain("checking");
+      expect(bodiesOf("complete")).toEqual([]);
       expect(savedHint()).toBeUndefined();
     },
   );
+
+  it("ends as upload_expired with no complete when the part URLs answer 410", async () => {
+    partsAnswer = () => json({ code: "upload_expired" }, 410);
+    expect(await upload()).toEqual({ ok: false, code: "upload_expired" });
+    expect(FakeXhr.all).toEqual([]);
+    expect(bodiesOf("complete")).toEqual([]);
+    expect(savedHint()).toBeUndefined();
+  });
+
+  it("ends as upload_expired, asking no second time, when a part's re-sign answers 410", async () => {
+    fakeTimers();
+    FakeXhr.answer = (part) => (part === 2 ? 403 : 200);
+    partsAnswer = (partNumbers) =>
+      partNumbers.length === 1 ? json({ code: "upload_expired" }, 410) : null;
+    const pending = upload();
+    await vi.runAllTimersAsync();
+    expect(await pending).toEqual({ ok: false, code: "upload_expired" });
+    expect(bodiesOf("parts")).toEqual([
+      { videoId: VIDEO_ID, uploadId: "u", partNumbers: range(1, 20) },
+      { videoId: VIDEO_ID, uploadId: "u", partNumbers: [2] },
+    ]);
+    expect(FakeXhr.sendsOf(2)).toHaveLength(1);
+    expect(bodiesOf("complete")).toEqual([]);
+  });
 });
 
 describe("offline (07 D80)", () => {
@@ -574,8 +617,35 @@ describe("resume (07 D80)", () => {
     expect(second).toEqual({ ...START_BODY, resume: true });
     expect(FakeXhr.sendsOf(7)).toHaveLength(2);
     expect(FakeXhr.all).toHaveLength(26);
-    expect(bodiesOf("complete")).toHaveLength(2);
+    expect(bodiesOf("complete")).toEqual([
+      { kind: "original", videoId: VIDEO_ID, uploadId: "u", meta: META },
+      { kind: "original", videoId: VIDEO_ID, uploadId: "u", meta: META },
+    ]);
     expect(savedHint()).toBeUndefined();
+  });
+
+  it("starts the repair pass from the bytes the server holds, reported before it says uploading again", async () => {
+    startAnswer = inTurn(
+      () => json(multipart()),
+      () => json(multipart({ doneParts: range(1, 25).filter((n) => n !== 7) })),
+    );
+    completeAnswer = inTurn(
+      () => json({ code: "parts_incomplete" }, 409),
+      () => json({ ok: true }),
+    );
+    const seen: [string, number | undefined][] = [];
+
+    expect(
+      await upload({
+        onStatus: (status) => seen.push([status, progress.at(-1)?.[0]]),
+      }),
+    ).toEqual({ ok: true });
+    expect(seen).toEqual([
+      ["uploading", 0],
+      ["checking", SIZE],
+      ["uploading", 24 * PART_SIZE],
+      ["checking", SIZE],
+    ]);
   });
 
   it("makes no second resume pass", async () => {
@@ -588,6 +658,123 @@ describe("resume (07 D80)", () => {
     expect(await upload()).toEqual({ ok: false, code: "parts_incomplete" });
     expect(bodiesOf("start")).toHaveLength(2);
     expect(bodiesOf("complete")).toHaveLength(2);
+  });
+});
+
+describe("a resume's start (07 D80, 04 §9.26 Paused)", () => {
+  const resume = { resume: true, expectedUploadId: "u" } as const;
+
+  it("is sent again after a dropped connection, and the upload goes on", async () => {
+    fakeTimers();
+    startAnswer = inTurn(dropped, () => json(multipart({ doneParts: [1] })));
+    const pending = upload(resume);
+    await vi.runAllTimersAsync();
+
+    expect(await pending).toEqual({ ok: true });
+    const [first, second] = calls.filter((c) => c.route === "start");
+    expect((second?.at ?? 0) - (first?.at ?? 0)).toBe(RETRY_DELAYS_MS[0]);
+    expect(FakeXhr.all).toHaveLength(24);
+  });
+
+  it(`pauses after ${PART_MAX_ATTEMPTS} retries with no answer, keeping the hint`, async () => {
+    fakeTimers();
+    saveHint(HINT);
+    startAnswer = dropped;
+    const pending = upload(resume);
+    await vi.runAllTimersAsync();
+
+    expect(await pending).toEqual({ ok: false, code: "paused" });
+    expect(bodiesOf("start")).toHaveLength(1 + PART_MAX_ATTEMPTS);
+    expect(bodiesOf("parts")).toEqual([]);
+    expect(savedHint()).toEqual(HINT);
+  });
+
+  it("shows paused while offline and goes on once back online", async () => {
+    network.set(false);
+    // Offline, the browser's fetch fails at once; the start then waits for the connection.
+    startAnswer = inTurn(dropped, () => json(multipart()));
+    const pending = upload(resume);
+    await vi.waitFor(() => expect(bodiesOf("start")).toHaveLength(1));
+    expect(statuses()).toEqual(["paused"]);
+
+    network.set(true);
+    expect(await pending).toEqual({ ok: true });
+    expect(statuses().slice(0, 2)).toEqual(["paused", "uploading"]);
+    expect(bodiesOf("start")).toHaveLength(2);
+  });
+
+  it("is canceled by a Cancel during the wait, with no start after it", async () => {
+    fakeTimers();
+    startAnswer = dropped;
+    const controller = new AbortController();
+    const pending = upload({ ...resume, signal: controller.signal });
+    await vi.advanceTimersByTimeAsync(500);
+    controller.abort();
+
+    expect(await pending).toEqual({ ok: false, code: "canceled" });
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(bodiesOf("start")).toHaveLength(1);
+  });
+});
+
+describe("complete first (Try again after complete's answer was lost, 07 D80)", () => {
+  const again = {
+    resume: true,
+    expectedUploadId: "u",
+    completeFirst: true,
+  } as const;
+
+  it("asks complete, naming the upload, and sends no start and no part when it's assembled", async () => {
+    saveHint(HINT);
+    expect(await upload(again)).toEqual({ ok: true });
+    expect(calls.map((c) => c.route)).toEqual(["complete"]);
+    expect(bodiesOf("complete")).toEqual([
+      { kind: "original", videoId: VIDEO_ID, uploadId: "u", meta: META },
+    ]);
+    expect(statuses()).toEqual(["checking"]);
+    expect(savedHint()).toBeUndefined();
+  });
+
+  it("resumes when a part is missing: only that part, then complete", async () => {
+    startAnswer = () =>
+      json(multipart({ doneParts: range(1, 25).filter((n) => n !== 7) }));
+    completeAnswer = inTurn(
+      () => json({ code: "parts_incomplete" }, 409),
+      () => json({ ok: true }),
+    );
+
+    expect(await upload(again)).toEqual({ ok: true });
+    expect(calls.map((c) => c.route)).toEqual([
+      "complete",
+      "start",
+      "parts",
+      "complete",
+    ]);
+    expect(bodiesOf("start")).toEqual([{ ...START_BODY, resume: true }]);
+    expect(FakeXhr.all.map((x) => x.part)).toEqual([7]);
+    expect(statuses()).toEqual(["checking", "uploading", "checking"]);
+  });
+
+  it("makes no second resume pass after it", async () => {
+    startAnswer = () => json(multipart({ doneParts: range(1, 25) }));
+    completeAnswer = () => json({ code: "parts_incomplete" }, 409);
+    expect(await upload(again)).toEqual({
+      ok: false,
+      code: "parts_incomplete",
+    });
+    expect(bodiesOf("start")).toHaveLength(1);
+    expect(bodiesOf("complete")).toHaveLength(2);
+  });
+
+  it("answers upload_expired as it is, forgetting the hint", async () => {
+    saveHint(HINT);
+    completeAnswer = () => json({ code: "upload_expired" }, 410);
+    expect(await upload(again)).toEqual({
+      ok: false,
+      code: "upload_expired",
+    });
+    expect(bodiesOf("start")).toEqual([]);
+    expect(savedHint()).toBeUndefined();
   });
 });
 

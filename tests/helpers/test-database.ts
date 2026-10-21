@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { parseEnv } from "node:util";
 import ConnectionParameters from "pg/lib/connection-parameters";
 
@@ -27,12 +29,32 @@ function databaseOf(url: string, key: string): string {
 }
 
 /**
- * Throws unless `env` is the test environment and its database is neither of `.env.local`'s (`localEnvText` is that
- * file's text, or undefined when it doesn't exist). Pure: no connection, no file access.
+ * The env files at `paths` parsed with node:util, later files winning; a missing file adds nothing. Blank values stay: a
+ * blank key still stops `next start` from filling it from .env.local.
+ */
+export function readEnvFiles(paths: readonly string[]): Record<string, string> {
+  const values: Record<string, string> = {};
+  for (const path of paths) {
+    if (!existsSync(path)) continue;
+    for (const [key, value] of Object.entries(
+      parseEnv(readFileSync(path, "utf8")),
+    )) {
+      if (value !== undefined) values[key] = value;
+    }
+  }
+  return values;
+}
+
+/**
+ * Throws unless `env` is the test environment, its database is the one `.env.test` names (`fileEnv`: .env.test and
+ * .env.test.local as read from the files, so a DATABASE_URL exported in the shell can't redirect the run) and it is
+ * neither of `.env.local`'s (`localEnvText` is that file's text, or undefined when it doesn't exist). Pure: no
+ * connection, no file access.
  */
 export function checkTestDatabase(
   env: DatabaseEnv,
   localEnvText: string | undefined,
+  fileEnv: DatabaseEnv,
 ): void {
   function refuse(why: string): never {
     throw new Error(`Refusing to touch the database: ${why}`);
@@ -48,6 +70,12 @@ export function checkTestDatabase(
       "DATABASE_URL and DATABASE_URL_UNPOOLED point at different databases",
     );
   }
+  if (!fileEnv.DATABASE_URL) refuse(".env.test has no DATABASE_URL");
+  if (databaseOf(fileEnv.DATABASE_URL, ".env.test DATABASE_URL") !== mine) {
+    refuse(
+      "DATABASE_URL is not the .env.test database (a DATABASE_URL exported in your shell wins over the files: unset it)",
+    );
+  }
   if (localEnvText === undefined) return;
   const local = parseEnv(localEnvText);
   for (const key of ["DATABASE_URL", "DATABASE_URL_UNPOOLED"] as const) {
@@ -56,4 +84,25 @@ export function checkTestDatabase(
       refuse(`DATABASE_URL is the .env.local database (${key})`);
     }
   }
+}
+
+/**
+ * checkTestDatabase on `env` against the files in `root`: .env.test then .env.test.local, and .env.local. Without `env`
+ * it checks the files' own values, as a run that uses them does. Returns the .env.test values.
+ */
+export function checkTestDatabaseFiles(
+  root: string,
+  env?: DatabaseEnv,
+): Record<string, string> {
+  const fileEnv = readEnvFiles([
+    join(root, ".env.test"),
+    join(root, ".env.test.local"),
+  ]);
+  const localEnv = join(root, ".env.local");
+  checkTestDatabase(
+    env ?? fileEnv,
+    existsSync(localEnv) ? readFileSync(localEnv, "utf8") : undefined,
+    fileEnv,
+  );
+  return fileEnv;
 }

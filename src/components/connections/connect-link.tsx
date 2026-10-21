@@ -2,6 +2,7 @@
 
 import { type MouseEvent, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { isPlainClick } from "@/components/ui/plain-click";
 
 /** A navigation that hasn't left after this long was stopped (Esc, a failed request): the link works again. */
 const PRESSED_MS = 10_000;
@@ -41,9 +42,7 @@ export function ConnectLink({
   }, [pressed]);
   const onClick = (event: MouseEvent<HTMLAnchorElement>) => {
     // A new tab or window leaves this page as it was.
-    const modified =
-      event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
-    if (event.button === 0 && !modified) setPressed(true);
+    if (isPlainClick(event)) setPressed(true);
   };
   return (
     <Button

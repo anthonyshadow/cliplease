@@ -15,6 +15,7 @@ import {
 
 const OLD_URL = "https://storage.test/part-1?sig=old";
 const FRESH_URL = "https://storage.test/part-1?sig=fresh";
+const FRESHER_URL = "https://storage.test/part-1?sig=fresher";
 const network: SendFailure = { kind: "network" };
 const http = (status: number): SendFailure => ({ kind: "http", status });
 const times = (n: number, failure: SendFailure) =>
@@ -201,15 +202,37 @@ describe("sendPartWithRetry (07 D80)", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("keeps the old URL and goes on retrying when the re-sign fails", async () => {
+  it("keeps the old URL when the re-sign fails, and re-signs at the next failure", async () => {
     const p = part(network, network);
     p.resign.mockRejectedValueOnce(network);
     const outcome = p.start();
     await vi.runAllTimersAsync();
     await expect(outcome).resolves.toBe("done");
-    expect(p.resign).toHaveBeenCalledTimes(1);
-    expect(p.urls()).toEqual([OLD_URL, OLD_URL, OLD_URL]);
+    expect(p.resign).toHaveBeenCalledTimes(2);
+    expect(p.urls()).toEqual([OLD_URL, OLD_URL, FRESH_URL]);
   });
+
+  it.each<[string, SendFailure[], boolean[]]>([
+    // Online at the failure, offline after the wait; online again at the 403.
+    ["during a retry wait", [network, http(403)], [true, false]],
+    // Online at the failure and after the wait, offline at the next failure; online again at the 403.
+    ["after a failure", [network, network, http(403)], [true, true, false]],
+  ])(
+    "re-signs again after time offline %s: the URL may have expired meanwhile",
+    async (_, failures, online) => {
+      const p = part(...failures);
+      for (const value of online) p.isOnline.mockReturnValueOnce(value);
+      p.resign
+        .mockResolvedValueOnce(FRESH_URL)
+        .mockResolvedValueOnce(FRESHER_URL);
+      const outcome = p.start();
+      await vi.runAllTimersAsync();
+      await expect(outcome).resolves.toBe("done");
+      expect(p.waitForOnline).toHaveBeenCalledTimes(1);
+      expect(p.resign).toHaveBeenCalledTimes(2);
+      expect(p.urls().at(-1)).toBe(FRESHER_URL);
+    },
+  );
 
   it("spends no retry and no re-sign on failures while offline", async () => {
     const p = part(...times(5, network));
@@ -331,15 +354,17 @@ describe("wait", () => {
 
 describe("within", () => {
   it("is the promise's value when it settles first, and leaves no timer", async () => {
-    await expect(within(Promise.resolve("id"), 1000)).resolves.toBe("id");
+    await expect(within(Promise.resolve("id"), 1000, null)).resolves.toBe("id");
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("is null once `ms` passed first", async () => {
+  it("is `late` once `ms` passed first", async () => {
     const result = vi.fn();
-    const racing = within(new Promise<string>(() => undefined), 1000).then(
-      result,
-    );
+    const racing = within(
+      new Promise<string>(() => undefined),
+      1000,
+      null,
+    ).then(result);
     await vi.advanceTimersByTimeAsync(999);
     expect(result).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);

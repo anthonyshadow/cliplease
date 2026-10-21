@@ -3,6 +3,7 @@
 import { formatBytes } from "../format";
 import { GENERIC_ERROR_MESSAGE } from "../result";
 import { SIGN_IN_COPY } from "../sign-in";
+import { graphemes } from "../text/graphemes";
 import { isBadFileCode, type UploadErrorCode } from "./codes";
 import {
   mimeFromFileName,
@@ -216,10 +217,16 @@ export function storedFailureLine(
     : BAD_FILE_LINE;
 }
 
-/** A file name cut in the middle (04 §9.26): the head truncates with CSS, the tail (extension included) always shows. */
+/**
+ * A file name cut in the middle (04 §9.26): the head truncates with CSS, the tail (extension included) always shows.
+ * Counted in characters (../text/graphemes), never cutting one in two.
+ */
 export function splitFileName(name: string, tail = 8): [string, string] {
+  // No more UTF-16 units than the two halves hold means no more characters either: nothing to segment.
   if (name.length <= tail * 2) return [name, ""];
-  return [name.slice(0, -tail), name.slice(-tail)];
+  const chars = graphemes(name);
+  if (chars.length <= tail * 2) return [name, ""];
+  return [chars.slice(0, -tail).join(""), chars.slice(-tail).join("")];
 }
 
 /** "Original attached · 0:14 · 720 × 1280", leaving out what the browser couldn't read. */

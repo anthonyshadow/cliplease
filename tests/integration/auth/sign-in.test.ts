@@ -23,7 +23,8 @@ import { resetDb } from "../../helpers/db";
 import { readLatestEmail, wrongCode } from "../../helpers/read-latest-email";
 
 // Better Auth 1.7.7 email OTP (02 §9.1, 07 D47, D88). auth.api.* skips the limiter and the origin check; the limiter
-// case goes through auth.handler. The listed admins must never stay behind as creators, so the file empties the database.
+// and /update-user cases go through auth.handler. The listed admins must never stay behind as creators, so the file
+// empties the database.
 afterAll(resetDb);
 
 const otpIdentifier = (email: string) => `sign-in-otp-${email}`;
@@ -137,6 +138,43 @@ describe("sign-in with an email code", () => {
     expect(response.status).toBe(200);
     expect((await userByEmail(email)).role).toBe("creator");
   });
+
+  it("keeps no name or image sent with a first sign-in (user.name waits for onboarding)", async () => {
+    const email = newCreatorEmail();
+    const code = await requestCode(email);
+    const response = await auth.api.signInEmailOTP({
+      body: {
+        email,
+        otp: code,
+        name: "Evil",
+        image: "https://tracker.example/p.gif",
+      },
+      asResponse: true,
+    });
+    expect(response.status).toBe(200);
+    expect(await userByEmail(email)).toMatchObject({ name: "", image: null });
+  });
+
+  it("closes Better Auth's /update-user: only updateProfile writes user.name (02 §5.2)", async () => {
+    const email = newCreatorEmail();
+    const cookie = await signInWithOtp(email);
+    const response = await auth.handler(
+      new Request(new URL("/api/auth/update-user", auth.options.baseURL), {
+        method: "POST",
+        headers: {
+          cookie,
+          origin: new URL("/", auth.options.baseURL).origin,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          name: "x".repeat(5000),
+          image: "https://tracker.example/p.gif",
+        }),
+      }),
+    );
+    expect(response.status).toBe(404);
+    expect(await userByEmail(email)).toMatchObject({ name: "", image: null });
+  });
 });
 
 describe("admin bootstrap (07 D88)", () => {
@@ -178,5 +216,37 @@ describe("rate limit (02 §9.1, 07 D54)", () => {
       .from(rateLimit)
       .where(eq(rateLimit.key, "203.0.113.7|/email-otp/send-verification-otp"));
     expect(row.count).toBe(1);
+  });
+
+  it("trusts x-forwarded-for only when it holds one address (Better Auth 1.7.7, no trustedProxies)", async () => {
+    // Vercel sends one address. A chain ("client, proxy") resolves to no client IP: one shared bucket per path in
+    // production, 127.0.0.1 under test.
+    expect(auth.options.advanced?.ipAddress).toEqual({
+      ipAddressHeaders: ["x-forwarded-for"],
+    });
+    const response = await auth.handler(
+      new Request(
+        new URL(
+          "/api/auth/email-otp/send-verification-otp",
+          auth.options.baseURL,
+        ),
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-forwarded-for": "203.0.113.8, 10.0.0.1",
+          },
+          body: JSON.stringify({ email: newCreatorEmail(), type: "sign-in" }),
+        },
+      ),
+    );
+    expect(response.status).toBe(200);
+    const keys = (await db.select({ key: rateLimit.key }).from(rateLimit)).map(
+      (row) => row.key,
+    );
+    expect(keys).toContain("127.0.0.1|/email-otp/send-verification-otp");
+    expect(
+      keys.filter((key) => /^(203\.0\.113\.8|10\.0\.0\.1)\|/.test(key)),
+    ).toEqual([]);
   });
 });

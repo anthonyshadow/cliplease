@@ -92,6 +92,17 @@ describe("fetchJson (02 §5.3)", () => {
     expect((error as SocialRateLimitError).retryAfterSec).toBe(300);
   });
 
+  it("caps Retry-After at a day, in seconds or as a date", async () => {
+    vi.setSystemTime(new Date("2026-10-18T12:00:00Z"));
+    for (const header of ["99999999", "Wed, 18 Oct 2028 12:00:00 GMT"]) {
+      fetchMock.mockResolvedValueOnce(json({}, 429, { "retry-after": header }));
+      const error = await fetchJson(URL_WITH_SECRETS, { schema }).catch(
+        (e: unknown) => e,
+      );
+      expect((error as SocialRateLimitError).retryAfterSec).toBe(86_400);
+    }
+  });
+
   it("doesn't retry by default, and maps another 4xx to SocialUpstreamError", async () => {
     fetchMock.mockResolvedValueOnce(json({}, 503));
     await expect(
@@ -138,6 +149,115 @@ describe("fetchJson (02 §5.3)", () => {
     await expect(
       fetchJson(URL_WITH_SECRETS, { schema }),
     ).rejects.toBeInstanceOf(SocialUpstreamError);
+  });
+
+  it("lets the adapter's mapError read a non-2xx body (Google invalid_grant, Instagram code 190)", async () => {
+    const google = (_: number, body: unknown) =>
+      (body as { error?: unknown } | null)?.error === "invalid_grant"
+        ? new SocialAuthError()
+        : null;
+    const instagram = (_: number, body: unknown) =>
+      (body as { error?: { code?: unknown } } | null)?.error?.code === 190
+        ? new SocialAuthError()
+        : null;
+    fetchMock.mockResolvedValueOnce(json({ error: "invalid_grant" }, 400));
+    await expect(
+      fetchJson(URL_WITH_SECRETS, { schema, mapError: google }),
+    ).rejects.toBeInstanceOf(SocialAuthError);
+    fetchMock.mockResolvedValueOnce(json({ error: { code: 190 } }, 400));
+    await expect(
+      fetchJson(URL_WITH_SECRETS, { schema, mapError: instagram }),
+    ).rejects.toBeInstanceOf(SocialAuthError);
+    fetchMock.mockResolvedValueOnce(json({ error: "invalid_grant" }, 400));
+    await expect(
+      fetchJson(URL_WITH_SECRETS, { schema }),
+    ).rejects.toBeInstanceOf(SocialUpstreamError);
+  });
+
+  it("falls back to the defaults when mapError returns null, and maps no body", async () => {
+    const mapError = vi.fn(() => null);
+    fetchMock.mockResolvedValueOnce(json({}, 401));
+    await expect(
+      fetchJson(URL_WITH_SECRETS, { schema, mapError }),
+    ).rejects.toBeInstanceOf(SocialAuthError);
+    fetchMock.mockResolvedValueOnce(new Response("not json", { status: 400 }));
+    const error = (await fetchJson(URL_WITH_SECRETS, {
+      schema,
+      mapError,
+    }).catch((e: unknown) => e)) as Error;
+    expect(error).toBeInstanceOf(SocialUpstreamError);
+    expect(error.message).not.toMatch(/not json/);
+    expect(mapError.mock.calls).toEqual([
+      [401, {}],
+      [400, null],
+    ]);
+  });
+
+  it("reads or cancels every answer it doesn't return, so the connection is reused", async () => {
+    const failed = json({}, 503);
+    const ok = json({ id: "c" });
+    fetchMock.mockResolvedValueOnce(failed).mockResolvedValueOnce(ok);
+    const result = fetchJson(URL_WITH_SECRETS, { schema, retries: 1 });
+    await vi.advanceTimersByTimeAsync(250);
+    await expect(result).resolves.toEqual({ id: "c" });
+    expect(failed.bodyUsed).toBe(true);
+
+    const answers = [json({}, 400), json({}, 401), json({}, 429)];
+    for (const answer of answers) {
+      fetchMock.mockResolvedValueOnce(answer);
+      await fetchJson(URL_WITH_SECRETS, { schema }).catch(() => null);
+      expect(answer.bodyUsed).toBe(true);
+    }
+  });
+
+  it("stops at once, with no retry, when the caller's signal aborts", async () => {
+    const before = new AbortController();
+    before.abort();
+    await expect(
+      fetchJson(URL_WITH_SECRETS, {
+        schema,
+        retries: 3,
+        signal: before.signal,
+      }),
+    ).rejects.toBeInstanceOf(SocialUpstreamError);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    const during = new AbortController();
+    fetchMock.mockImplementation(async (_: string, init: RequestInit) => {
+      expect(init.signal?.aborted).toBe(false);
+      during.abort();
+      expect(init.signal?.aborted).toBe(true);
+      throw new DOMException("aborted", "AbortError");
+    });
+    const error = (await fetchJson(URL_WITH_SECRETS, {
+      schema,
+      retries: 3,
+      signal: during.signal,
+    }).catch((e: unknown) => e)) as Error;
+    expect(error).toBeInstanceOf(SocialUpstreamError);
+    expect(error.message).toBe("GET https://graph.example.com/v1/me aborted");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops during a retry's wait when the caller's signal aborts", async () => {
+    const budget = new AbortController();
+    fetchMock.mockImplementation(async () => json({}, 503));
+    const result = fetchJson(URL_WITH_SECRETS, {
+      schema,
+      retries: 3,
+      signal: budget.signal,
+    });
+    const settled = expect(result).rejects.toThrow(
+      "GET https://graph.example.com/v1/me aborted",
+    );
+    await vi.advanceTimersByTimeAsync(250);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    // 100 ms into the 1 s wait before the third try.
+    await vi.advanceTimersByTimeAsync(100);
+    budget.abort();
+    await settled;
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("never puts the query or the body in an error message", async () => {

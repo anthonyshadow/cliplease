@@ -19,7 +19,8 @@ const POST: LibraryPostDTO = {
   title: null,
   captionExcerpt: "He saw snow for the first time and lost it #dogs #firstsnow",
   permalink: "https://example.com/mock/mock_post_x_01",
-  thumbnailSrc: "/api/library/thumbnails/6f1c2a4e-8b3d-4f5a-9c7e-1d2b3a4c5e6f",
+  thumbnailSrc:
+    "/api/library/thumbnails/6f1c2a4e-8b3d-4f5a-9c7e-1d2b3a4c5e6f?v=2026-10-19T10%3A00%3A00.000Z",
   thumbnailVersion: "2026-10-19T10:00:00.000Z",
   width: 720,
   height: 1280,

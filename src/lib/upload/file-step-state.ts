@@ -79,8 +79,11 @@ export type FileStep = {
   /** Another tab's upload locks the video here (Q-49). */
   elsewhere: boolean;
   showCover: boolean;
-  /** This device's hint names nothing to resume: it goes. */
-  clearHint: boolean;
+  /**
+   * The upload id of this device's hint when it names nothing to resume: that hint goes, and only that one (another
+   * tab may have written a newer one since it was read).
+   */
+  clearHint: string | null;
 };
 
 type Stored =
@@ -221,11 +224,14 @@ export function deriveFileStep(i: FileStepInput): FileStep {
         video.posterSrc !== null ||
         i.tabCover),
     // Any state but paused; an open upload the server couldn't read just now (no progress) keeps it: the next load
-    // decides.
+    // decides. Another tab uploading the video owns the hint.
     clearHint:
       hint !== null &&
       !entry &&
+      !elsewhere &&
       stored !== "paused" &&
-      !(video.originalStatus === "uploading" && !progress),
+      !(video.originalStatus === "uploading" && !progress)
+        ? hint.uploadId
+        : null,
   };
 }

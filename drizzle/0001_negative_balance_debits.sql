@@ -1,0 +1,1 @@
+ALTER TABLE "creator_profile" ADD COLUMN "negative_balance_debits_enabled_at" timestamp with time zone;

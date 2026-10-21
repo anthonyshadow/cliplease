@@ -2,21 +2,21 @@ import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { SignOutSettingsButton } from "@/components/layout/sign-out";
 import { PayoutCurrencyFacts } from "@/components/payouts/payout-currency-facts";
+import { PayoutsStatusLine } from "@/components/payouts/payouts-status-line";
+import { Banner } from "@/components/ui/banner";
 import { Button } from "@/components/ui/button";
 import { FactList } from "@/components/ui/fact-list";
-import { INLINE_LINK } from "@/components/ui/inline-link";
 import { PRIMARY_WIDTH } from "@/components/ui/primary-width";
 import { StatusPill } from "@/components/ui/status-pill";
 import { ToastOnMount } from "@/components/ui/toast";
-import { SUPPORT_EMAIL } from "@/lib/app-name";
 import { currencyLabel } from "@/lib/money/currency";
-import {
-  APPROVAL_WINDOW_LABEL,
-  PAYOUTS_STATUS_LABEL,
-  payoutsSetupLabel,
-} from "@/lib/payouts";
+import { APPROVAL_WINDOW_LABEL, payoutsSetupLabel } from "@/lib/payouts";
+import { GENERIC_ERROR_MESSAGE } from "@/lib/result";
 import { requireCreator } from "@/server/auth/session";
-import { refreshPayoutsStatus } from "@/server/creators/profile";
+import {
+  PAYOUTS_FORCED_READ_MAX_AGE_MS,
+  payoutsStatusForPage,
+} from "@/server/creators/profile";
 import { DisplayNameForm } from "./display-name-form";
 import { TimeZoneRow } from "./time-zone-row";
 
@@ -50,8 +50,9 @@ function Section({
 
 /**
  * S23 (05 §6.11): Payouts, Profile, Requests, Emails, Account, in one max-w-reading column left-aligned with the title
- * at every tier (07 D145). The payouts status is re-read when older than 10 minutes, and always on the return from
- * payout setup (?payouts=returned).
+ * at every tier (07 D145). The payouts status is re-read when older than 10 minutes, and on the return from payout
+ * setup (?payouts=returned) unless it was read in the last 10 s; a failed read shows the stored one. Payout setup that
+ * failed comes back with ?payouts=error: an error Banner, with the setup button as the retry (05 §1).
  */
 export default async function SettingsPage({
   searchParams,
@@ -59,34 +60,26 @@ export default async function SettingsPage({
   const { user, creator } = await requireCreator("/dashboard/settings");
   const { payouts } = await searchParams;
   const returned = payouts === "returned";
-  const status = await refreshPayoutsStatus(
-    creator.id,
-    returned ? { maxAgeMs: 0 } : {},
-  );
+  const status = await payoutsStatusForPage(creator.id, {
+    row: creator,
+    ...(returned ? { maxAgeMs: PAYOUTS_FORCED_READ_MAX_AGE_MS } : {}),
+  });
   const setupLabel = payoutsSetupLabel(status);
-  const unavailable = status === "rejected" || status === "unsupported";
 
   return (
     <div className="flex w-full max-w-reading flex-col gap-8 py-6 lg:py-12">
       <h1 className="text-title-1 text-ink">Settings</h1>
 
       <Section title="Payouts" id="payouts">
+        {payouts === "error" ? (
+          <Banner tone="error">{GENERIC_ERROR_MESSAGE}</Banner>
+        ) : null}
         {status !== "active" ? (
           <StatusPill tone="awaiting" className="self-start">
             Finish payout setup
           </StatusPill>
         ) : null}
-        {unavailable ? (
-          <p className="text-body text-ink">
-            Payouts unavailable. Contact{" "}
-            <a href={`mailto:${SUPPORT_EMAIL}`} className={INLINE_LINK}>
-              {SUPPORT_EMAIL}
-            </a>
-            .
-          </p>
-        ) : (
-          <p className="text-body text-ink">{PAYOUTS_STATUS_LABEL[status]}</p>
-        )}
+        <PayoutsStatusLine status={status} />
         <FactList
           facts={[
             {

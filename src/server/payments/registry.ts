@@ -21,7 +21,7 @@ export class CurrencyNotEnabledError extends Error {
 
 type RegistryEnv = Pick<
   Env,
-  "APP_ENV" | "PAYMENTS_DRIVER" | "ENABLED_CURRENCIES"
+  "APP_ENV" | "PAYMENTS_DRIVER" | "ENABLED_CURRENCIES" | "APP_URL"
 >;
 
 /** A memoized currency → driver lookup for `e` (the app's env in production code, an injected one in tests). */
@@ -43,7 +43,7 @@ export function createPaymentsRegistry(
         "The fake payments driver runs only when APP_ENV is development or test",
       );
     }
-    const driver = createFakeDriver({ currency });
+    const driver = createFakeDriver({ currency, appUrl: e.APP_URL });
     drivers.set(currency, driver);
     return driver;
   };

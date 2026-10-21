@@ -1,5 +1,5 @@
 import "server-only";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, isNull, lt, or, sql } from "drizzle-orm";
 import { db } from "@/db/client";
 import { creatorProfile, rateCard, rateOption, user } from "@/db/schema";
 import type { PayoutsStatus } from "@/lib/domain/values";
@@ -13,8 +13,11 @@ import { displayNameSchema } from "@/lib/validation/profile";
 import { normalizeTimeZone } from "@/lib/validation/time-zone";
 import { writeAudit } from "@/server/audit";
 import { type Actor, requireCreatorActor } from "@/server/auth/actor";
-import type { SessionUser } from "@/server/auth/session";
+import type { CreatorContext, SessionUser } from "@/server/auth/session";
 import { uniqueViolationConstraint } from "@/server/db-errors";
+import { errorName, logEvent } from "@/server/log";
+import { ensureNegativeBalanceDebits } from "@/server/payments/connect";
+import type { PaymentsDriver } from "@/server/payments/driver";
 import { paymentsDriver } from "@/server/payments/registry";
 
 // Creator profile writes (02 §5.2, 07 §8.2). There is no payout setter: payout_currency keeps its default 'cad' (07 D94).
@@ -170,38 +173,169 @@ export async function updateTimeZone(
   });
 }
 
+/** A stored payouts status younger than this is used as is. */
+const PAYOUTS_STATUS_MAX_AGE_MS = 10 * MINUTE_MS;
+
 /**
- * The payouts status, re-read from the creator's payments driver when the stored one is older than `maxAgeMs` (0 always
- * re-reads). No account yet → 'not_started' without a call. The sync time uses the app's clock, which the freshness
- * check compares against.
+ * The payout setup route and the return to Settings force a re-read, but one made in the last 10 s is reused (owner
+ * answer): repeated hits, and the re-renders a Settings action causes, make no new driver call.
  */
-export async function refreshPayoutsStatus(
+export const PAYOUTS_FORCED_READ_MAX_AGE_MS = 10_000;
+
+/**
+ * Reads the status from `driver` and stores it with the time the reading started (the app's clock, which the freshness
+ * check compares against). The write is fenced on that time, so an older reading that finishes late never replaces a
+ * newer one: it returns the stored status instead.
+ */
+async function storePayoutsReading(
   creatorId: string,
-  { maxAgeMs = 10 * MINUTE_MS }: { maxAgeMs?: number } = {},
+  accountId: string,
+  driver: PaymentsDriver,
 ): Promise<PayoutsStatus> {
+  const readAt = new Date();
+  const { status } = await driver.fetchPayoutsStatus(accountId);
+  const [written] = await db
+    .update(creatorProfile)
+    .set({ payoutsStatus: status, payoutsStatusSyncedAt: readAt })
+    .where(
+      and(
+        eq(creatorProfile.id, creatorId),
+        or(
+          isNull(creatorProfile.payoutsStatusSyncedAt),
+          lt(creatorProfile.payoutsStatusSyncedAt, readAt),
+        ),
+      ),
+    )
+    .returning({ status: creatorProfile.payoutsStatus });
+  if (written) return written.status;
+  const [newer] = await db
+    .select({ status: creatorProfile.payoutsStatus })
+    .from(creatorProfile)
+    .where(eq(creatorProfile.id, creatorId))
+    .limit(1);
+  return newer?.status ?? status;
+}
+
+/** A page load retries the negative-balance setting with nobody pressing anything for it. */
+const LAZY: Actor = { kind: "system", source: "lazy" };
+
+/** What a payouts read needs; a caller passes its creator context's copy, read with the session, to skip the select. */
+export type PayoutsRow = Pick<
+  CreatorContext["creator"],
+  | "stripeAccountId"
+  | "payoutsStatus"
+  | "payoutsStatusSyncedAt"
+  | "payoutCurrency"
+  | "negativeBalanceDebitsEnabledAt"
+>;
+
+async function readPayoutsRow(creatorId: string): Promise<PayoutsRow> {
   const [row] = await db
     .select({
       stripeAccountId: creatorProfile.stripeAccountId,
       payoutsStatus: creatorProfile.payoutsStatus,
-      syncedAt: creatorProfile.payoutsStatusSyncedAt,
+      payoutsStatusSyncedAt: creatorProfile.payoutsStatusSyncedAt,
       payoutCurrency: creatorProfile.payoutCurrency,
+      negativeBalanceDebitsEnabledAt:
+        creatorProfile.negativeBalanceDebitsEnabledAt,
     })
     .from(creatorProfile)
     .where(eq(creatorProfile.id, creatorId))
     .limit(1);
   if (!row) throw new Error(`creator ${creatorId} not found`);
+  return row;
+}
+
+/** The two exported reads below: the stored status while fresh, else a new reading; they differ only when it fails. */
+async function payoutsStatus(
+  creatorId: string,
+  {
+    row: given,
+    maxAgeMs,
+    onReadFailure,
+    debitsActor,
+  }: {
+    row: PayoutsRow | undefined;
+    maxAgeMs: number;
+    onReadFailure: "throw" | "keep_stored";
+    debitsActor: Actor | null;
+  },
+): Promise<PayoutsStatus> {
+  const row = given ?? (await readPayoutsRow(creatorId));
   if (!row.stripeAccountId) return "not_started";
   const fresh =
     maxAgeMs > 0 &&
-    row.syncedAt !== null &&
-    Date.now() - row.syncedAt.getTime() < maxAgeMs;
+    row.payoutsStatusSyncedAt !== null &&
+    Date.now() - row.payoutsStatusSyncedAt.getTime() < maxAgeMs;
   if (fresh) return row.payoutsStatus;
-  const { status } = await paymentsDriver(
-    row.payoutCurrency,
-  ).fetchPayoutsStatus(row.stripeAccountId);
-  await db
-    .update(creatorProfile)
-    .set({ payoutsStatus: status, payoutsStatusSyncedAt: new Date() })
-    .where(eq(creatorProfile.id, creatorId));
+  // Resolved outside the try: a configuration error (CurrencyNotEnabledError) always throws.
+  const driver = paymentsDriver(row.payoutCurrency);
+  let status: PayoutsStatus;
+  try {
+    status = await storePayoutsReading(creatorId, row.stripeAccountId, driver);
+  } catch (error) {
+    if (onReadFailure === "throw") throw error;
+    // The sync time stays, so the next load tries again.
+    logEvent("warn", "payouts.status_refresh_failed", {
+      creatorId,
+      error: errorName(error),
+    });
+    return row.payoutsStatus;
+  }
+  if (row.negativeBalanceDebitsEnabledAt === null && debitsActor) {
+    // The re-read also retries the negative-balance setting (07 D139), for creators who never press Set up payouts
+    // again.
+    await ensureNegativeBalanceDebits({
+      creatorId,
+      accountId: row.stripeAccountId,
+      driver,
+      actor: debitsActor,
+    });
+  }
   return status;
+}
+
+/**
+ * The payouts status, re-read from the creator's payments driver when the stored one is older than `maxAgeMs` (0 always
+ * re-reads). No account yet → 'not_started' without a call. A failed read throws, so Approve (07 D29) never acts on a
+ * stale 'active'. `row` is the caller's creator context, read with the session.
+ */
+export async function refreshPayoutsStatus(
+  creatorId: string,
+  {
+    maxAgeMs = PAYOUTS_STATUS_MAX_AGE_MS,
+    debitsActor = LAZY,
+    row,
+  }: {
+    maxAgeMs?: number;
+    /** Who retries the negative-balance setting; null when the caller has just tried it. */
+    debitsActor?: Actor | null;
+    row?: PayoutsRow;
+  } = {},
+): Promise<PayoutsStatus> {
+  return payoutsStatus(creatorId, {
+    row,
+    maxAgeMs,
+    onReadFailure: "throw",
+    debitsActor,
+  });
+}
+
+/**
+ * refreshPayoutsStatus for a page (Settings, the onboarding payouts step): a failed read is logged and the stored
+ * status shown, so the rest of the page still works. `row` is the page's creator context, read with the session.
+ */
+export async function payoutsStatusForPage(
+  creatorId: string,
+  {
+    maxAgeMs = PAYOUTS_STATUS_MAX_AGE_MS,
+    row,
+  }: { maxAgeMs?: number; row?: PayoutsRow } = {},
+): Promise<PayoutsStatus> {
+  return payoutsStatus(creatorId, {
+    row,
+    maxAgeMs,
+    onReadFailure: "keep_stored",
+    debitsActor: LAZY,
+  });
 }

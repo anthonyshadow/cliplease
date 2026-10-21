@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { type AuditExecutor, auditActorType, writeAudit } from "./audit";
+import {
+  type AuditExecutor,
+  auditActorType,
+  writeAudit,
+  writeAudits,
+} from "./audit";
 import type { Actor } from "./auth/actor";
 
-/** An executor that records what would be inserted, without a database. */
+/** An executor that records what would be inserted, without a database: one entry per INSERT. */
 function recorder() {
   const rows: unknown[] = [];
   const exec = {
@@ -137,5 +142,47 @@ describe("writeAudit", () => {
         note: "sent to [email]",
       },
     });
+  });
+});
+
+describe("writeAudits", () => {
+  const creator: Actor = { kind: "creator", userId: "u1", creatorId: "c1" };
+  const removed = (id: string) => ({
+    action: "social_post.removed",
+    entityType: "social_post",
+    entityId: id,
+    data: { socialPostId: id, accessToken: "t" },
+  });
+
+  it("inserts every entry in one INSERT, redacted like writeAudit's", async () => {
+    const { exec, rows } = recorder();
+    await writeAudits(exec, creator, [removed("p1"), removed("p2")]);
+    expect(rows).toEqual([
+      ["p1", "p2"].map((id) => ({
+        actorType: "creator",
+        actorUserId: "u1",
+        action: "social_post.removed",
+        entityType: "social_post",
+        entityId: id,
+        data: { socialPostId: id, accessToken: "[redacted]" },
+      })),
+    ]);
+  });
+
+  it("inserts nothing for no entries", async () => {
+    const { exec, rows } = recorder();
+    await writeAudits(exec, creator, []);
+    expect(rows).toEqual([]);
+  });
+
+  it("refuses the whole batch before inserting when one action isn't scope.action", async () => {
+    const { exec, rows } = recorder();
+    await expect(
+      writeAudits(exec, creator, [
+        removed("p1"),
+        { ...removed("p2"), action: "Post Removed" },
+      ]),
+    ).rejects.toThrow(/scope\.action/);
+    expect(rows).toEqual([]);
   });
 });

@@ -9,15 +9,24 @@ export const SCOPED_NAME = /^[a-z_]+([.][a-z_]+)+$/;
 
 const RESERVED = new Set(["ts", "level", "event"]);
 
-/** `{ ts, level, event, ...fields }` as one line, fields redacted; fields can't replace ts, level or event. */
+/**
+ * `{ ts, level, event, ...fields }` as one line, fields redacted; fields can't replace ts, level or event. Never throws:
+ * a log call usually sits in a catch block, so fields that can't be serialized (a throwing getter or toJSON) give
+ * `logError: "unserializable_fields"` in their place instead of hiding the error being logged.
+ */
 export function formatLogLine(
   level: LogLevel,
   event: string,
   fields: Record<string, unknown> = {},
 ): string {
-  const safe = redact(fields) as Record<string, unknown>;
-  const rest = Object.fromEntries(
-    Object.entries(safe).filter(([key]) => !RESERVED.has(key)),
-  );
-  return `${JSON.stringify({ ts: new Date().toISOString(), level, event, ...rest })}\n`;
+  const ts = new Date().toISOString();
+  try {
+    const safe = redact(fields) as Record<string, unknown>;
+    const rest = Object.fromEntries(
+      Object.entries(safe).filter(([key]) => !RESERVED.has(key)),
+    );
+    return `${JSON.stringify({ ts, level, event, ...rest })}\n`;
+  } catch {
+    return `${JSON.stringify({ ts, level, event, logError: "unserializable_fields" })}\n`;
+  }
 }

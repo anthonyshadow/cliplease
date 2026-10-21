@@ -1,10 +1,10 @@
 import { INLINE_LINK } from "@/components/ui/inline-link";
 import type { Currency } from "@/lib/domain/values";
-import { currencyLabel } from "@/lib/money/currency";
+import { currencyLabel, PAYOUT_BANK_ACCOUNT } from "@/lib/money/currency";
 
-/** "You'll get paid in Canadian dollars (CAD) to a Canadian bank account." (07 D94, D98); P34 adds the USD sentence. */
+/** "You'll get paid in Canadian dollars (CAD) to a Canadian bank account." (07 D94, D98), or the USD sentence. */
 export function payoutCurrencyFact(currency: Currency): string {
-  return `You'll get paid in ${currencyLabel(currency)} to a Canadian bank account.`;
+  return `You'll get paid in ${currencyLabel(currency)} to ${PAYOUT_BANK_ACCOUNT[currency]}.`;
 }
 
 /**

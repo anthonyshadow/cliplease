@@ -1,4 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { expect, type Request, type Response, test } from "@playwright/test";
+import { encodeLibraryCursor } from "../../src/lib/library/filter";
 import { CONNECTIONS, SYNC_LINE } from "./helpers/connections";
 import { collectConsoleErrors, type ExpectedFailure } from "./helpers/console";
 import { signUpCreator } from "./helpers/creator";
@@ -102,9 +104,10 @@ test("J3: the empty Library, then a Demo connect shows 24 tiles with loaded thum
   await expect(
     first.getByRole("link", { name: "Make licensable", exact: true }),
   ).toHaveAttribute("href", href ?? "");
+  // The thumbnail's version rides in the query, so a sync's new image gets past the browser's cached one.
   await expect(first.locator("img")).toHaveAttribute(
     "src",
-    `/api/library/thumbnails/${postId}`,
+    new RegExp(`^/api/library/thumbnails/${postId}\\?v=`),
   );
   // Every tile links to its own post.
   const hrefs = await tileLink(tiles(page)).evaluateAll((links) =>
@@ -170,9 +173,9 @@ test("J3: the Demo chip, caption search and Clear search keep each other's filte
   expect(errors).toEqual([]);
 });
 
-test("J3: with two Demo accounts, All 48, Show more appends the next 24, and the strip filters to one account", async ({
+test("J3: with two Demo accounts, All 48, Show more appends the next 24, the strip filters to one account, and a cursor past the end starts over", async ({
   page,
-}) => {
+}, testInfo) => {
   test.setTimeout(90_000);
   const errors = collectConsoleErrors(page);
   await signUpCreator(page);
@@ -185,6 +188,21 @@ test("J3: with two Demo accounts, All 48, Show more appends the next 24, and the
 
   // Show more appends in place (a Server Action) once the island has hydrated, and focuses the first new tile.
   await waitForGridHydrated(page);
+  // A Cmd/Ctrl click is the browser's: the next page (?cursor=) opens in a new tab and this grid stays as it is.
+  if (testInfo.project.name === "chromium-desktop") {
+    const [next] = await Promise.all([
+      page.context().waitForEvent("page"),
+      page
+        .getByRole("link", { name: "Show more" })
+        .click({ modifiers: ["ControlOrMeta"] }),
+    ]);
+    // The new tab starts at about:blank: its tiles mean the ?cursor= page has loaded.
+    await expect(tiles(next)).toHaveCount(24);
+    expect(searchParam(next, "cursor")).not.toBeNull();
+    await next.close();
+    await expect(tiles(page)).toHaveCount(24);
+    expect(searchParam(page, "cursor")).toBeNull();
+  }
   await pressLink(page, "Show more");
   await expect(tiles(page)).toHaveCount(48);
   await expect(tileLink(tiles(page).nth(24))).toBeFocused();
@@ -217,6 +235,18 @@ test("J3: with two Demo accounts, All 48, Show more appends the next 24, and the
   expect(new Set(await tileCaption(tiles(page)).allTextContents()).size).toBe(
     24,
   );
+
+  // A cursor past the end of the list (a bookmark whose posts have gone since) starts over from the first page with the
+  // same filters, never "No videos found".
+  const account = searchParam(page, "account");
+  const past = encodeLibraryCursor({
+    postedAt: new Date("1971-01-01T00:00:00Z"),
+    id: randomUUID(),
+  });
+  await page.goto(`${LIBRARY}?account=${account}&cursor=${past}`);
+  await expect.poll(() => searchParam(page, "cursor")).toBeNull();
+  expect(searchParam(page, "account")).toBe(account);
+  await expect(tiles(page)).toHaveCount(24);
   expect(errors).toEqual([]);
 });
 

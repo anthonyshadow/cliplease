@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import { db } from "../../db/client";
 import { license, licenseRequest, video } from "../../db/schema";
 import type { PosterOrigin } from "../../lib/domain/values";
@@ -11,7 +11,7 @@ import { errorName, logEvent } from "../log";
 import { contentDisposition } from "./content-disposition";
 import { MultipartError } from "./errors";
 import { storage } from "./index";
-import { originalKey, posterKey, posterKeyVideoId } from "./keys";
+import { originalKey, posterKey, posterKeyVideoId, posterPrefix } from "./keys";
 import {
   expectedPartSize,
   GET_URL_TTL_S,
@@ -79,6 +79,8 @@ export type CompleteUploadInput =
   | {
       kind: "original";
       videoId: string;
+      /** The upload start opened: a complete for one a newer start replaced answers not_found. */
+      uploadId: string;
       meta?: {
         durationMs: number | null;
         width: number | null;
@@ -103,6 +105,12 @@ const fail = <C extends string>(code: C): Fail<C> => ({ ok: false, code });
 
 /** How long a poster's upload token outlives its PUT URL. */
 const POSTER_TOKEN_GRACE_S = 15 * 60;
+/**
+ * When a poster object no row points at (a PUT never completed) is a stray: once no upload token can name it any more,
+ * plus an hour for a complete that read one just in time.
+ */
+const STRAY_POSTER_AFTER_MS =
+  (PUT_URL_TTL_S + POSTER_TOKEN_GRACE_S + 3600) * 1000;
 const WINDOW_S = UPLOAD_RESUME_WINDOW_MS / 1000;
 const nowS = () => Math.floor(Date.now() / 1000);
 const posterTokenKey = () => deriveSubkey(POSTER_TOKEN_SUBKEY);
@@ -236,9 +244,10 @@ type OpenUpload = {
 
 /**
  * Ends the open upload with one write fenced on it (status uploading, its upload id and key): ready when the file at the
- * key checks out, failed with the reason otherwise; `expired` skips the check (07 D80's 24 h, or parts gone without a
- * file). A failure takes the parts and any file at the key with it. When the fence misses, another call (a parallel
- * complete, a new start, an abort) ended it first: that outcome stands, and a file no row points at goes.
+ * key checks out and the video isn't disabled (owner answer Q-38 a), failed with the reason otherwise; `expired` skips
+ * the check (07 D80's 24 h, or parts gone without a file). A failure takes the parts and any file at the key with it.
+ * When the fence misses, another call (a parallel complete, a new start, an abort, a disable) ended it first: that
+ * outcome stands, and a file no row points at goes.
  */
 async function settle(
   u: OpenUpload,
@@ -280,6 +289,8 @@ async function settle(
         eq(video.originalStatus, "uploading"),
         eq(video.originalUploadId, u.uploadId),
         eq(video.originalObjectKey, u.key),
+        // Read again by the write itself: a video disabled since the caller's read never turns ready.
+        outcome === "ok" ? ne(video.status, "disabled") : undefined,
       ),
     )
     .returning({ id: video.id });
@@ -313,6 +324,8 @@ export async function presignUpload(
       | "bad_type"
       | "upload_expired"
       | "not_same_file"
+      | "size_mismatch"
+      | "bad_signature_bytes"
     >
 > {
   const { creatorId } = requireCreatorActor(a);
@@ -336,37 +349,43 @@ async function startOriginal(
     contentType: i.contentType,
   });
   // The row lock serializes this with a publish or another start; the lock rule is read again under it.
-  const previous = await db.transaction(async (tx) => {
-    const [locked] = await tx
-      .select({
-        key: video.originalObjectKey,
-        uploadId: video.originalUploadId,
-      })
-      .from(video)
-      .where(eq(video.id, row.id))
-      .for("update");
-    if (!locked || (await isOriginalLocked(row.id, tx))) return null;
-    await tx
-      .update(video)
-      .set({
-        originalStatus: "uploading",
-        originalObjectKey: key,
-        originalUploadId: uploadId,
-        originalPartBytes: PART_BYTES,
-        originalUploadStartedAt: sql`now()`,
-        originalBytes: i.size,
-        originalMime: i.contentType,
-        originalFilename: i.fileName,
-        originalError: null,
-        originalUpdatedAt: sql`now()`,
-        // The hints belong to the file: the new one brings its own at complete.
-        durationMs: null,
-        width: null,
-        height: null,
-      })
-      .where(eq(video.id, row.id));
-    return locked;
-  });
+  const previous = await db
+    .transaction(async (tx) => {
+      const [locked] = await tx
+        .select({
+          key: video.originalObjectKey,
+          uploadId: video.originalUploadId,
+        })
+        .from(video)
+        .where(eq(video.id, row.id))
+        .for("update");
+      if (!locked || (await isOriginalLocked(row.id, tx))) return null;
+      await tx
+        .update(video)
+        .set({
+          originalStatus: "uploading",
+          originalObjectKey: key,
+          originalUploadId: uploadId,
+          originalPartBytes: PART_BYTES,
+          originalUploadStartedAt: sql`now()`,
+          originalBytes: i.size,
+          originalMime: i.contentType,
+          originalFilename: i.fileName,
+          originalError: null,
+          originalUpdatedAt: sql`now()`,
+          // The hints belong to the file: the new one brings its own at complete.
+          durationMs: null,
+          width: null,
+          height: null,
+        })
+        .where(eq(video.id, row.id));
+      return locked;
+    })
+    .catch(async (error: unknown) => {
+      // No row points at the new upload: it goes, and the route still answers 500.
+      await abortQuietly(row.id, key, uploadId);
+      throw error;
+    });
   if (!previous) {
     await abortQuietly(row.id, key, uploadId);
     return fail("original_locked");
@@ -406,6 +425,7 @@ async function resumeOriginal(
   }
   const partSize = row.originalPartBytes ?? PART_BYTES;
   const count = partCount(i.size, partSize);
+  const all = Array.from({ length: count }, (_, n) => n + 1);
   const upload = {
     mode: "multipart" as const,
     key,
@@ -422,14 +442,23 @@ async function resumeOriginal(
   });
   if (stored.state === "expired") {
     const open = { videoId: row.id, key, uploadId, size: i.size };
-    await settle(open, { expired: true });
+    const answer = await settle(open, { expired: true });
+    // A parallel complete ended it first, as complete reports it: ready (every part is in, and the client's complete is
+    // the no-op on a ready row) or the file's failure. Anything else, a new start included, is expired.
+    if (answer.ok) {
+      return { ok: true as const, upload: { ...upload, doneParts: all } };
+    }
+    if (
+      answer.code === "size_mismatch" ||
+      answer.code === "bad_signature_bytes"
+    ) {
+      return fail(answer.code);
+    }
     return fail("upload_expired");
   }
   // Assembled: every part is in, and the client's complete finishes it as a retried complete would.
   const doneParts =
-    stored.state === "assembled"
-      ? Array.from({ length: count }, (_, n) => n + 1)
-      : stored.parts.map((p) => p.partNumber);
+    stored.state === "assembled" ? all : stored.parts.map((p) => p.partNumber);
   return { ok: true as const, upload: { ...upload, doneParts } };
 }
 
@@ -479,12 +508,15 @@ async function startPoster(
   if (i.contentType !== POSTER_MIME) return fail("bad_type");
   if (i.size < 1 || i.size > POSTER_MAX_BYTES) return fail("too_large");
   const key = posterKey(row.id);
-  const { url } = await storage().presignPut({
-    key,
-    contentType: POSTER_MIME,
-    contentLength: i.size,
-    expiresIn: PUT_URL_TTL_S,
-  });
+  const [{ url }] = await Promise.all([
+    storage().presignPut({
+      key,
+      contentType: POSTER_MIME,
+      contentLength: i.size,
+      expiresIn: PUT_URL_TTL_S,
+    }),
+    sweepStrayPosters(row.id, row.posterObjectKey),
+  ]);
   const uploadToken = signPosterToken(posterTokenKey(), {
     videoId: row.id,
     creatorId,
@@ -505,13 +537,33 @@ async function startPoster(
   };
 }
 
-/** Signs UploadPart URLs for the video's open upload: at most PART_URL_BATCH, each 1…partCount. Changes nothing. */
+/**
+ * Deletes the video's stray posters (STRAY_POSTER_AFTER_MS), every key but `keep`, the live poster, at each poster start
+ * (a swap deletes the poster it replaces itself). Best-effort, so it never fails the start; nothing else sweeps posters/
+ * (02 §5.9's lifecycle rule covers unfinished multipart uploads only).
+ */
+async function sweepStrayPosters(videoId: string, keep: string | null) {
+  await quietly("uploads.poster_sweep_failed", videoId, async () => {
+    const before = Date.now() - STRAY_POSTER_AFTER_MS;
+    const objects = await storage().list(posterPrefix(videoId));
+    await Promise.all(
+      objects
+        .filter((o) => o.key !== keep && o.lastModified.getTime() < before)
+        .map((o) => storage().delete(o.key)),
+    );
+  });
+}
+
+/**
+ * Signs UploadPart URLs for the video's open upload: at most PART_URL_BATCH, each 1…partCount; upload_expired once the
+ * 24 h window is over (07 D80). Changes nothing: the row turns failed at the next start or complete.
+ */
 export async function presignParts(
   a: Actor,
   i: { videoId: string; uploadId: string; partNumbers: number[] },
 ): Promise<
   | { ok: true; urls: Record<number, string> }
-  | Fail<"not_found" | "too_many" | "bad_part">
+  | Fail<"not_found" | "upload_expired" | "too_many" | "bad_part">
 > {
   const { creatorId } = requireCreatorActor(a);
   const row = await ownVideo(creatorId, i.videoId);
@@ -527,6 +579,7 @@ export async function presignParts(
   ) {
     return fail("not_found");
   }
+  if (!row.uploadFresh) return fail("upload_expired");
   if (i.partNumbers.length > PART_URL_BATCH) return fail("too_many");
   const count = partCount(
     row.originalBytes,
@@ -556,8 +609,10 @@ export async function presignParts(
 /**
  * Finishes an upload (02 §5.9). Original: the server lists the stored parts, checks them, assembles them with its own
  * ETags (never the client's), then checks the size and the first bytes; the row ends ready or failed, fenced on the
- * upload it started from. A missing or short part leaves the upload open for the client to send again (owner answer Q-35
- * a). Calling it again on a ready row is ok. Poster: the upload token names the key; once checked, it replaces the poster.
+ * upload the call names, and an upload a newer start replaced is not_found. A missing or short part leaves the upload
+ * open for the client to send again (owner answer Q-35 a). Calling it again on a ready row is ok, and a failed row
+ * answers its failure. Poster: the upload token names the key; once checked, it replaces the poster, and a refused one
+ * goes.
  */
 export async function completeUpload(
   a: Actor,
@@ -580,11 +635,17 @@ async function completeOriginal(
     return fail(storedFailure(row.originalError));
   }
   const key = row.originalObjectKey;
-  const uploadId = row.originalUploadId;
   const size = row.originalBytes;
-  if (row.originalStatus !== "uploading" || !key || !uploadId || !size) {
+  // Only the named upload: a late complete never finishes another one in its place, nor writes its hints there.
+  if (
+    row.originalStatus !== "uploading" ||
+    !key ||
+    !size ||
+    row.originalUploadId !== i.uploadId
+  ) {
     return fail("not_found");
   }
+  const uploadId = i.uploadId;
   const open = { videoId: row.id, key, uploadId, size, meta: i.meta };
   if (!row.uploadFresh) return settle(open, { expired: true });
 
@@ -623,7 +684,9 @@ async function completePoster(
     return fail("not_found");
   }
   const row = await ownVideo(creatorId, i.videoId);
-  if (!row || row.status === "disabled") return fail("not_found");
+  if (!row || row.status === "disabled") {
+    return refusePoster(i.videoId, token.key, row?.posterObjectKey);
+  }
   if (row.posterObjectKey === token.key) return { ok: true };
   const check = await verifyUploadedObject(token.key, {
     kind: "poster",
@@ -634,24 +697,41 @@ async function completePoster(
     if (check !== "not_found") await deleteQuietly(row.id, token.key);
     return fail(check);
   }
-  const previous = await db.transaction(async (tx) => {
-    const [locked] = await tx
-      .select({ key: video.posterObjectKey })
+  const locked = await db.transaction(async (tx) => {
+    const [current] = await tx
+      .select({ key: video.posterObjectKey, status: video.status })
       .from(video)
       .where(and(eq(video.id, row.id), eq(video.creatorId, creatorId)))
       .for("update");
-    if (!locked) return null;
-    await tx
-      .update(video)
-      .set({ posterObjectKey: token.key, posterOrigin: token.posterOrigin })
-      .where(eq(video.id, row.id));
-    return locked;
+    // Read again under the row lock: a disable that lands during the check wins (02 §6.2).
+    if (current && current.status !== "disabled") {
+      await tx
+        .update(video)
+        .set({ posterObjectKey: token.key, posterOrigin: token.posterOrigin })
+        .where(eq(video.id, row.id));
+    }
+    return current;
   });
-  if (!previous) return fail("not_found");
-  if (previous.key && previous.key !== token.key) {
-    await deleteQuietly(row.id, previous.key);
+  if (!locked || locked.status === "disabled") {
+    return refusePoster(row.id, token.key, locked?.key);
+  }
+  if (locked.key && locked.key !== token.key) {
+    await deleteQuietly(row.id, locked.key);
   }
   return { ok: true };
+}
+
+/**
+ * A poster complete refused once its token proved the key (the video is gone or disabled): the PUT's object goes, unless
+ * it is already the live poster (a retried complete never deletes that).
+ */
+async function refusePoster(
+  videoId: string,
+  key: string,
+  live: string | null | undefined,
+) {
+  if (live !== key) await deleteQuietly(videoId, key);
+  return fail("not_found");
 }
 
 /**

@@ -1,5 +1,12 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { checkTestDatabase, type DatabaseEnv } from "../helpers/test-database";
+import {
+  checkTestDatabase,
+  type DatabaseEnv,
+  readEnvFiles,
+} from "../helpers/test-database";
 
 // Fake URLs only: the guard is pure, so these cases never reach a database.
 const DEV_POOLED =
@@ -10,6 +17,9 @@ const TEST_POOLED =
   "postgresql://owner:test-secret@ep-test-456-pooler.us-east-1.aws.neon.tech/neondb?sslmode=require";
 const TEST_DIRECT =
   "postgresql://owner:test-secret@ep-test-456.us-east-1.aws.neon.tech/neondb?sslmode=require";
+// A third database, as from a DATABASE_URL exported in the shell (it wins over the env files).
+const OTHER_POOLED =
+  "postgresql://owner:other-secret@ep-other-789-pooler.us-east-1.aws.neon.tech/neondb?sslmode=require";
 const LOCAL_ENV = `APP_ENV=development\nDATABASE_URL=${DEV_POOLED}\nDATABASE_URL_UNPOOLED=${DEV_DIRECT}\n`;
 
 const testEnv: DatabaseEnv = {
@@ -22,9 +32,14 @@ const pooledOnly = (url: string): DatabaseEnv => ({
   DATABASE_URL: url,
 });
 
-function refusal(env: DatabaseEnv, local: string | undefined = LOCAL_ENV) {
+// `fileEnv` (what .env.test names) defaults to `env` itself: the run uses the files' values, as e2e always does.
+function refusal(
+  env: DatabaseEnv,
+  local: string | undefined = LOCAL_ENV,
+  fileEnv: DatabaseEnv = env,
+) {
   try {
-    checkTestDatabase(env, local);
+    checkTestDatabase(env, local, fileEnv);
   } catch (error) {
     return String(error);
   }
@@ -35,6 +50,31 @@ describe("the test-database guard (tests/helpers/test-database.ts)", () => {
   it("passes for a test database that isn't the development one, and without a .env.local", () => {
     expect(refusal(testEnv)).toBeNull();
     expect(refusal(testEnv, undefined)).toBeNull();
+  });
+
+  it("passes for the .env.test database written differently (direct host, rotated password)", () => {
+    expect(
+      refusal(
+        pooledOnly(TEST_DIRECT.replace("test-secret", "rotated")),
+        LOCAL_ENV,
+        testEnv,
+      ),
+    ).toBeNull();
+  });
+
+  it("refuses a database that is neither .env.local's nor .env.test's, without printing a password", () => {
+    const why = refusal(pooledOnly(OTHER_POOLED), LOCAL_ENV, testEnv);
+    expect(why).toMatch(/not the \.env\.test database/);
+    expect(why).not.toMatch(/secret/);
+    expect(refusal(pooledOnly(OTHER_POOLED), undefined, testEnv)).toMatch(
+      /not the \.env\.test database/,
+    );
+  });
+
+  it("refuses when .env.test names no database", () => {
+    expect(refusal(testEnv, LOCAL_ENV, { APP_ENV: "test" })).toMatch(
+      /\.env\.test has no DATABASE_URL/,
+    );
   });
 
   it("compares against .env.local's direct URL too", () => {
@@ -104,5 +144,24 @@ describe("the test-database guard (tests/helpers/test-database.ts)", () => {
     const why = refusal(env);
     expect(why).toMatch(message);
     expect(why).not.toMatch(/secret|rotated/);
+  });
+});
+
+describe("readEnvFiles", () => {
+  it("lets later files win, keeps blank values and skips a missing file", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cliplease-env-"));
+    writeFileSync(
+      join(dir, ".env.test"),
+      "APP_ENV=test\nDATABASE_URL=a\nEMAIL_FROM=\n",
+    );
+    writeFileSync(join(dir, ".env.test.local"), "DATABASE_URL=b\n");
+    expect(
+      readEnvFiles([
+        join(dir, ".env.test"),
+        join(dir, ".env.test.local"),
+        join(dir, ".env.missing"),
+      ]),
+    ).toEqual({ APP_ENV: "test", DATABASE_URL: "b", EMAIL_FROM: "" });
+    rmSync(dir, { recursive: true });
   });
 });

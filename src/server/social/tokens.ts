@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { db } from "../../db/client";
 import { socialAccount } from "../../db/schema";
 import type { NewSocialAccount, SocialAccount } from "../../db/schema/types";
@@ -15,7 +15,8 @@ import type { TokenSet } from "./types";
 
 // Platform tokens at rest (02 §5.3, §7.3, §7.4; 03 §3.5): sealed per column and row, so a payload can't be moved to
 // another row or column. The only module that decrypts platform tokens, and markNeedsReconnect is the only writer of
-// status 'needs_reconnect' (07 D02, D12). Nothing here logs a token.
+// status 'needs_reconnect' (07 D02, D12). A token the platform refused marks the account only while the row still holds
+// it (token_refreshed_at, 07 D12b), so a reconnect that lands meanwhile stays connected. Nothing here logs a token.
 
 export const accessTokenAad = (accountId: string) =>
   `social_account.access_token:${accountId}`;
@@ -113,6 +114,9 @@ export function refreshDecision(
 /** An access token in the clear, with the token_refreshed_at it was read with (for withAccessToken's retry). */
 type HeldToken = { token: string; refreshedAt: Date | null };
 
+/** The token_refreshed_at of the tokens the last platform call used: the ones a SocialAuthError says are dead. */
+type Seen = { refreshedAt?: Date | null };
+
 const tokenColumns = {
   provider: socialAccount.provider,
   status: socialAccount.status,
@@ -161,27 +165,16 @@ async function readTokenRow(accountId: string) {
   return row ?? null;
 }
 
-/** Rejects with SocialUpstreamError after `ms`; the timer never outlives the call. */
-async function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
-  let timer: NodeJS.Timeout | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new SocialUpstreamError()), ms);
-  });
-  try {
-    return await Promise.race([work, timeout]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 /**
  * 02 §7.4 step 3: the row lock serializes refreshes, so a rotated refresh token is used once (ADR-13). Only the lock
  * holder calls the platform; a waiter re-checks the locked row and takes the token the holder stored. Inside, only `tx`
  * runs queries: every caller may be holding a pool connection while it waits. The platform call is the only external
- * call allowed inside a transaction (07 D12, D24).
+ * call allowed inside a transaction (07 D12, D24). Its 10 s deadline aborts the request itself, so a token set that
+ * does arrive is always stored, never dropped after the platform rotated the refresh token.
  */
 async function refreshUnderLock(
   accountId: string,
+  seen?: Seen,
 ): Promise<{ tokens: TokenSet; refreshedAt: Date | null }> {
   try {
     return await db.transaction(async (tx) => {
@@ -191,6 +184,7 @@ async function refreshUnderLock(
         .from(socialAccount)
         .where(eq(socialAccount.id, accountId))
         .for("update");
+      if (seen && row) seen.refreshedAt = row.tokenRefreshedAt;
       const now = new Date();
       const decision = row ? refreshDecision(row.provider, row, now) : null;
       if (row?.status !== "connected" || decision === "reconnect") {
@@ -203,10 +197,9 @@ async function refreshUnderLock(
 
       const provider = getProvider(row.provider);
       if (!provider) throw new SocialUpstreamError();
-      const next = await withTimeout(
-        provider.refreshToken(current),
-        REFRESH_TIMEOUT_MS,
-      );
+      const next = await provider.refreshToken(current, {
+        signal: AbortSignal.timeout(REFRESH_TIMEOUT_MS),
+      });
       // The scopes stay those granted at connect (03 §7.2's refresh UPDATE leaves them alone), and a set without a
       // refresh token keeps the stored one (storeTokens).
       const stored: TokenSet = {
@@ -227,28 +220,39 @@ async function refreshUnderLock(
   }
 }
 
-async function freshToken(accountId: string): Promise<HeldToken> {
+async function freshToken(accountId: string, seen: Seen): Promise<HeldToken> {
   const row = await readTokenRow(accountId);
+  if (row) seen.refreshedAt = row.tokenRefreshedAt;
   const held = row ? heldToken(accountId, row) : null;
   const decision = row ? refreshDecision(row.provider, row, new Date()) : null;
   if (!held || decision === "reconnect") throw new SocialAuthError();
   if (decision === "use") return held;
-  const { tokens, refreshedAt } = await refreshUnderLock(accountId);
+  const { tokens, refreshedAt } = await refreshUnderLock(accountId, seen);
   return { token: tokens.accessToken, refreshedAt };
 }
 
 /**
  * 07 D02's one rule, in one place: a SocialAuthError that leaves this module means the account must reconnect. It runs
- * after any refresh transaction has ended, and markNeedsReconnect does nothing to an account that isn't connected.
+ * after any refresh transaction has ended, and markNeedsReconnect does nothing to an account that isn't connected or
+ * no longer holds the tokens `work` saw refused. When a reconnect stored new tokens meanwhile, the error becomes a
+ * SocialUpstreamError: the account is fine, so nobody is told to reconnect it.
  */
 async function orReconnect<T>(
   accountId: string,
-  work: () => Promise<T>,
+  work: (seen: Seen) => Promise<T>,
 ): Promise<T> {
+  const seen: Seen = {};
   try {
-    return await work();
+    return await work(seen);
   } catch (error) {
-    if (error instanceof SocialAuthError) await markNeedsReconnect(accountId);
+    if (
+      error instanceof SocialAuthError &&
+      !(await markNeedsReconnect(accountId, seen.refreshedAt)) &&
+      (await readTokenRow(accountId))?.status === "connected"
+    ) {
+      // A reconnect replaced the refused tokens meanwhile: the account is fine, only this call failed.
+      throw new SocialUpstreamError("tokens replaced during the call");
+    }
     throw error;
   }
 }
@@ -256,12 +260,12 @@ async function orReconnect<T>(
 /**
  * A usable access token for a connected account, refreshed first when it is due (02 §7.4). Throws SocialAuthError when
  * the account isn't connected or must reconnect (the account is then needs_reconnect), SocialUpstreamError when the
- * refresh timed out or waited too long for the lock.
+ * refresh timed out, waited too long for the lock, or was refused while a reconnect stored new tokens.
  */
 export async function getFreshAccessToken(accountId: string): Promise<string> {
   return orReconnect(
     accountId,
-    async () => (await freshToken(accountId)).token,
+    async (seen) => (await freshToken(accountId, seen)).token,
   );
 }
 
@@ -274,8 +278,9 @@ export async function withAccessToken<T>(
   accountId: string,
   fn: (token: string) => Promise<T>,
 ): Promise<T> {
-  return orReconnect(accountId, async () => {
-    const held = await freshToken(accountId);
+  return orReconnect(accountId, async (seen) => {
+    const held = await freshToken(accountId, seen);
+    seen.refreshedAt = held.refreshedAt;
     try {
       return await fn(held.token);
     } catch (error) {
@@ -286,6 +291,7 @@ export async function withAccessToken<T>(
         current !== null &&
         current.refreshedAt?.getTime() !== held.refreshedAt?.getTime();
       if (!refreshedMeanwhile) throw error;
+      seen.refreshedAt = current.refreshedAt;
       return fn(current.token);
     }
   });
@@ -294,35 +300,41 @@ export async function withAccessToken<T>(
 /**
  * The tokens in the clear for Disconnect's best-effort revoke (03 §9.3 step 1). A connected account's expired access
  * token is refreshed first, under the lock (07 D12); an expired token on an account that must reconnect can't be.
- * Null when there is nothing to revoke or anything fails. It never marks the account: Disconnect wipes it next.
+ * 'none' when there is nothing to revoke (no token left, or only an expired one that can't be refreshed), 'failed' when
+ * reading or refreshing them fails. It never marks the account: Disconnect wipes it next.
  */
 export async function getTokenSetForRevoke(
   accountId: string,
-): Promise<TokenSet | null> {
+): Promise<TokenSet | "none" | "failed"> {
   try {
     const row = await readTokenRow(accountId);
-    if (!row?.accessTokenEnc || row.status === "disconnected") return null;
+    if (!row?.accessTokenEnc || row.status === "disconnected") return "none";
     const expired =
       row.accessTokenExpiresAt !== null &&
       row.accessTokenExpiresAt.getTime() <= Date.now();
     if (!expired) return openTokenSet(accountId, row);
-    if (row.status !== "connected") return null;
+    if (row.status !== "connected") return "none";
     return (await refreshUnderLock(accountId)).tokens;
   } catch (error) {
     logEvent("warn", "social.revoke_tokens_failed", {
       socialAccountId: accountId,
       error: errorName(error),
     });
-    return null;
+    return "failed";
   }
 }
 
 /**
  * The account must reconnect (07 D02): status 'needs_reconnect', only while it is connected, with an ids-only audit row
- * (07 D47). The tokens stay sealed in place until a reconnect or a disconnect. Every other module calls this.
+ * (07 D47). Given `tokenRefreshedAt`, only while the row still holds those tokens: a reconnect or refresh that stored
+ * new ones meanwhile wins. The tokens stay sealed in place until a reconnect or a disconnect. Every other module calls
+ * this. True when it marked the account.
  */
-export async function markNeedsReconnect(accountId: string): Promise<void> {
-  await db.transaction(async (tx) => {
+export async function markNeedsReconnect(
+  accountId: string,
+  tokenRefreshedAt?: Date | null,
+): Promise<boolean> {
+  return db.transaction(async (tx) => {
     const [row] = await tx
       .update(socialAccount)
       .set({ status: "needs_reconnect" })
@@ -330,10 +342,15 @@ export async function markNeedsReconnect(accountId: string): Promise<void> {
         and(
           eq(socialAccount.id, accountId),
           eq(socialAccount.status, "connected"),
+          tokenRefreshedAt === undefined
+            ? undefined
+            : tokenRefreshedAt === null
+              ? isNull(socialAccount.tokenRefreshedAt)
+              : eq(socialAccount.tokenRefreshedAt, tokenRefreshedAt),
         ),
       )
       .returning({ id: socialAccount.id });
-    if (!row) return;
+    if (!row) return false;
     await writeAudit(
       tx,
       { kind: "system", source: "lazy" },
@@ -344,5 +361,6 @@ export async function markNeedsReconnect(accountId: string): Promise<void> {
         data: { socialAccountId: row.id },
       },
     );
+    return true;
   });
 }

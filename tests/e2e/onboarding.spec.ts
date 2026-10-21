@@ -9,8 +9,12 @@ import {
   uniqueLongHandle,
 } from "./helpers/creator";
 import { expectNoHorizontalScroll } from "./helpers/layout";
-import { pressAndSettle, pressButton } from "./helpers/press";
-import { signInWithEmail, uniqueEmail } from "./helpers/sign-in";
+import { pressAndSettle, pressButton, waitInPage } from "./helpers/press";
+import {
+  addStaleSessionCookie,
+  signInWithEmail,
+  uniqueEmail,
+} from "./helpers/sign-in";
 
 // J1 and J11 with the fake payments driver (05 §5.2, §6.11, §4.6; 07 D93, D95, D139).
 
@@ -215,6 +219,8 @@ test("a taken handle offers free suggestions, a handle claimed meanwhile is just
   for (const unfinished of ["ma", "maya."]) {
     await field.fill(unfinished);
     await page.clock.runFor(600);
+    // The timer's state update renders after runFor returns: give it time to show before checking the line stays empty.
+    await waitInPage(page, 250);
     await expect(line).toHaveText("");
   }
   await field.blur();
@@ -263,4 +269,33 @@ test("a taken handle offers free suggestions, a handle claimed meanwhile is just
   );
   await expect(chips.first()).toBeVisible();
   expect(errors).toEqual([]);
+});
+
+test("a failed payout setup comes back to Settings with an error above the button that tries again", async ({
+  page,
+}) => {
+  const errors = collectConsoleErrors(page);
+  await signUpCreator(page, { payouts: false });
+  // Where /api/stripe/onboarding sends the creator when it fails (05 §1 "Error (recoverable)").
+  await page.goto("/dashboard/settings?payouts=error");
+  const payouts = page.locator("#payouts");
+  await expect(payouts.getByRole("alert")).toHaveText(
+    "Something went wrong. Try again.",
+  );
+  await expect(
+    payouts.getByRole("link", { name: "Set up payouts" }),
+  ).toHaveAttribute("href", "/api/stripe/onboarding");
+  await expectNoHorizontalScroll(page);
+  expect(errors).toEqual([]);
+});
+
+test("a signed-out visitor with a stale session cookie comes back to the step they opened", async ({
+  page,
+  context,
+  baseURL,
+}) => {
+  await addStaleSessionCookie(context, baseURL);
+  // The proxy lets a request with a cookie through; the page's own check keeps ?step=.
+  await page.goto("/onboarding?step=payouts");
+  await expect(page).toHaveURL("/sign-in?next=%2Fonboarding%3Fstep%3Dpayouts");
 });

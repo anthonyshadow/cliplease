@@ -162,6 +162,23 @@ export function filterForAccounts(
   };
 }
 
+/**
+ * Where the page sends a URL it can't show as it is, or null: the filter without what matches none of the accounts
+ * (filterForAccounts), and without a cursor whose page came back empty (its posts expired or were removed since the
+ * link was made), so the page never says "No videos found" while the account has posts.
+ */
+export function libraryRedirect(
+  filter: LibraryFilter,
+  accounts: readonly LibraryAccount[],
+  postCount: number,
+): string | null {
+  const { cursor, ...rest } = filterForAccounts(filter, accounts);
+  const href = libraryHref(
+    cursor && postCount > 0 ? { ...rest, cursor } : rest,
+  );
+  return href === libraryHref(filter) ? null : href;
+}
+
 /** Filter links keep each other's params, except an account and a different platform, which can't both hold. */
 type BaseFilter = Omit<LibraryFilter, "cursor">;
 
@@ -209,6 +226,10 @@ export function stripHref(
   });
 }
 
+/** An account is connected, so a sync has something to sync: the header's Sync all, the expired state's Sync now. */
+const anyConnected = (accounts: readonly LibraryAccount[]) =>
+  accounts.some((a) => a.status === "connected");
+
 /**
  * The header's server side (05 §6.1 annotation 4, States): SyncStatus reads "Syncing…" while a sync holds its lease, else
  * the rate-limit sentence, else the sync line; Sync all shows while an account is connected, except once every post
@@ -230,7 +251,7 @@ export function librarySyncState(
       ? "Syncing…"
       : (rate.sentence ??
         librarySyncLine(accounts, visibleCount, expired, now)),
-    showSyncAll: !expired && accounts.some((a) => a.status === "connected"),
+    showSyncAll: !expired && anyConnected(accounts),
     blockedHelper: rate.allBlockedHelper,
   };
 }
@@ -242,14 +263,11 @@ export type SyncTarget = { socialAccountId: string } | { all: true };
 const canSync = (a: LibraryAccount) =>
   a.status === "connected" && a.blockedMinutes === null && !a.syncing;
 
-/** One account's own target, or Sync all for several; null when none of them can sync now. */
+/** The one account that can sync now, or Sync all when several can; null when none of them can. */
 function targetFor(accounts: readonly LibraryAccount[]): SyncTarget | null {
-  const ready = accounts.filter(canSync);
-  if (ready.length === 0) return null;
-  const [only] = accounts;
-  return accounts.length === 1 && only
-    ? { socialAccountId: only.id }
-    : { all: true };
+  const [only, ...rest] = accounts.filter(canSync);
+  if (!only) return null;
+  return rest.length === 0 ? { socialAccountId: only.id } : { all: true };
 }
 
 export type SyncBannerView =
@@ -323,7 +341,8 @@ function joinOr(names: readonly string[]): string {
 
 export type LibraryEmptyState =
   | { kind: "no-accounts" }
-  | { kind: "expired" }
+  /** `anyConnected`: Sync now has something to sync (the header's Sync all rule). */
+  | { kind: "expired"; anyConnected: boolean }
   | { kind: "no-match"; title: string }
   | {
       kind: "no-videos";
@@ -334,8 +353,8 @@ export type LibraryEmptyState =
 
 /**
  * Which EmptyState replaces the grid, most important first (05 §6.1 States): no linked account; every post past the
- * 30-day rule; a search with no match; the filtered accounts with no videos ("No videos found on @a or @b.", owner
- * answer Q-31; Sync now when they can sync). Null: the grid has tiles.
+ * 30-day rule (Sync now while an account is connected); a search with no match; the filtered accounts with no videos
+ * ("No videos found on @a or @b.", owner answer Q-31; Sync now when they can sync). Null: the grid has tiles.
  */
 export function libraryEmptyState({
   accounts,
@@ -349,7 +368,9 @@ export function libraryEmptyState({
   allExpired: boolean;
 }): LibraryEmptyState | null {
   if (accounts.length === 0) return { kind: "no-accounts" };
-  if (allExpired) return { kind: "expired" };
+  if (allExpired) {
+    return { kind: "expired", anyConnected: anyConnected(accounts) };
+  }
   if (postCount > 0) return null;
   if (filter.q) {
     return { kind: "no-match", title: `No videos match “${filter.q}”.` };
@@ -371,7 +392,7 @@ export function libraryEmptyState({
 
 /**
  * Load older videos (07 D13): only for the one account in ?account=, when it is connected and the last run stopped
- * before the end of its list; the cap note above it once it holds `max` videos (01 J3.11).
+ * before the end of its list; the cap note above it while it holds exactly `max` videos (01 J3.11).
  */
 export function loadOlder(
   accounts: readonly LibraryAccount[],
@@ -388,7 +409,7 @@ export function loadOlder(
   }
   return {
     socialAccountId: account.id,
-    note: account.postCount >= max ? capNote(max) : null,
+    note: capNote(account.postCount, max),
     // Disabled while the platform has us waiting, like Sync all (04 §9.15).
     blockedHelper:
       account.blockedMinutes === null

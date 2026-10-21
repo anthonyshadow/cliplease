@@ -445,30 +445,40 @@ describe("deriveFileStep: showCover (owner answer Q-41)", () => {
 });
 
 describe("deriveFileStep: clearHint (07 D103)", () => {
-  it.each<[string, boolean, Partial<FileStepInput>]>([
-    ["stored none", true, { hint: HINT }],
-    ["stored ready", true, { hint: HINT, video: stored("ready") }],
-    ["stored failed", true, { hint: HINT, video: stored("failed") }],
+  it.each<[string, string | null, Partial<FileStepInput>]>([
+    ["stored none", HINT.uploadId, { hint: HINT }],
+    ["stored ready", HINT.uploadId, { hint: HINT, video: stored("ready") }],
+    ["stored failed", HINT.uploadId, { hint: HINT, video: stored("failed") }],
     [
       "stored expired",
-      true,
+      HINT.uploadId,
       { hint: HINT, video: uploading, progress: expired },
     ],
     [
       "another upload's hint",
-      true,
+      HINT.uploadId,
       { hint: HINT, video: uploading, progress: resumable("upload-2") },
     ],
     [
       "the paused upload's hint",
-      false,
+      null,
       { hint: HINT, video: uploading, progress: resumable() },
     ],
-    ["progress unknown", false, { hint: HINT, video: uploading }],
-    ["an upload in this tab", false, { hint: HINT, entry: entry("done") }],
+    ["progress unknown", null, { hint: HINT, video: uploading }],
+    ["an upload in this tab", null, { hint: HINT, entry: entry("done") }],
+    [
+      "another tab uploads the video",
+      null,
+      {
+        hint: HINT,
+        video: uploading,
+        progress: resumable("upload-2"),
+        otherTab: true,
+      },
+    ],
     [
       "a Cancel here",
-      true,
+      HINT.uploadId,
       {
         hint: HINT,
         video: uploading,
@@ -476,10 +486,10 @@ describe("deriveFileStep: clearHint (07 D103)", () => {
         cancelledHere: true,
       },
     ],
-    ["no hint", false, { video: stored("ready") }],
+    ["no hint", null, { video: stored("ready") }],
     [
       "before the hint is read",
-      false,
+      null,
       { hint: "unread", video: stored("ready") },
     ],
   ])("%s → %s", (_name, clearHint, input) => {

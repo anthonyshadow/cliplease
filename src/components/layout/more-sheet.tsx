@@ -8,7 +8,12 @@ import {
   SheetContent,
   SheetTrigger,
 } from "@/components/ui/sheet";
-import { CREATOR_NAV, MORE_SHEET_KEYS, SHELL_PREFETCH } from "./creator-nav";
+import {
+  CREATOR_NAV,
+  type CreatorNavKey,
+  MORE_SHEET_KEYS,
+  SHELL_PREFETCH,
+} from "./creator-nav";
 
 // Plain rows, no separators (05 §1.3 draws none).
 const ROW = "flex h-13 w-full items-center text-body text-ink";
@@ -19,10 +24,13 @@ const ROW = "flex h-13 w-full items-center text-body text-ink";
  */
 export function MoreSheet({
   trigger,
+  current,
   signOut,
 }: {
   /** The TabBar's More tab. */
   trigger: ReactNode;
+  /** The current page's key: its row gets `aria-current="page"`. */
+  current?: CreatorNavKey;
   signOut?: ReactNode;
 }) {
   return (
@@ -37,6 +45,7 @@ export function MoreSheet({
                   <Link
                     href={CREATOR_NAV[key].href}
                     prefetch={SHELL_PREFETCH}
+                    aria-current={key === current ? "page" : undefined}
                     className={ROW}
                   >
                     {CREATOR_NAV[key].label}

@@ -4,11 +4,13 @@ import { z } from "zod";
 import { APP_NAME } from "../app-name";
 import { DISPLAY_NAME_MAX, displayNameMessage } from "./display-name";
 import { HANDLE_COPY, HANDLE_RE, handleProblemMessage } from "./handle";
+import { tidiedText } from "./tidied-text";
 
 export const AGE_ERROR = `You must be 18 or older to sell on ${APP_NAME}.`;
 
-// Trimmed, 1 to DISPLAY_NAME_MAX characters: the one definition of a valid display name.
-const displayNameField = z.string().trim().min(1).max(DISPLAY_NAME_MAX);
+// Tidied like a title (../text/tidy, owner answer Q-43 a, extended to names), then 1 to DISPLAY_NAME_MAX characters:
+// the one definition of a valid display name.
+const displayNameField = tidiedText(DISPLAY_NAME_MAX);
 
 /** 02 §6.1's completeOnboarding schema, with `{APP_NAME}` filled in the 18+ message (AGE_ERROR). */
 export const profileStepSchema = z.object({

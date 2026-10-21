@@ -19,6 +19,11 @@ export function payoutsSetupLabel(
   return null;
 }
 
+/** Rejected or unsupported: no setup button, but "Payouts unavailable. Contact {SUPPORT_EMAIL}." (P05 owner answer). */
+export function isPayoutsUnavailable(status: PayoutsStatus): boolean {
+  return status === "rejected" || status === "unsupported";
+}
+
 /** The read-only approval window (05 §1.5's labels); P19c makes it a choice (07 D81). */
 export const APPROVAL_WINDOW_LABEL = {
   24: "24 hours",

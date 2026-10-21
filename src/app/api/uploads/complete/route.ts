@@ -2,13 +2,16 @@ import { z } from "zod";
 import { toActor } from "@/server/auth/session";
 import {
   uploadError,
+  uploadIdField,
   uploadOk,
   uploadRoute,
 } from "@/server/storage/upload-http";
 import { completeUpload } from "@/server/storage/uploads";
 
 // POST /api/uploads/complete (02 §6.2, 07 D80): the server completes with its own part list, so the body carries no parts
-// and no ETags (a strict schema refuses them). A poster comes back with its upload token (owner answer Q-34 a).
+// and no ETags (a strict schema refuses them). An original names the upload start opened, so a late complete of one a
+// newer start replaced answers 404 and never finishes the new one. A poster comes back with its upload token (owner
+// answer Q-34 a).
 
 // Display-only hints (02 §9.10): a value that isn't a positive int4 is dropped, never a refusal.
 const hint = z.int().min(1).max(2_147_483_647).nullable().catch(null);
@@ -17,6 +20,7 @@ const completeInput = z.discriminatedUnion("kind", [
   z.strictObject({
     kind: z.literal("original"),
     videoId: z.uuid(),
+    uploadId: uploadIdField,
     meta: z
       .strictObject({ durationMs: hint, width: hint, height: hint })
       .optional(),

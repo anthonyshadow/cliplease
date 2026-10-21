@@ -6,7 +6,8 @@ import type {
 } from "../../lib/domain/values";
 
 // The provider contract (02 §5.3, research/social.md §7.1), with 07 D68 (findPostByLinkKey, SocialPost.linkKey) and D83
-// (optionalScopes, extraScopes). One P06 deviation (owner answer Q1 a): getAuthorizeUrl's optional `mockSubject`.
+// (optionalScopes, extraScopes). Two deviations: getAuthorizeUrl's optional `mockSubject` (P06, owner answer Q1 a) and
+// refreshToken's `signal` (the refresh deadline cancels the call, so a rotated refresh token is never dropped).
 // statsFor arrives with Instagram views (P28b). Relative imports: the P09 seed loads the mock under tsx.
 
 export type SocialPostKind = SocialPostMediaType; // 'video' | 'reel' | 'short'
@@ -85,7 +86,10 @@ export interface AuthorizeUrlInput {
   mockSubject?: string;
 }
 
-/** What a revoke at the platform came to; `failed` when it was possible but didn't happen. */
+/**
+ * What a revoke at the platform came to: `unsupported` when no revoke call was made (the platform has none, or there
+ * was nothing to revoke), `failed` when it was possible but didn't happen.
+ */
 export type RevokeOutcome = "revoked" | "unsupported" | "failed";
 
 export interface SocialProvider {
@@ -106,8 +110,11 @@ export interface SocialProvider {
     codeVerifier: string | null;
     redirectUri: string;
   }): Promise<TokenSet>;
-  /** Throws SocialAuthError when the user must reconnect. */
-  refreshToken(t: TokenSet): Promise<TokenSet>;
+  /**
+   * Throws SocialAuthError when the user must reconnect. Passes `signal` to every request (fetchJson, retries 0): the
+   * caller's deadline aborts the call rather than leaving it to finish unseen.
+   */
+  refreshToken(t: TokenSet, opts: { signal: AbortSignal }): Promise<TokenSet>;
   revoke(t: TokenSet): Promise<"revoked" | "unsupported">;
   getProfile(accessToken: string): Promise<SocialProfile>;
   /** Videos only. */

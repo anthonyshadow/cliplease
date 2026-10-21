@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Token lint (docs/04-design-system.md §3.4). Exit 0: clean, prints nothing. Exit 1: violations printed.
-# Exit 2: rg is missing or failed. Lines carrying a `// design-ok: <reason>` comment are the allowed §3.4 exceptions.
+# Token lint (docs/04-design-system.md §3.4), plus arbitrary font sizes, line heights, tracking and radii, in classes and
+# inline styles (AGENTS.md §5: no hard-coded font sizes or radii). Exit 0: clean, prints nothing. Exit 1: violations
+# printed. Exit 2: rg is missing or failed. Lines carrying a `// design-ok: <reason>` comment are the allowed §3.4
+# exceptions.
 set -u
 cd "$(dirname "$0")/.."
 
@@ -15,6 +17,7 @@ matches=$(rg -n --glob '!src/app/globals.css' --glob '!**/*.test.ts' \
   -e '\b(zinc|slate|gray|neutral|stone|red|green|blue|sky|amber)-[0-9]{2,3}\b' -e 'shadow-(xs|sm|md|lg|xl)\b' \
   -e '\b(max-)?(sm|xl):[a-z0-9!\[(-]' -e '\b(min|max)-\[' -e '@container' \
   -e '\b100vw\b' -e '\bw-screen\b' -e 'overflow-x-hidden' \
+  -e '\b(text|leading|tracking|rounded(-[a-z]{1,2})?)-\[' -e '\b(fontSize|lineHeight|letterSpacing|borderRadius)\s*:' \
   src/components src/app)
 status=$?
 

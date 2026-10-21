@@ -48,6 +48,7 @@ import {
   start,
 } from "../../helpers/connect-flow";
 import { resetDb } from "../../helpers/db";
+import { captureLogEvents } from "../../helpers/logs";
 
 // The connect round trip (02 §7.2, 07 D37) against the real route handlers (tests/helpers/connect-flow.ts).
 vi.mock("next/headers", () => import("../../helpers/next-headers"));
@@ -110,12 +111,19 @@ describe("start", () => {
     expect(line).not.toContain("mock_");
   });
 
-  it("sends a signed-out visitor to sign-in, and answers 404 for an unknown or disabled platform", async () => {
-    const signedOut = await start();
-    expect(signedOut.status).toBe(302);
-    const target = new URL(location(signedOut));
-    expect(target.pathname).toBe("/sign-in");
-    expect(target.searchParams.get("next")).toBe("/dashboard/connections");
+  it("sends a signed-out visitor to sign-in and back to where the connect started, and answers 404 for an unknown or disabled platform", async () => {
+    const nextOf = async (query?: string) => {
+      const signedOut = await start(query);
+      expect(signedOut.status).toBe(302);
+      const target = new URL(location(signedOut));
+      expect(target.pathname).toBe("/sign-in");
+      return target.searchParams.get("next");
+    };
+    expect(await nextOf()).toBe("/dashboard/connections");
+    expect(await nextOf(FROM_ONBOARDING)).toBe("/onboarding?step=connect");
+    // No returnTo, or one outside the app: the Library, where the callback would land too.
+    expect(await nextOf("")).toBe("/dashboard/library");
+    expect(await nextOf("?returnTo=%2F%2Fevil.com")).toBe("/dashboard/library");
 
     await signedInCreator();
     expect((await start("", "nope")).status).toBe(404);
@@ -253,6 +261,45 @@ describe("callback", () => {
     );
   });
 
+  it("refuses a reconnect without the scope and leaves the live account and its grant alone (owner answer)", async () => {
+    const me = await signedInCreator();
+    await connect();
+    const before = await accountsOf(me.creatorId);
+    grantScopes([]);
+    const revoke = vi.spyOn(mockProvider, "revoke");
+    const response = await connect();
+    expect(location(response)).toBe(
+      at("/dashboard/connections?error=missing_scope"),
+    );
+    expect(revoke).not.toHaveBeenCalled();
+    expect(await accountsOf(me.creatorId)).toEqual(before);
+    expect(before[0]?.status).toBe("connected");
+  });
+
+  it("gives nothing back when a connect without the scope can't read the profile: the account is unknown", async () => {
+    await signedInCreator();
+    grantScopes([]);
+    vi.spyOn(mockProvider, "getProfile").mockRejectedValueOnce(
+      new SocialAuthError(),
+    );
+    const revoke = vi.spyOn(mockProvider, "revoke");
+    const logs = captureLogEvents("social.connect_failed");
+    const response = await connect();
+    const { events } = logs();
+    expect(location(response)).toBe(
+      at("/dashboard/connections?error=missing_scope"),
+    );
+    expect(revoke).not.toHaveBeenCalled();
+    expect(events).toEqual([
+      expect.objectContaining({
+        level: "warn",
+        provider: "mock",
+        stage: "profile",
+        reason: "SocialAuthError",
+      }),
+    ]);
+  });
+
   it("still redirects when giving the tokens back fails", async () => {
     await signedInCreator();
     grantScopes([]);
@@ -263,7 +310,7 @@ describe("callback", () => {
     );
   });
 
-  it("refuses an account another creator holds, leaves theirs alone and gives the tokens back (J2.7)", async () => {
+  it("refuses an account another creator holds and leaves theirs alone, grant included: no revoke (J2.7, owner answer)", async () => {
     setMockScenarioForTests("shared_account");
     const a = await signedInCreator();
     expect(location(await connect())).toBe(
@@ -272,7 +319,6 @@ describe("callback", () => {
     const [before] = await accountsOf(a.creatorId);
 
     const b = await signedInCreator();
-    const exchange = vi.spyOn(mockProvider, "exchangeCode");
     const revoke = vi.spyOn(mockProvider, "revoke");
     const response = await connect(FROM_ONBOARDING);
     expect(location(response)).toBe(
@@ -281,18 +327,16 @@ describe("callback", () => {
     expectCookieCleared(response);
     expect(await accountsOf(b.creatorId)).toEqual([]);
     expect(await accountsOf(a.creatorId)).toEqual([before]);
-    expect(revoke).toHaveBeenCalledTimes(1);
-    expect(revoke).toHaveBeenCalledWith(
-      await exchange.mock.results.at(-1)?.value,
-    );
+    expect(revoke).not.toHaveBeenCalled();
     await db
       .delete(socialAccount)
       .where(eq(socialAccount.providerAccountId, "mock_acct_shared"));
   });
 
-  it("answers a failed exchange, profile read or save with provider_error and keeps the grant (07 D37)", async () => {
+  it("answers a failed exchange, profile read or save with provider_error, logs each by stage and keeps the grant (07 D37)", async () => {
     const me = await signedInCreator();
     const revoke = vi.spyOn(mockProvider, "revoke");
+    const logs = captureLogEvents("social.connect_failed");
 
     const exchange = vi
       .spyOn(mockProvider, "exchangeCode")
@@ -313,17 +357,38 @@ describe("callback", () => {
     );
     profile.mockRestore();
 
-    // A NUL byte in the username makes the database refuse the row: a failure that isn't a unique violation.
+    // A NUL byte in the platform's account id makes the database refuse it: a failure that isn't a unique violation.
     const real = mockProvider.getProfile.bind(mockProvider);
-    vi.spyOn(mockProvider, "getProfile").mockImplementation(async (token) => ({
-      ...(await real(token)),
-      username: "demo\u0000creator",
-    }));
+    vi.spyOn(mockProvider, "getProfile").mockImplementation(async (token) => {
+      const own = await real(token);
+      return { ...own, externalAccountId: `${own.externalAccountId}\u0000` };
+    });
     response = await connect();
     expect(location(response)).toBe(
       at("/dashboard/connections?error=provider_error"),
     );
 
+    const { written, events } = logs();
+    expect(events).toEqual([
+      expect.objectContaining({
+        level: "warn",
+        provider: "mock",
+        stage: "exchange",
+        reason: "SocialAuthError",
+      }),
+      expect.objectContaining({
+        level: "warn",
+        provider: "mock",
+        stage: "profile",
+        reason: "SocialUpstreamError",
+      }),
+      expect.objectContaining({
+        level: "error",
+        provider: "mock",
+        stage: "link",
+      }),
+    ]);
+    expect(written).not.toMatch(/mock_(access|refresh|code|acct)_/);
     expect(revoke).not.toHaveBeenCalled();
     expect(await accountsOf(me.creatorId)).toEqual([]);
   });

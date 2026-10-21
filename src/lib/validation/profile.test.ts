@@ -94,4 +94,36 @@ describe("displayNameMessage and displayNameSchema (Settings → Save)", () => {
       displayNameSchema.safeParse({ displayName: "a".repeat(61) }).success,
     ).toBe(false);
   });
+
+  it.each([
+    ["Maya\u0000", "Maya"],
+    ["\u202eMaya", "Maya"],
+    ["Maya\nR.", "Maya R."],
+    ["Maya\u200b R.\u2066", "Maya R."],
+  ])(
+    "tidies a name like a title (owner answer Q-43 a): %j → %j",
+    (raw, tidy) => {
+      expect(displayNameSchema.parse({ displayName: raw })).toEqual({
+        displayName: tidy,
+      });
+      expect(
+        profileStepSchema.parse({ ...valid, displayName: raw }).displayName,
+      ).toBe(tidy);
+    },
+  );
+
+  it("refuses a name with nothing visible as empty, and counts only what is left", () => {
+    for (const raw of ["\u200b", "\u202e \u2066", "\u3164"]) {
+      expect(displayNameSchema.safeParse({ displayName: raw }).success).toBe(
+        false,
+      );
+      expect(displayNameMessage(raw)).toBe(DISPLAY_NAME_COPY.empty);
+      expect(fieldErrors({ displayName: raw })).toEqual({
+        displayName: [DISPLAY_NAME_COPY.empty],
+      });
+    }
+    expect(
+      displayNameSchema.parse({ displayName: `${"a".repeat(60)}\u200b\u202e` }),
+    ).toEqual({ displayName: "a".repeat(60) });
+  });
 });

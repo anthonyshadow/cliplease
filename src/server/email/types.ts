@@ -1,4 +1,6 @@
-// The email layer's shared types (02 §5.10). No server guard import: types only.
+import "server-only";
+
+// The email layer's shared types (02 §5.10).
 
 /** The 16 CORE templates (07 D123; the teen-consent email is Later, 07 D93). */
 export type EmailTemplateId =

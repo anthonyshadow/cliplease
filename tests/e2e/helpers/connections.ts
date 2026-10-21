@@ -10,8 +10,9 @@ const CONNECTED_TOAST = "Demo connected. Showing your latest videos.";
 export const SYNC_LINE = /^Synced (just now|\d+ min ago) · 24 videos$/;
 
 /**
- * Checks the Connect Demo link comes back to `returnTo`, follows it, waits for the toast back on that page, and checks
- * the ?connected= param is gone from the address afterwards (05 §6.2: it renders once).
+ * Checks the Connect Demo link comes back to `returnTo`, follows it, waits for the round trip to land back on that page
+ * with ?connected= (the start, the callback's first sync, the redirect: as long as the test allows, not the 5 s of an
+ * expect), then for the toast, and checks the param is gone from the address afterwards (05 §6.2: it renders once).
  */
 export async function linkDemoAccount(page: Page, returnTo: string) {
   await expect(
@@ -20,13 +21,17 @@ export async function linkDemoAccount(page: Page, returnTo: string) {
     "href",
     `/api/connect/mock/start?returnTo=${encodeURIComponent(returnTo)}`,
   );
-  await pressLink(page, "Connect Demo");
+  // The page is already on returnTo, so the wait matches only the return (it carries ?connected=). It starts before the
+  // press, so a fast return whose param is already stripped again isn't missed.
   const back = new URL(returnTo, "http://localhost");
-  await page.waitForURL(
+  const returned = page.waitForURL(
     (url) =>
       url.pathname === back.pathname &&
+      url.searchParams.has("connected") &&
       [...back.searchParams].every(([k, v]) => url.searchParams.get(k) === v),
   );
+  await pressLink(page, "Connect Demo");
+  await returned;
   await expect(page.getByText(CONNECTED_TOAST, { exact: true })).toBeVisible();
   await expect
     .poll(() => new URL(page.url()).searchParams.has("connected"))

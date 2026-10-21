@@ -4,6 +4,7 @@ import {
   asc,
   eq,
   exists,
+  getTableColumns,
   gte,
   inArray,
   isNull,
@@ -20,13 +21,14 @@ import { db } from "../../db/client";
 import { socialAccount, socialPost, videoPosting } from "../../db/schema";
 import type { NewSocialPostRow, SocialAccount } from "../../db/schema/types";
 import { isOneOf, SOCIAL_POST_MEDIA_TYPES } from "../../lib/domain/values";
-import { writeAudit } from "../audit";
+import { writeAudits } from "../audit";
 import { type Actor, requireCreatorActor } from "../auth/actor";
 import { errorName, logEvent } from "../log";
 import { SYNC_LEASE_MS } from "./connection-state";
 import { SocialAuthError, SocialRateLimitError } from "./errors";
 import { profileColumns } from "./link";
 import { getProvider } from "./registry";
+import { hasNul, urlWithoutNul, withoutNul } from "./text";
 import { markNeedsReconnect, withAccessToken } from "./tokens";
 import type { SocialPost, SocialProvider } from "./types";
 
@@ -84,6 +86,7 @@ export function toSocialPostRow(
   post: SocialPost,
   now: Date,
 ): NewSocialPostRow {
+  const caption = withoutNul(post.caption);
   return {
     socialAccountId: account.id,
     creatorId: account.creatorId,
@@ -92,13 +95,13 @@ export function toSocialPostRow(
     linkKey: post.linkKey,
     mediaType: post.kind,
     visibility: post.visibility,
-    title: post.title,
+    title: withoutNul(post.title),
     caption:
-      post.caption === null
+      caption === null
         ? null
-        : Array.from(post.caption).slice(0, CAPTION_MAX_CHARS).join(""),
+        : Array.from(caption).slice(0, CAPTION_MAX_CHARS).join(""),
     permalink: post.permalink,
-    thumbnailUrl: post.thumbnailUrl,
+    thumbnailUrl: urlWithoutNul(post.thumbnailUrl),
     thumbnailExpiresAt: post.thumbnailExpiresAt,
     thumbnailFetchedAt: now,
     postedAt: post.publishedAt,
@@ -160,7 +163,8 @@ const UPSERT_SET = {
 
 /**
  * Writes posts by (social_account_id, provider_post_id) (03 §7.2); a removed post that is listed again is available
- * again. `added` counts the rows that are new (xmax = 0). A post listed twice in one batch is written once.
+ * again. `added` counts the rows that are new (xmax = 0). A post listed twice in one batch is written once. A post whose
+ * id, link key or permalink holds a NUL can't be stored or matched: it is left out and logged, so the rest still land.
  */
 export async function upsertPosts(
   exec: Pick<typeof db, "insert">,
@@ -168,9 +172,21 @@ export async function upsertPosts(
   posts: readonly SocialPost[],
   now: Date,
 ): Promise<{ upserted: number; added: number }> {
+  const usable = posts.filter(
+    (post) =>
+      !hasNul(post.externalId) &&
+      !hasNul(post.linkKey) &&
+      !hasNul(post.permalink),
+  );
+  if (usable.length < posts.length) {
+    logEvent("warn", "social.post_skipped", {
+      socialAccountId: account.id,
+      count: posts.length - usable.length,
+    });
+  }
   const rows = [
     ...new Map(
-      posts.map((post) => [
+      usable.map((post) => [
         post.externalId,
         toSocialPostRow(account, post, now),
       ]),
@@ -239,6 +255,32 @@ class RunStopped extends Error {
   }
 }
 
+/**
+ * Seconds until sync_blocked_until by the database's clock, the one that set it (as listAccountSummaries reads it);
+ * null when the account isn't blocked, 0 or less once the block has passed.
+ */
+const BLOCKED_SEC = sql<
+  number | null
+>`ceil(extract(epoch from (${socialAccount.syncBlockedUntil} - now())))::int`;
+
+/** Why the account can't be synced now (02 §7.5 step 1: gone, must reconnect, or rate-limited), or null. */
+export function refusalReason(
+  row:
+    | { status: SocialAccount["status"]; blockedSec: number | null }
+    | undefined,
+): SyncResult | null {
+  if (!row || row.status === "disconnected") {
+    return { ok: false, reason: "not_found" };
+  }
+  if (row.status === "needs_reconnect") {
+    return { ok: false, reason: "needs_reconnect" };
+  }
+  if (row.blockedSec !== null && row.blockedSec > 0) {
+    return { ok: false, reason: "rate_limited", retryAfterSec: row.blockedSec };
+  }
+  return null;
+}
+
 /** Why the run must stop writing (the account was disconnected, must reconnect, or another run took over), or null. */
 function stopReason(
   run: Run,
@@ -295,30 +337,21 @@ export async function syncSocialAccount(
 ): Promise<SyncResult> {
   const mode = opts.mode ?? "recent";
   const [account] = await db
-    .select()
+    .select({ ...getTableColumns(socialAccount), blockedSec: BLOCKED_SEC })
     .from(socialAccount)
     .where(eq(socialAccount.id, accountId));
   const provider = account ? getProvider(account.provider) : null;
   const allowed =
     a.kind === "system" ||
     (a.kind === "creator" && a.creatorId === account?.creatorId);
-  if (!account || !provider || !allowed || account.status === "disconnected") {
+  if (!account || !provider || !allowed) {
     return { ok: false, reason: "not_found" };
   }
-  if (account.status === "needs_reconnect") {
-    return { ok: false, reason: "needs_reconnect" };
-  }
-  const blockedMs = (account.syncBlockedUntil?.getTime() ?? 0) - Date.now();
-  if (blockedMs > 0) {
-    return {
-      ok: false,
-      reason: "rate_limited",
-      retryAfterSec: Math.ceil(blockedMs / 1000),
-    };
-  }
+  const refused = refusalReason(account);
+  if (refused) return refused;
 
   const leasedAt = await takeLease(account);
-  if (!leasedAt) return { ok: false, reason: "already_syncing" };
+  if (!leasedAt) return leaseRefusal(account.id);
   let result: SyncResult;
   try {
     result = await runSync({
@@ -365,6 +398,18 @@ async function takeLease(account: SocialAccount): Promise<Date | null> {
     )
     .returning({ leasedAt: socialAccount.syncStartedAt });
   return lease?.leasedAt ?? null;
+}
+
+/**
+ * Why takeLease refused, read again: the account changed since the first read, its block hasn't passed by the
+ * database's clock, or another run holds the lease.
+ */
+async function leaseRefusal(accountId: string): Promise<SyncResult> {
+  const [row] = await db
+    .select({ status: socialAccount.status, blockedSec: BLOCKED_SEC })
+    .from(socialAccount)
+    .where(eq(socialAccount.id, accountId));
+  return refusalReason(row) ?? { ok: false, reason: "already_syncing" };
 }
 
 /** The account columns that record a run's result (07 D02; 03 §7.2's end of run). */
@@ -477,9 +522,10 @@ async function runSync(run: Run): Promise<SyncResult> {
     runStartedAt,
     before,
   );
-  const removed = reachedEnd
-    ? await sweep(run, runStartedAt, oldestSeen, before)
-    : 0;
+  const removed =
+    reachedEnd && run.mode === "recent"
+      ? await sweep(run, runStartedAt, oldestSeen)
+      : 0;
   return { ok: true, ...counts, removed, hasOlder: !reachedEnd };
 }
 
@@ -545,22 +591,21 @@ async function listPages(run: Run, now: Date, before: Date | null) {
 }
 
 /**
- * The removal sweep (07 D13, D72), only after a run that reached the end of the list. Posts this run didn't see are
- * deleted when nothing references them (03 §7.2, from the oldest post seen up; every available post when the list was
- * empty); a referenced one becomes 'removed' only when getPost says it is gone, and any doubt keeps it. An 'older' run
- * only judges posts older than its `before`, never the newer ones it didn't list.
+ * The removal sweep (07 D13, D72), only after a 'recent' run that reached the end of the list. Posts this run didn't
+ * see are deleted when nothing references them (03 §7.2, from the oldest post seen up; every available post when the
+ * list was empty); a referenced one becomes 'removed' only when getPost says it is gone, and any doubt keeps it. An
+ * 'older' run never sweeps: it lists only posts older than every one held, so it has nothing to judge, and must never
+ * judge the newer ones it didn't list.
  */
 async function sweep(
   run: Run,
   runStartedAt: Date,
   oldestSeen: Date | null,
-  before: Date | null,
 ): Promise<number> {
   const absent = and(
     eq(socialPost.socialAccountId, run.account.id),
     eq(socialPost.status, "available"),
     lt(socialPost.fetchedAt, runStartedAt),
-    before ? lt(socialPost.postedAt, before) : undefined,
   );
   // Disjoint sets (unreferenced vs referenced), so the two run together.
   const [deleted, suspects] = await Promise.all([
@@ -628,15 +673,17 @@ async function markRemoved(run: Run, ids: string[]): Promise<number> {
         ),
       )
       .returning({ id: socialPost.id });
-    for (const row of rows) {
-      // Ids only (07 D47); the video page shows "Original post was removed".
-      await writeAudit(tx, run.actor, {
+    // Ids only (07 D47), in one INSERT while the share lock is held; the video page shows "Original post was removed".
+    await writeAudits(
+      tx,
+      run.actor,
+      rows.map((row) => ({
         action: "social_post.removed",
         entityType: "social_post",
         entityId: row.id,
         data: { socialPostId: row.id, socialAccountId: accountId },
-      });
-    }
+      })),
+    );
     return rows.length;
   });
 }

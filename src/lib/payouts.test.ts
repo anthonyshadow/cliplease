@@ -2,25 +2,27 @@ import { describe, expect, it } from "vitest";
 import { PAYOUTS_STATUSES } from "./domain/values";
 import {
   APPROVAL_WINDOW_LABEL,
+  isPayoutsUnavailable,
   PAYOUTS_STATUS_LABEL,
   payoutsSetupLabel,
 } from "./payouts";
 
 describe("payouts labels (01 J11.1)", () => {
-  it("labels every payouts status, with a button only to set up or finish", () => {
+  it("labels every payouts status, with a button only to set up or finish, and unavailable only when refused", () => {
     expect(
       PAYOUTS_STATUSES.map((s) => [
         s,
         PAYOUTS_STATUS_LABEL[s],
         payoutsSetupLabel(s),
+        isPayoutsUnavailable(s),
       ]),
     ).toEqual([
-      ["not_started", "Not set up", "Set up payouts"],
-      ["pending", "Stripe is checking your details", null],
-      ["restricted", "Stripe needs more information", "Finish setup"],
-      ["active", "Payouts on", null],
-      ["rejected", "Payouts unavailable", null],
-      ["unsupported", "Payouts unavailable", null],
+      ["not_started", "Not set up", "Set up payouts", false],
+      ["pending", "Stripe is checking your details", null, false],
+      ["restricted", "Stripe needs more information", "Finish setup", false],
+      ["active", "Payouts on", null, false],
+      ["rejected", "Payouts unavailable", null, true],
+      ["unsupported", "Payouts unavailable", null, true],
     ]);
   });
 

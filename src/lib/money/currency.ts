@@ -9,6 +9,12 @@ export const CURRENCY_DISPLAY = {
   { code: string; prefix: string; name: string }
 >;
 
+/** Where each currency's payouts go, for the fact line: USD is for creators with a US bank account (07 D140, owner). */
+export const PAYOUT_BANK_ACCOUNT = {
+  cad: "a Canadian bank account",
+  usd: "a US bank account",
+} as const satisfies Record<Currency, string>;
+
 /** "Canadian dollars (CAD)" · "US dollars (USD)". */
 export function currencyLabel(c: Currency): string {
   const { name, code } = CURRENCY_DISPLAY[c];

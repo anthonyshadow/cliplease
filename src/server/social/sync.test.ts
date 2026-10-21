@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   isKeptVideo,
   lostProfessionalAccount,
+  refusalReason,
   SOCIAL_CACHE_TTL_DAYS,
   SOCIAL_SYNC_MAX_PAGES,
   SOCIAL_SYNC_MAX_POSTS,
@@ -103,6 +104,47 @@ describe("toSocialPostRow (03 DB1, 07 D68)", () => {
     expect(
       toSocialPostRow(ACCOUNT, post({ caption: null }), NOW).caption,
     ).toBeNull();
+  });
+
+  it("drops NUL bytes from the title and the caption before the cut, and a thumbnail URL that holds one", () => {
+    const row = toSocialPostRow(
+      ACCOUNT,
+      post({
+        title: "Bay\u0000",
+        caption: `${"\u0000".repeat(10)}${"a".repeat(500)}`,
+        thumbnailUrl: "mock://thumb/\u000001",
+      }),
+      NOW,
+    );
+    expect(row.title).toBe("Bay");
+    expect(row.caption).toBe("a".repeat(500));
+    expect(row.thumbnailUrl).toBeNull();
+  });
+});
+
+describe("refusalReason (02 §7.5 step 1)", () => {
+  it("refuses a missing or disconnected account, one that must reconnect, and one still blocked", () => {
+    expect(refusalReason(undefined)).toEqual({
+      ok: false,
+      reason: "not_found",
+    });
+    expect(refusalReason({ status: "disconnected", blockedSec: null })).toEqual(
+      { ok: false, reason: "not_found" },
+    );
+    expect(
+      refusalReason({ status: "needs_reconnect", blockedSec: 30 }),
+    ).toEqual({ ok: false, reason: "needs_reconnect" });
+    expect(refusalReason({ status: "connected", blockedSec: 30 })).toEqual({
+      ok: false,
+      reason: "rate_limited",
+      retryAfterSec: 30,
+    });
+  });
+
+  it("lets a connected account sync once its block has passed", () => {
+    expect(refusalReason({ status: "connected", blockedSec: null })).toBeNull();
+    expect(refusalReason({ status: "connected", blockedSec: 0 })).toBeNull();
+    expect(refusalReason({ status: "connected", blockedSec: -5 })).toBeNull();
   });
 });
 

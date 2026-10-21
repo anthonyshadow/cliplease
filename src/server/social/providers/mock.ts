@@ -3,7 +3,11 @@ import { createHash, randomBytes } from "node:crypto";
 import { PLATFORM_LABELS } from "../../../lib/brand";
 import { DAY_MS, HOUR_MS } from "../../../lib/time";
 import { env, type MockSocialScenario } from "../../env";
-import { SocialAuthError, SocialRateLimitError } from "../errors";
+import {
+  SocialAuthError,
+  SocialRateLimitError,
+  SocialUpstreamError,
+} from "../errors";
 import { pkceChallenge } from "../pkce";
 import type { SocialPost, SocialProvider, TokenSet } from "../types";
 import { MOCK_POSTS, type MockPostRow } from "./mock-data";
@@ -184,7 +188,8 @@ export const mockProvider: SocialProvider = {
     return tokenPair(match[1] as string, ["mock.read"]);
   },
 
-  async refreshToken(t) {
+  async refreshToken(t, { signal }) {
+    if (signal.aborted) throw new SocialUpstreamError();
     const suffix = tokenSuffix(t.refreshToken, "refresh");
     const scenario = currentMockScenario();
     if (scenario === "expired") throw new SocialAuthError();

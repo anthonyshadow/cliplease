@@ -128,10 +128,13 @@ export function TabBar({
         })}
         <li className="flex flex-1">
           <MoreSheet
+            current={active}
             signOut={signOut}
             trigger={
               <button
                 type="button"
+                // More isn't a page itself, so it says "true"; the current page's row in the sheet says "page".
+                aria-current={moreActive ? "true" : undefined}
                 className={cn(TAB, moreActive ? "text-ink" : "text-ink-2")}
               >
                 {moreActive ? <CurrentBar /> : null}

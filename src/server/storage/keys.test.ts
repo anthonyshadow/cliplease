@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { originalKey, posterKey, posterKeyVideoId } from "./keys";
+import { originalKey, posterKey, posterKeyVideoId, posterPrefix } from "./keys";
 import { ORIGINAL_EXTENSION } from "./limits";
 
 const CREATOR_ID = "11111111-1111-4111-8111-111111111111";
@@ -56,6 +56,11 @@ describe("posterKey", () => {
 
   it("makes a new uuid on every call", () => {
     expect(posterKey(VIDEO_ID)).not.toBe(posterKey(VIDEO_ID));
+  });
+
+  it("starts with the video's folder, posterPrefix", () => {
+    expect(posterPrefix(VIDEO_ID)).toBe(`posters/${VIDEO_ID}/`);
+    expect(posterKey(VIDEO_ID).startsWith(posterPrefix(VIDEO_ID))).toBe(true);
   });
 
   it("names only the video and a uuid", () => {

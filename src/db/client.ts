@@ -3,6 +3,7 @@
 import { attachDatabasePool } from "@vercel/functions";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
+import { formatLogLine } from "../lib/log-line";
 import { env } from "../server/env";
 import * as schema from "./schema";
 
@@ -10,5 +11,18 @@ import * as schema from "./schema";
 export const pool = new Pool({ connectionString: env.DATABASE_URL });
 // On Vercel it closes idle connections before a function suspends; elsewhere it only adds a `release` listener.
 attachDatabasePool(pool);
+// An idle client's connection dropped (a Neon restart or suspend, a network blip). pg-pool has already removed the
+// client; without a listener the 'error' event would crash the process, so only log it.
+pool.on("error", (error) => {
+  process.stderr.write(
+    formatLogLine("warn", "db.idle_client_error", {
+      error,
+      pgCode:
+        "code" in error && typeof error.code === "string"
+          ? error.code
+          : undefined,
+    }),
+  );
+});
 
 export const db = drizzle({ client: pool, schema });
