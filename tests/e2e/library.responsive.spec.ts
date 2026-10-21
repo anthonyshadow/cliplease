@@ -1,10 +1,12 @@
-import { expect, type Locator, type Page, test } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 import { SYNC_LINE } from "./helpers/connections";
 import { collectConsoleErrors } from "./helpers/console";
 import { signUpCreator } from "./helpers/creator";
 import {
   appCap,
   atEveryWidth,
+  type Box,
+  boxOf,
   expectCreatorChrome,
   expectPageFrame,
   expectWithinCap,
@@ -36,14 +38,6 @@ function expectedTracks(width: number): number {
   }
   return tracks;
 }
-
-type Box = { top: number; bottom: number; left: number; right: number };
-
-const boxOf = (locator: Locator): Promise<Box> =>
-  locator.evaluate((el) => {
-    const { top, bottom, left, right } = el.getBoundingClientRect();
-    return { top, bottom, left, right };
-  });
 
 /** <main>'s content box, inside its gutters. */
 const contentOf = (page: Page): Promise<Box> =>

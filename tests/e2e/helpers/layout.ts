@@ -63,6 +63,27 @@ export async function expectWithinCap(locator: Locator, maxPx: number) {
   expect(Math.abs(left - (clientWidth - right))).toBeLessThanOrEqual(1);
 }
 
+/** An element's box in viewport px (getBoundingClientRect: a 0 px tall box still measures). */
+export type Box = { top: number; bottom: number; left: number; right: number };
+
+export const boxOf = (locator: Locator): Promise<Box> =>
+  locator.evaluate((el) => {
+    const { top, bottom, left, right } = el.getBoundingClientRect();
+    return { top, bottom, left, right };
+  });
+
+/** `left` sits wholly left of `right`: its right edge at or before the other's left edge (07 D146's two columns). */
+export async function expectLeftOf(left: Locator, right: Locator) {
+  const [a, b] = await Promise.all([boxOf(left), boxOf(right)]);
+  expect(a.right).toBeLessThanOrEqual(b.left);
+}
+
+/** `upper` sits wholly above `lower`: one column, in that order. */
+export async function expectAbove(upper: Locator, lower: Locator) {
+  const [a, b] = await Promise.all([boxOf(upper), boxOf(lower)]);
+  expect(a.bottom).toBeLessThanOrEqual(b.top);
+}
+
 /** A control keeps a 44 × 44 px target at every tier (07 D152): its own box, or the hit-44 ::after around a smaller one. */
 export async function expectTouchTarget(control: Locator) {
   const { width, height } = await control.evaluate((el) => {

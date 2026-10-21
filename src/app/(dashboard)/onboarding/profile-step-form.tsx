@@ -43,7 +43,7 @@ function availabilityText(handle: string, result: Availability): string {
  */
 export function ProfileStepForm({ linkHost }: { linkHost: string }) {
   const [handleTouched, setHandleTouched] = useState(false);
-  const { state, pending, formProps } = useFormAction(
+  const { state, pending, resultKey, formProps } = useFormAction(
     completeOnboarding,
     null,
     () => setHandleTouched(true),
@@ -54,7 +54,6 @@ export function ProfileStepForm({ linkHost }: { linkHost: string }) {
   const [settled, setSettled] = useState("");
   const [checked, setChecked] = useState<Check | null>(null);
   const [errors, setErrors] = useState<Partial<Record<Field, string>>>({});
-  const [alertId, setAlertId] = useState(0);
   const nameRef = useRef<HTMLInputElement>(null);
   const handleRef = useRef<HTMLInputElement>(null);
   const ageRef = useRef<HTMLInputElement>(null);
@@ -96,7 +95,6 @@ export function ProfileStepForm({ linkHost }: { linkHost: string }) {
       if (message) next[field] = message;
     }
     setErrors(next);
-    setAlertId((id) => id + 1);
     const first = FIELD_ORDER.find((field) => next[field]);
     const ref = {
       displayName: nameRef,
@@ -220,7 +218,7 @@ export function ProfileStepForm({ linkHost }: { linkHost: string }) {
       />
       <input type="hidden" name="timeZone" value={timeZone} />
       {state !== null ? (
-        <p key={alertId} role="alert" className="sr-only">
+        <p key={resultKey} role="alert" className="sr-only">
           {state.error.message}
         </p>
       ) : null}

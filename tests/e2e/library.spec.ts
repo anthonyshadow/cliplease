@@ -9,6 +9,7 @@ import {
   expectThumbnailsLoaded,
   LIBRARY,
   searchParam,
+  TILE_HREF,
   tileCaption,
   tileLink,
   tiles,
@@ -18,16 +19,14 @@ import { isServerAction, pressAndSettle, pressLink } from "./helpers/press";
 
 // S12 behavior (05 §6.1, J3) on chromium-desktop and webkit-iphone: the empty state, a Demo connect's 24 tiles, the
 // platform chip, caption search, a second account with Show more and the account strip, Sync all's summary, a failed
-// thumbnail, and nothing syncing on open. Each test signs up its own creator. Tile links go to
-// /dashboard/videos/new?post=…, which doesn't exist yet (P10b/P11): they are read, never followed. Controls are
+// thumbnail, and nothing syncing on open. Each test signs up its own creator. Tile links go to the Source page
+// (/dashboard/videos/new?post=…), which make-licensable.spec.ts covers: here they are read, never followed. Controls are
 // pressed with the keyboard: on the iPhone a click near the bottom can land on the fixed TabBar.
 test.use({ reducedMotion: "reduce" });
 
 // Post 01, the newest (07 D53). The caption is longer than two lines can show; the CSS clamps it, the DOM has it all.
 const FIRST_CAPTION = /^He saw snow for the first time/;
 const FIRST_META = "Demo · 1 Oct 2026 · 0:14 · 14.8M views";
-// 07 D39: the media + caption link and Make licensable both open the Source page (P11) for a post with no video.
-const TILE_HREF = /^\/dashboard\/videos\/new\?post=([0-9a-f-]{36})$/;
 const THUMBNAIL_PATH = /^\/api\/library\/thumbnails\/([0-9a-f-]{36})$/;
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 

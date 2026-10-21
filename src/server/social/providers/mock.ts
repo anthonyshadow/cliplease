@@ -106,6 +106,10 @@ export function mockTokensFor(
 
 const pad = (n: number) => String(n).padStart(2, "0");
 
+/** A mock post's canonical URL, made from its id alone (07 D68): what the sync stores as its permalink. */
+export const mockPermalink = (externalId: string) =>
+  `https://example.com/mock/${externalId}`;
+
 function toPost(suffix: string, row: MockPostRow): SocialPost {
   const externalId = `mock_post_${suffix}_${pad(row.n)}`;
   return {
@@ -115,7 +119,7 @@ function toPost(suffix: string, row: MockPostRow): SocialPost {
     title: null,
     linkKey: externalId,
     caption: row.caption,
-    permalink: `https://example.com/mock/${externalId}`,
+    permalink: mockPermalink(externalId),
     thumbnailUrl: `mock://thumb/${pad(row.n)}`,
     thumbnailExpiresAt: null,
     publishedAt: new Date(row.publishedAt),

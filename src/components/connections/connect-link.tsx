@@ -18,6 +18,8 @@ export function ConnectLink({
   label,
   ariaLabel,
   variant,
+  size = "sm",
+  className,
 }: {
   href: string;
   label: string;
@@ -25,6 +27,9 @@ export function ConnectLink({
   ariaLabel?: string;
   /** `link`: the action of a Banner (the Library's Reconnect, 04 §9.21). */
   variant: "primary" | "secondary" | "link";
+  /** `lg` when it is a page's primary (the Source page's Reconnect, P11). */
+  size?: "lg" | "sm";
+  className?: string;
 }) {
   const [pressed, setPressed] = useState(false);
   useEffect(() => {
@@ -48,7 +53,8 @@ export function ConnectLink({
     <Button
       asChild
       variant={variant}
-      size="sm"
+      size={size}
+      className={className}
       loading={pressed}
       loadingLabel="Connecting…"
     >

@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   captionText,
   type LibraryPostDTO,
+  POST_STATS,
+  postedDate,
+  postMetaDetails,
+  postStats,
   thumbnailAlt,
   thumbnailFailedText,
   tileAction,
@@ -9,6 +13,7 @@ import {
   tileMetaDetails,
   tilePills,
   tileStat,
+  untitledPostText,
 } from "./post";
 
 const POST: LibraryPostDTO = {
@@ -84,6 +89,99 @@ describe("tile words (04 §9.12)", () => {
 
   it("the failed thumbnail names the platform", () => {
     expect(thumbnailFailedText("mock")).toBe("Demo · Sync to refresh");
+  });
+});
+
+describe("postedDate", () => {
+  it("is the UTC day the post went up, or null without one", () => {
+    expect(postedDate("2026-10-01T15:00:00.000Z")).toBe("1 Oct 2026");
+    expect(postedDate(new Date("2026-10-01T23:30:00-05:00"))).toBe(
+      "2 Oct 2026",
+    );
+    expect(postedDate(null)).toBeNull();
+  });
+});
+
+describe("untitledPostText (04 §9.12, 01 J5.12)", () => {
+  it("names the platform and the UTC day it was posted", () => {
+    expect(untitledPostText("Instagram", "2026-10-01T15:00:00.000Z")).toBe(
+      "Instagram video · 1 Oct 2026",
+    );
+    expect(
+      untitledPostText("Demo", new Date("2026-10-01T23:30:00-05:00")),
+    ).toBe("Demo video · 2 Oct 2026");
+    expect(untitledPostText("TikTok", null)).toBe("TikTok video");
+  });
+});
+
+describe("Source page meta and stats (04 §9.13, 05 §6.5 callout 3)", () => {
+  it("post 01's meta and stats lines read as the wireframe", () => {
+    expect(postMetaDetails(POST)).toEqual(["1 Oct 2026", "0:14"]);
+    expect(postStats(POST)).toEqual([
+      "14.8M views",
+      "888K likes",
+      "44.4K comments",
+    ]);
+  });
+
+  it("the tile's meta line is the same date and duration plus its one stat", () => {
+    expect(tileMetaDetails(POST)).toEqual([
+      ...postMetaDetails(POST),
+      "14.8M views",
+    ]);
+    expect(tileMetaDetails({ ...POST, viewCount: null })).toEqual(
+      postMetaDetails(POST),
+    );
+  });
+
+  it("Instagram has no duration and no views until P28b (07 D83)", () => {
+    const ig = { ...POST, platform: "instagram" as const };
+    expect(postMetaDetails(ig)).toEqual(["1 Oct 2026"]);
+    expect(postStats(ig)).toEqual(["888K likes", "44.4K comments"]);
+    expect(POST_STATS.instagram).not.toContain("views");
+  });
+
+  it("TikTok and YouTube show views, likes and comments, in that order", () => {
+    for (const platform of ["tiktok", "youtube"] as const) {
+      expect(postStats({ ...POST, platform })).toEqual([
+        "14.8M views",
+        "888K likes",
+        "44.4K comments",
+      ]);
+    }
+  });
+
+  it("one of each is singular (owner answers Q-29, Q-65 a); zero is plural", () => {
+    expect(
+      postStats({ ...POST, viewCount: 1, likeCount: 1, commentCount: 1 }),
+    ).toEqual(["1 view", "1 like", "1 comment"]);
+    expect(
+      postStats({ ...POST, viewCount: 0, likeCount: 0, commentCount: 0 }),
+    ).toEqual(["0 views", "0 likes", "0 comments"]);
+  });
+
+  it("leaves out a count the platform didn't give, and never sums", () => {
+    expect(postStats({ ...POST, likeCount: null })).toEqual([
+      "14.8M views",
+      "44.4K comments",
+    ]);
+    expect(
+      postStats({
+        ...POST,
+        viewCount: null,
+        likeCount: null,
+        commentCount: null,
+      }),
+    ).toEqual([]);
+    expect(
+      postStats({ ...POST, viewCount: 999, likeCount: 2, commentCount: 1_500 }),
+    ).toEqual(["999 views", "2 likes", "1.5K comments"]);
+  });
+
+  it("a post without a date or duration has an empty meta line", () => {
+    expect(
+      postMetaDetails({ ...POST, postedAt: null, durationSec: null }),
+    ).toEqual([]);
   });
 });
 

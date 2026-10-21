@@ -25,6 +25,32 @@ export const tileLink = (tile: Locator) =>
 /** A tile's caption: the <p> in its link. CSS clamps it to two lines; the DOM holds it whole. */
 export const tileCaption = (tile: Locator) => tile.locator(":scope > a > p");
 
+/** 07 D39: a tile of a post with no video links to its Source page (P11); the group is the post's id. */
+export const TILE_HREF = /^\/dashboard\/videos\/new\?post=([0-9a-f-]{36})$/;
+
+/** The one tile whose caption matches `caption` (post 01: /^He saw snow/, post 02: /^Caught a wave/). */
+export const tileByCaption = (page: Page, caption: RegExp) =>
+  tiles(page).filter({
+    has: page.locator(":scope > a > p", { hasText: caption }),
+  });
+
+/**
+ * The id of the post whose tile caption matches `caption`, read from the tile's link to its Source page, so the post
+ * must have no video yet. Opens the Library first unless the page is on it.
+ */
+export async function libraryPostId(
+  page: Page,
+  caption: RegExp,
+): Promise<string> {
+  if (new URL(page.url()).pathname !== LIBRARY) await page.goto(LIBRARY);
+  const tile = tileByCaption(page, caption);
+  await expect(tile).toHaveCount(1);
+  const href = (await tileLink(tile).getAttribute("href")) ?? "";
+  const id = TILE_HREF.exec(href)?.[1];
+  if (!id) throw new Error(`the tile links to ${href}, not a Source page`);
+  return id;
+}
+
 /** The current address's `name` param, or null. */
 export const searchParam = (page: Page, name: string) =>
   new URL(page.url()).searchParams.get(name);

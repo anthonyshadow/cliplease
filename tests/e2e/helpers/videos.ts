@@ -8,9 +8,11 @@ import {
   type Route,
 } from "@playwright/test";
 import { resumeHintKey } from "../../../src/lib/upload/resume";
+import { sourcePageHref } from "../../../src/lib/videos/steps";
 import { pressButton, requestEnded } from "./press";
 
-// The plain upload as a creator does it (P10b), for the upload specs and M3's later ones (P11, P11c, P13).
+// The plain upload as a creator does it (P10b), and Make licensable from a Library post (P11), for the upload specs and
+// M3's later ones (P11, P11c, P13).
 
 export const NEW_VIDEO = "/dashboard/videos/new";
 export const SAMPLE_MP4 = "tests/fixtures/sample.mp4";
@@ -31,7 +33,7 @@ const MULTIPART_ROOT = path.join(STORAGE_ROOT, ".multipart");
 export const multipartDir = (uploadId: string) =>
   path.join(MULTIPART_ROOT, uploadId);
 
-// The drafts this worker's running test made (createDraft adds; cleanCreatedVideos removes their files).
+// The drafts this worker's running test made (createDraft and makeLicensable add; cleanCreatedVideos removes their files).
 const created = new Set<string>();
 
 /**
@@ -98,6 +100,27 @@ export async function createDraft(
   await page.goto(NEW_VIDEO);
   await page.getByLabel("Title", { exact: true }).fill(title);
   await pressButton(page, "Continue");
+  await page.waitForURL(FILE_STEP);
+  const id = FILE_STEP.exec(page.url())?.[1];
+  if (!id) throw new Error("no video id in the File step's URL");
+  created.add(id);
+  return id;
+}
+
+/**
+ * Presses Make licensable on the post's Source page (going there first unless the page is on it); returns the new
+ * draft's id once its File step is open. The draft is registered for cleanCreatedVideos, as createDraft's are.
+ */
+export async function makeLicensable(
+  page: Page,
+  postId: string,
+): Promise<string> {
+  const url = new URL(page.url());
+  if (url.pathname !== NEW_VIDEO || url.searchParams.get("post") !== postId) {
+    await page.goto(sourcePageHref(postId));
+  }
+  // The live check runs before the redirect; waitForURL waits as long as the test allows.
+  await pressButton(page, "Make licensable");
   await page.waitForURL(FILE_STEP);
   const id = FILE_STEP.exec(page.url())?.[1];
   if (!id) throw new Error("no video id in the File step's URL");

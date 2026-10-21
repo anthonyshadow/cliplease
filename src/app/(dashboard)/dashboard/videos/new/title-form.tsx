@@ -10,18 +10,16 @@ import { createVideoFromUpload } from "./actions";
 
 /** S18's form (05 §6.6 callouts 2–3): Title, then Continue; a refusal shows on the field and takes the focus. */
 export function TitleForm() {
-  const { state, pending, formProps } = useFormAction(
+  const { state, pending, resultKey, formProps } = useFormAction(
     createVideoFromUpload,
     null,
   );
   const [error, setError] = useState<string>();
-  const [alertId, setAlertId] = useState(0);
   const titleRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (state === null) return;
     setError(state.error.fields?.title?.[0] ?? state.error.message);
-    setAlertId((id) => id + 1);
     titleRef.current?.focus();
   }, [state]);
 
@@ -37,7 +35,7 @@ export function TitleForm() {
         onChange={() => setError(undefined)}
       />
       {state !== null ? (
-        <p key={alertId} role="alert" className="sr-only">
+        <p key={resultKey} role="alert" className="sr-only">
           {state.error.message}
         </p>
       ) : null}

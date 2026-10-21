@@ -1,10 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { asc, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createVideoFromUpload as createVideoAction } from "../../src/app/(dashboard)/dashboard/videos/new/actions";
 import { db } from "../../src/db/client";
 import { auditEvent, video } from "../../src/db/schema";
+import { videoStepHref } from "../../src/lib/videos/steps";
 import {
   createVideoFromUpload,
   VideoInputError,
@@ -14,6 +15,7 @@ import { formOf, redirectTo } from "../helpers/actions";
 import { mockNextHeaders, signedInCreator } from "../helpers/auth";
 import { resetDb } from "../helpers/db";
 import { insertLicenseRequest } from "../helpers/factories";
+import { videosOf } from "../helpers/library-videos";
 import {
   fixture,
   newCreator,
@@ -43,13 +45,6 @@ afterAll(async () => {
   await resetDb();
 });
 beforeEach(() => mockNextHeaders(null));
-
-const videosOf = (creatorId: string) =>
-  db
-    .select()
-    .from(video)
-    .where(eq(video.creatorId, creatorId))
-    .orderBy(asc(video.createdAt));
 
 const slugsOf = async (creatorId: string) =>
   (await videosOf(creatorId)).map((v) => v.slug).sort();
@@ -185,9 +180,7 @@ describe("the title page's action (S18's Continue)", () => {
 
     const [row] = await videosOf(me.creatorId);
     expect(row).toMatchObject({ title: "Beach day", slug: "beach-day" });
-    expect(thrown).toMatchObject(
-      redirectTo(`/dashboard/videos/${row.id}?step=file`),
-    );
+    expect(thrown).toMatchObject(redirectTo(videoStepHref(row.id, "file")));
   });
 
   it.each([
@@ -234,6 +227,9 @@ describe("getVideoForCreator", () => {
     "posterOrigin",
     "posterSrc",
     "rightsAnswered",
+    "sameVideoConfirmed",
+    "source",
+    "sourcePost",
     "status",
     "title",
     "width",
@@ -257,6 +253,9 @@ describe("getVideoForCreator", () => {
       posterOrigin: null,
       originalLocked: false,
       rightsAnswered: false,
+      source: "upload",
+      sameVideoConfirmed: false,
+      sourcePost: null,
     });
   });
 

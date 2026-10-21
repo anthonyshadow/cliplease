@@ -203,6 +203,22 @@ export async function insertLibraryVideo(
   });
 }
 
+/** Just the columns `video_original_ready` asks for (the upload itself is P10's). */
+const readyOriginal = (v: Pick<Video, "id" | "creatorId">) =>
+  ({
+    originalStatus: "ready",
+    originalObjectKey: `originals/${v.creatorId}/${v.id}.mp4`,
+    originalBytes: 1_048_576,
+    originalMime: "video/mp4",
+  }) satisfies Partial<NewVideo>;
+
+/** Marks `v`'s original ready (readyOriginal): for the steps after the File step. */
+export async function markOriginalReady(
+  v: Pick<Video, "id" | "creatorId">,
+): Promise<void> {
+  await db.update(video).set(readyOriginal(v)).where(eq(video.id, v.id));
+}
+
 /**
  * Publishes `draft` with every column `video_published_requirements` asks for: a ready original, a poster, the
  * attestations and the confirmed postings.
@@ -212,10 +228,7 @@ export async function publishVideo(draft: Video): Promise<Video> {
     .update(video)
     .set({
       status: "published",
-      originalStatus: "ready",
-      originalObjectKey: `originals/${draft.creatorId}/${draft.id}.mp4`,
-      originalBytes: 1_048_576,
-      originalMime: "video/mp4",
+      ...readyOriginal(draft),
       posterObjectKey: `posters/${draft.creatorId}/${draft.id}.jpg`,
       posterOrigin: "frame_capture",
       rightsAttestedAt: new Date(),

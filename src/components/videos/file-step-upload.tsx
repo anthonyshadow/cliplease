@@ -3,8 +3,10 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
+import { TWO_COLUMN } from "@/components/layout/gutter";
 import { Banner } from "@/components/ui/banner";
 import { Button } from "@/components/ui/button";
+import { Notice } from "@/components/ui/notice";
 import { PRIMARY_WIDTH } from "@/components/ui/primary-width";
 import { useClientValue } from "@/components/ui/use-client-value";
 import { formatDuration } from "@/lib/format";
@@ -39,7 +41,14 @@ import {
   useBrowserOnline,
   useUploads,
 } from "@/lib/upload/upload-store";
-import type { CreatorVideoDTO } from "@/server/videos/queries";
+import { cn } from "@/lib/utils";
+import { durationMismatchMessage } from "@/lib/videos/duration";
+import type {
+  CreatorSourcePostDTO,
+  CreatorVideoDTO,
+} from "@/server/videos/queries";
+import { PostSummary } from "./file-step-post-summary";
+import { SameVideoForm } from "./file-step-same-video";
 import { PosterPicker } from "./poster-picker";
 import { type DropzoneView, UploadDropzone } from "./upload-dropzone";
 
@@ -57,6 +66,19 @@ export type FileStepVideo = Pick<
   | "posterOrigin"
   | "originalLocked"
 >;
+
+/**
+ * A Library video's File step (P11; 07 D39): its source post, whether the same-video tick is stored, and the post's
+ * fixed lines, worded once by the server FileStep so the island's progress renders don't rebuild them.
+ */
+export type FileStepLibrary = {
+  post: CreatorSourcePostDTO;
+  sameVideoConfirmed: boolean;
+  /** provenanceLine: "From Demo · @demo.creator · posted 1 Oct 2026 · Verified". */
+  provenance: string;
+  /** sourceNotice: 01 J5.5's Notice. */
+  notice: string;
+};
 
 function hintsLine(h: {
   durationMs: number | null;
@@ -129,17 +151,24 @@ function PausedBox({
  * the upload carries on across the app's pages), the cover picker, the live region and Continue. With no upload in this
  * tab it shows what the server stored and this device remembers (P10c): none, paused after a reload (choose the same
  * file to resume), didn't finish, expired, failed or ready. Another tab uploading the same video locks it here (Q-49).
+ *
+ * A plain upload's Continue is a link once the original is ready. A Library video (`library`, P11) renders as the two
+ * children of the page's TWO_COLUMN grid (owner answer Q-66 a): the post summary, then the step (01 J5.5's Notice, the
+ * upload, the cover picker and, once attached, the duration warning, the same-video tick and Continue's form post).
  */
 export function FileStepUpload({
   video,
   nextHref,
+  library,
   progress = null,
 }: {
   video: FileStepVideo;
-  nextHref: string;
   /** The server's resume state when the row is 'uploading' (the upload id and bytes only). */
   progress?: OriginalUploadProgress;
-}) {
+} & (
+  | { nextHref: string; library?: undefined }
+  | { library: FileStepLibrary; nextHref?: undefined }
+)) {
   const router = useRouter();
   const pathname = usePathname();
   const { originals, covers } = useUploads();
@@ -438,7 +467,46 @@ export function FileStepUpload({
       break;
   }
 
-  return (
+  const width = entry?.hints?.width ?? video.width;
+  const height = entry?.hints?.height ?? video.height;
+  let next: ReactNode;
+  if (!ready) {
+    // Until the original is ready: Continue disabled, with the helper unless an upload is on its way.
+    next = (
+      <div className="flex flex-col gap-2">
+        <Button
+          disabled
+          aria-describedby={running || elsewhere ? undefined : helperId}
+          className={PRIMARY_WIDTH}
+        >
+          Continue
+        </Button>
+        {running || elsewhere ? null : (
+          <p id={helperId} className="text-footnote text-ink-2">
+            {DROPZONE_COPY.continueHelper}
+          </p>
+        )}
+      </div>
+    );
+  } else if (library) {
+    next = (
+      <SameVideoForm
+        videoId={video.id}
+        confirmed={library.sameVideoConfirmed}
+        warning={durationMismatchMessage(
+          (entry?.hints ?? video).durationMs,
+          library.post.durationSec,
+        )}
+      />
+    );
+  } else {
+    next = (
+      <Button asChild className={PRIMARY_WIDTH}>
+        <Link href={nextHref}>Continue</Link>
+      </Button>
+    );
+  }
+  const step = (
     <>
       {elsewhere ? (
         <Banner tone="info">{DROPZONE_COPY.otherTab}</Banner>
@@ -474,30 +542,36 @@ export function FileStepUpload({
           videoId={video.id}
           title={video.title}
           posterSrc={video.posterSrc}
-          width={entry?.hints?.width ?? video.width}
-          height={entry?.hints?.height ?? video.height}
+          width={width}
+          height={height}
         />
       ) : null}
-      {ready ? (
-        <Button asChild className={PRIMARY_WIDTH}>
-          <Link href={nextHref}>Continue</Link>
-        </Button>
-      ) : (
-        <div className="flex flex-col gap-2">
-          <Button
-            disabled
-            aria-describedby={running || elsewhere ? undefined : helperId}
-            className={PRIMARY_WIDTH}
-          >
-            Continue
-          </Button>
-          {running || elsewhere ? null : (
-            <p id={helperId} className="text-footnote text-ink-2">
-              {DROPZONE_COPY.continueHelper}
-            </p>
-          )}
-        </div>
-      )}
+      {next}
+    </>
+  );
+  if (!library) return step;
+
+  // The cover beside the post: the picker's own preview or the stored poster, or the fill block while a frame is read.
+  const coverSrc = cover?.preview ?? video.posterSrc;
+  const summaryCover =
+    coverSrc !== null || cover?.phase === "capturing"
+      ? { src: coverSrc, width, height }
+      : null;
+  return (
+    <>
+      <PostSummary
+        post={library.post}
+        provenance={library.provenance}
+        attached={ready}
+        cover={summaryCover}
+      />
+      <div
+        data-file-step-body
+        className={cn(TWO_COLUMN.main, "flex flex-col gap-6")}
+      >
+        <Notice>{library.notice}</Notice>
+        {step}
+      </div>
     </>
   );
 }

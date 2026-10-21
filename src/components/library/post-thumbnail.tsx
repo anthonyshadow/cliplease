@@ -1,7 +1,7 @@
 "use client";
 
 import { ImageOff } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useImageFailed } from "@/components/ui/use-image-failed";
 import type { SocialProviderId } from "@/lib/domain/values";
 import { THUMBNAIL_FALLBACK, thumbnailFailedText } from "@/lib/library/post";
 import { cn } from "@/lib/utils";
@@ -9,8 +9,7 @@ import { cn } from "@/lib/utils";
 /**
  * A tile's image (04 §9.12, 07 D150): contained in the 9:16 well (a Short fills it), explicit width and height so nothing
  * shifts, lazy. A missing or failed image becomes ImageOff + "{Platform} · Sync to refresh", never a broken image
- * (01 J3.10). An image that failed before hydration fired no onError, so the mount checks it too. The caller keys it on
- * the thumbnail's version: a sync that stores a new one tries again.
+ * (01 J3.10; useImageFailed). The caller keys it on the thumbnail's version: a sync that stores a new one tries again.
  */
 export function PostThumbnail({
   src,
@@ -28,12 +27,7 @@ export function PostThumbnail({
   width: number | null;
   height: number | null;
 }) {
-  const [failed, setFailed] = useState(src === null);
-  const image = useRef<HTMLImageElement>(null);
-  useEffect(() => {
-    const img = image.current;
-    if (img?.complete && img.naturalWidth === 0) setFailed(true);
-  }, []);
+  const { failed, imageProps } = useImageFailed(src);
   if (failed || src === null) {
     return (
       <div className="flex size-full flex-col items-center justify-center gap-2 p-3 text-center">
@@ -47,14 +41,13 @@ export function PostThumbnail({
   return (
     // biome-ignore lint/performance/noImgElement: the proxy streams a private, per-creator SVG; next/image would cache it.
     <img
-      ref={image}
+      {...imageProps}
       src={src}
       alt={alt}
       width={width ?? THUMBNAIL_FALLBACK.width}
       height={height ?? THUMBNAIL_FALLBACK.height}
       loading="lazy"
       decoding="async"
-      onError={() => setFailed(true)}
       className={cn("size-full", cover ? "object-cover" : "object-contain")}
     />
   );

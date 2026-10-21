@@ -162,7 +162,10 @@ const POST_COLUMNS = {
   commentCount: socialPost.commentCount,
   visibility: socialPost.visibility,
   fetchedAt: socialPost.fetchedAt,
+  // The Source page's (getLibraryPost); toPostDTO leaves them out of the tile.
   accountStatus: socialAccount.status,
+  accountDisplayName: socialAccount.displayName,
+  accountConnectedAt: socialAccount.connectedAt,
   videoId: video.id,
   videoStatus: video.status,
 };
@@ -185,6 +188,28 @@ function selectPosts() {
 
 type PostRow = Awaited<ReturnType<typeof selectPosts>>[number];
 
+/**
+ * A post's image through the creator-only proxy (07 D42), as the tile, the Source page and the Library File step show
+ * it. With no stored URL the src is null: the failed state shows without asking. The version in the query (the route
+ * ignores it) gets past the proxy's hour of browser cache once a sync stores a new image.
+ */
+export function postThumbnail(post: {
+  id: string;
+  thumbnailUrl: string | null;
+  thumbnailFetchedAt: Date | null;
+}): { thumbnailSrc: string | null; thumbnailVersion: string | null } {
+  const thumbnailVersion = post.thumbnailFetchedAt?.toISOString() ?? null;
+  const version = thumbnailVersion
+    ? `?v=${encodeURIComponent(thumbnailVersion)}`
+    : "";
+  return {
+    thumbnailSrc: post.thumbnailUrl
+      ? `/api/library/thumbnails/${post.id}${version}`
+      : null,
+    thumbnailVersion,
+  };
+}
+
 function toPostDTO({
   thumbnailUrl,
   thumbnailFetchedAt,
@@ -192,22 +217,15 @@ function toPostDTO({
   videoStatus,
   postedAt,
   fetchedAt,
-  accountStatus: _,
+  accountStatus: _status,
+  accountDisplayName: _displayName,
+  accountConnectedAt: _connectedAt,
   ...row
 }: PostRow): LibraryPostDTO {
-  const thumbnailVersion = thumbnailFetchedAt?.toISOString() ?? null;
-  // The proxy streams the stored URL (07 D42); with none, the tile shows its failed state without asking. The version
-  // in the query (the route ignores it) gets past the proxy's hour of browser cache once a sync stores a new image.
-  const version = thumbnailVersion
-    ? `?v=${encodeURIComponent(thumbnailVersion)}`
-    : "";
   return {
     ...row,
     fetchedAt: fetchedAt.toISOString(),
-    thumbnailSrc: thumbnailUrl
-      ? `/api/library/thumbnails/${row.id}${version}`
-      : null,
-    thumbnailVersion,
+    ...postThumbnail({ id: row.id, thumbnailUrl, thumbnailFetchedAt }),
     postedAt: postedAt?.toISOString() ?? null,
     video: videoId && videoStatus ? { id: videoId, status: videoStatus } : null,
   };
@@ -313,19 +331,38 @@ export async function listLibraryPosts(
 }
 
 /**
- * One of the creator's visible posts with its account's status, for the Source page (P11, 07 D39), or null. Built with
- * the Library so the two read posts the same way (owner answer Q-27).
+ * 02 §5.4's `LibraryPostDTO & { accountStatus }` for the Source page, plus what its badge preview and provenance line
+ * read from the account (03 §7.4 "new from post", P11): the display name (a YouTube channel without a handle) and when
+ * it was last connected. The DTO already carries the whole caption, the username and the platform.
+ */
+export type SourcePagePostDTO = LibraryPostDTO & {
+  accountStatus: SocialAccountStatus;
+  accountDisplayName: string | null;
+  /** ISO time of the account's last successful (re)connect: the badge's "Account linked {date}". */
+  accountConnectedAt: string;
+};
+
+/**
+ * One of the creator's visible posts with its account, for the Source page (P11, 07 D39), or null. Built with the
+ * Library so the two read posts the same way (owner answer Q-27).
  */
 export async function getLibraryPost(
   a: Actor,
   postId: string,
-): Promise<(LibraryPostDTO & { accountStatus: SocialAccountStatus }) | null> {
+): Promise<SourcePagePostDTO | null> {
   const { creatorId } = requireCreatorActor(a);
   if (!isUuid(postId)) return null;
   const [row] = await selectPosts()
     .where(and(eq(socialPost.id, postId), visiblePostsWhere(creatorId)))
     .limit(1);
-  return row ? { ...toPostDTO(row), accountStatus: row.accountStatus } : null;
+  return row
+    ? {
+        ...toPostDTO(row),
+        accountStatus: row.accountStatus,
+        accountDisplayName: row.accountDisplayName,
+        accountConnectedAt: row.accountConnectedAt.toISOString(),
+      }
+    : null;
 }
 
 /**

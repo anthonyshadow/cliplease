@@ -594,6 +594,8 @@ describe("getLibraryPost (built with the Library, owner answer Q-27)", () => {
     expect(await getLibraryPost(d.actor, post01.id)).toEqual({
       ...posts[0],
       accountStatus: "connected",
+      accountDisplayName: "Demo Creator",
+      accountConnectedAt: d.account.connectedAt.toISOString(),
     });
     await db
       .update(socialAccount)
@@ -614,6 +616,38 @@ describe("getLibraryPost (built with the Library, owner answer Q-27)", () => {
     const post02 = await postNumber(d.account.id, "02");
     await updatePosts({ fetchedAt: DAYS_AGO_31 }, eq(socialPost.id, post02.id));
     expect(await getLibraryPost(d.actor, post02.id)).toBeNull();
+  });
+});
+
+describe("getLibraryPost: the account fields the Source page adds (P11, 03 §7.4)", () => {
+  it("carries the account's display name and last connect with the whole caption; the tile DTO has neither", async () => {
+    const d = await syncedDemo();
+    const post01 = await postNumber(d.account.id, "01");
+    const reconnectedAt = new Date("2026-10-12T09:30:00.000Z");
+    await db
+      .update(socialAccount)
+      .set({ displayName: null, connectedAt: reconnectedAt })
+      .where(eq(socialAccount.id, d.account.id));
+
+    expect(await getLibraryPost(d.actor, post01.id)).toMatchObject({
+      id: post01.id,
+      platform: "mock",
+      accountUsername: "demo.creator",
+      captionExcerpt: SNOW_CAPTION,
+      accountStatus: "connected",
+      accountDisplayName: null,
+      accountConnectedAt: "2026-10-12T09:30:00.000Z",
+    });
+    const { posts } = await listLibraryPosts(d.actor, {});
+    const tile = posts.find((p) => p.id === post01.id);
+    expect(tile).toBeDefined();
+    for (const key of [
+      "accountStatus",
+      "accountDisplayName",
+      "accountConnectedAt",
+    ]) {
+      expect(tile).not.toHaveProperty(key);
+    }
   });
 });
 
