@@ -5,7 +5,7 @@ import { asc, eq } from "drizzle-orm";
 import { expect, vi } from "vitest";
 import { db } from "../../src/db/client";
 import { video, videoPosting } from "../../src/db/schema";
-import type { Video } from "../../src/db/schema/types";
+import type { NewSocialPostRow, Video } from "../../src/db/schema/types";
 import { disconnectSocialAccount } from "../../src/server/social/disconnect";
 import {
   mockProvider,
@@ -68,17 +68,21 @@ export function liveGetPost(change: Partial<SocialPost>) {
 
 /**
  * A draft Library video of `owner` and its verified source posting, built by the factories (no sync and no live check:
- * for what comes after Make licensable). Its original is ready unless `ready` is false.
+ * for what comes after Make licensable). Its original is ready unless `ready` is false; `post` overrides the post's
+ * columns (its ids, say).
  */
 export async function libraryDraft(
   owner: { creatorId: string },
-  { ready = true } = {},
+  {
+    ready = true,
+    post: postOverrides = {},
+  }: { ready?: boolean; post?: Partial<NewSocialPostRow> } = {},
 ): Promise<Video> {
   const account = await insertSocialAccount(
     { id: owner.creatorId },
     { username: "demo.creator" },
   );
-  const post = await insertSocialPost(account);
+  const post = await insertSocialPost(account, postOverrides);
   const { video: row } = await insertLibraryVideo(account, post);
   if (ready) await markOriginalReady(row);
   return row;

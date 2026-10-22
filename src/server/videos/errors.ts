@@ -1,10 +1,14 @@
 import "server-only";
+import {
+  AlreadyLicensableElsewhereError,
+  NotPublicError,
+} from "../postings/errors";
 import { SocialRateLimitError, SocialUpstreamError } from "../social/errors";
 
 // The Make licensable refusals (02 §5.6; P11). Messages are fixed codes: never a title, a handle or a URL. The actions
 // turn them into ActionResult codes with the two mappers at the bottom; the pages word them (01 J5.2–J5.4, 07 D18).
-// P11b moves AlreadyLicensableElsewhereError and NotPublicError to src/server/postings/errors.ts (02 §5.12), where
-// saveVideoPostings shares them.
+// AlreadyLicensableElsewhereError and NotPublicError live in src/server/postings/errors.ts (02 §5.12), shared with
+// saveVideoPostings.
 
 /** The post is missing, another creator's, or no longer `available` (createVideoFromPost step 1). */
 export class PostNotFoundError extends Error {
@@ -27,22 +31,6 @@ export class NotOnAccountError extends Error {
   constructor() {
     super("not_on_account");
     this.name = "NotOnAccountError";
-  }
-}
-
-/** The live post is private (07 D18): only public and unlisted posts can be made licensable. */
-export class NotPublicError extends Error {
-  constructor() {
-    super("not_public");
-    this.name = "NotPublicError";
-  }
-}
-
-/** Another creator's video holds the verified posting of this platform post (07 D66, video_posting_verified_uidx). */
-export class AlreadyLicensableElsewhereError extends Error {
-  constructor() {
-    super("already_licensable_elsewhere");
-    this.name = "AlreadyLicensableElsewhereError";
   }
 }
 

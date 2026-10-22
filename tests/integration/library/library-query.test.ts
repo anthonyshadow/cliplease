@@ -22,11 +22,10 @@ import {
   upsertPosts,
 } from "../../../src/server/social/sync";
 import type { SocialPost } from "../../../src/server/social/types";
-import { creatorActor } from "../../helpers/auth";
+import { bareCreator } from "../../helpers/auth";
 import { demoAccount, postNumber, postsOf } from "../../helpers/connect-flow";
 import { resetDb } from "../../helpers/db";
 import {
-  insertCreator,
   insertLibraryVideo,
   insertSocialAccount,
   insertSocialPost,
@@ -64,15 +63,6 @@ const updatePosts = (set: PgUpdateSetSource<typeof socialPost>, where: SQL) =>
 /** The proxy URL with the stored thumbnail's version in the query, so a new one gets past the browser's cache. */
 const thumbnailSrcOf = (id: string, version: string | null | undefined) =>
   `/api/library/thumbnails/${id}?v=${encodeURIComponent(version ?? "")}`;
-
-/** A creator with no accounts, and its actor. */
-async function newCreator() {
-  const creator = await insertCreator();
-  return {
-    creator,
-    actor: creatorActor({ creatorId: creator.id, userId: creator.userId }),
-  };
-}
 
 describe("listLibraryPosts: order and the tile DTO (03 §7.2)", () => {
   it("lists a synced Demo account's 24 posts newest first, post 01 first, with no next page", async () => {
@@ -239,7 +229,7 @@ describe("filters (07 D48)", () => {
   });
 
   it("treats %, _ and \\ in q literally, and searches titles too", async () => {
-    const { creator, actor } = await newCreator();
+    const { creator, actor } = await bareCreator();
     const account = await insertSocialAccount(creator);
     const captions = [
       "100% real",
@@ -307,7 +297,7 @@ describe("keyset paging (03 §7.2)", () => {
   it.each([25, 49])(
     "pages %i posts with the same posted_at by id alone, with no duplicates or gaps",
     async (n) => {
-      const { creator, actor } = await newCreator();
+      const { creator, actor } = await bareCreator();
       const account = await insertSocialAccount(creator);
       const postedAt = new Date("2026-09-01T12:00:00.123Z");
       const inserted = await Promise.all(
@@ -431,7 +421,7 @@ describe("the 30-day rule and allExpired (07 D13)", () => {
     expect(empty.platformCounts).toEqual({ mock: 0 });
     expect(empty.visibleCount).toBe(0);
 
-    const { actor } = await newCreator();
+    const { actor } = await bareCreator();
     expect(await listLibraryPosts(actor, {})).toEqual({
       posts: [],
       nextCursor: null,

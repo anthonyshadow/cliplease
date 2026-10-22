@@ -5,23 +5,30 @@ import { db } from "../../db/client";
 import { socialAccount, socialPost, videoPosting } from "../../db/schema";
 import { PLATFORM_LABELS } from "../../lib/brand";
 import type { SocialProviderId } from "../../lib/domain/values";
+import { parsePostingLink } from "../../lib/postings/parse";
 import { isUuid } from "../../lib/validation/uuid";
 import { createVideoSchema } from "../../lib/validation/video";
 import { verifiedAs } from "../../lib/videos/ownership";
 import { titleFromPost } from "../../lib/videos/post-title";
 import { writeAudit } from "../audit";
 import { type Actor, requireCreatorActor } from "../auth/actor";
-import { uniqueViolationConstraint } from "../db-errors";
+import { logEvent } from "../log";
+import {
+  AlreadyLicensableElsewhereError,
+  NotPublicError,
+} from "../postings/errors";
+import {
+  auditNewlyVerified,
+  isVerifiedPostingConflict,
+  refreshVideoOwnership,
+} from "../postings/ownership";
 import { SocialAuthError, SocialUpstreamError } from "../social/errors";
-import { mockPermalink } from "../social/providers/mock";
-import { getProvider } from "../social/registry";
+import { getProvider, mockEnabled } from "../social/registry";
 import { withAccessToken } from "../social/tokens";
 import type { SocialPost } from "../social/types";
 import {
-  AlreadyLicensableElsewhereError,
   NeedsReconnectError,
   NotOnAccountError,
-  NotPublicError,
   PostNotFoundError,
 } from "./errors";
 import { insertVideoWithUniqueSlug } from "./slug";
@@ -142,32 +149,46 @@ async function livePost(post: {
 }
 
 /**
- * The source posting's canonical URL. The mock's is rebuilt from its id, which is exactly its synced permalink (07 D68);
- * the other platforms keep the synced permalink until P11b rebuilds every URL with parsePostingLink.
+ * The source posting's canonical URL (07 D67): the synced permalink read by parsePostingLink, like every posting's url.
+ * A permalink that doesn't parse, or that names another post than the synced link_key, is a bug in an adapter or the
+ * parser: refused before any platform call, nothing written, logged by id only (never the permalink).
  */
-function sourcePostingUrl(post: {
+function canonicalSourceUrl(post: {
+  id: string;
   provider: SocialProviderId;
-  providerPostId: string;
   permalink: string;
+  linkKey: string;
 }): string {
-  return post.provider === "mock"
-    ? mockPermalink(post.providerPostId)
-    : post.permalink;
+  const parsed = parsePostingLink(post.provider, post.permalink, {
+    allowMock: mockEnabled(),
+  });
+  if (parsed.ok && parsed.link.linkKey === post.linkKey) {
+    return parsed.link.url;
+  }
+  logEvent("error", "videos.source_link_invalid", {
+    socialPostId: post.id,
+    platform: post.provider,
+    reason: parsed.ok ? "link_key_mismatch" : parsed.error,
+  });
+  throw new Error("source_link_invalid");
 }
 
 /**
- * Make licensable (02 §5.6, §7.7; 07 D39, D65, D66, D72): a verified_owner draft and its one locked source posting,
+ * Make licensable (02 §5.6, §7.7; 07 D39, D65–D68, D72): a verified_owner draft and its one locked source posting,
  * after a live ownership check. Order (1 and 2 are read together, then checked in this order):
  * 1. the creator's own `available` post with its account, else PostNotFoundError;
  * 2. a verified posting of it already on one of the creator's videos → that video (a second press opens it);
  * 3. the account must be `connected` with a handle or a name (verifiedAs), else NeedsReconnectError;
- * 4. the live getPost, outside any transaction, through withAccessToken (07 D12 b: one retry after a concurrent
+ * 4. the source posting's canonical URL from parsePostingLink (canonicalSourceUrl; a bug throws before any call);
+ * 5. the live getPost, outside any transaction, through withAccessToken (07 D12 b: one retry after a concurrent
  *    refresh, then needs_reconnect → NeedsReconnectError): no post → NotOnAccountError, private → NotPublicError. A
  *    platform failure or rate limit is let out as it is (the generic retry);
- * 5. one transaction: the draft (title from the post, 01 J5.12; a unique slug), its source posting with every verified
- *    field, the link hidden when the live or cached post is unlisted (07 D18), and an ids-only `video.created` audit.
- *    The video row holds no social ids (07 D65); P11b routes the ownership write through refreshVideoOwnership;
- * 6. losing video_posting_verified_uidx: the creator's own video (a double tap) → its id, else
+ * 6. one transaction: the self_attested draft (title from the post, 01 J5.12; a unique slug), its source posting with
+ *    every verified field, the link hidden when the live or cached post is unlisted (07 D18), auditNewlyVerified (a
+ *    `video_posting.conflict` audit when other creators hold unverified pastes of the post, 07 D68),
+ *    refreshVideoOwnership (→ verified_owner, 07 D66) and an ids-only `video.created` audit. The video row holds no
+ *    social ids (07 D65);
+ * 7. losing video_posting_verified_uidx: the creator's own video (a double tap) → its id, else
  *    AlreadyLicensableElsewhereError. Nothing is written on any refusal.
  */
 export async function createVideoFromPost(
@@ -196,11 +217,14 @@ export async function createVideoFromPost(
   if (verifiedUsername === null) throw new NeedsReconnectError();
 
   // 4.
+  const url = canonicalSourceUrl(post);
+
+  // 5.
   const live = await livePost(post);
   if (!live) throw new NotOnAccountError();
   if (live.visibility === "private") throw new NotPublicError();
 
-  // 5.
+  // 6.
   const videoId = randomUUID();
   const now = new Date();
   try {
@@ -215,7 +239,7 @@ export async function createVideoFromPost(
           postedAt: post.postedAt,
         }),
         source: "library",
-        ownership: "verified_owner",
+        ownership: "self_attested",
         status: "draft",
         originalStatus: "none",
       });
@@ -223,7 +247,7 @@ export async function createVideoFromPost(
         videoId,
         creatorId: actor.creatorId,
         platform: post.provider,
-        url: sourcePostingUrl(post),
+        url,
         linkKey: post.linkKey,
         verification: "verified",
         unverifiedReason: null,
@@ -238,6 +262,8 @@ export async function createVideoFromPost(
           live.visibility !== "unlisted" && post.visibility !== "unlisted",
         position: 0,
       });
+      await auditNewlyVerified(tx, actor, videoId, new Set());
+      await refreshVideoOwnership(tx, videoId);
       await writeAudit(tx, actor, {
         action: "video.created",
         entityType: "video",
@@ -246,10 +272,8 @@ export async function createVideoFromPost(
       });
     });
   } catch (error) {
-    // 6. The transaction is rolled back: nothing of this attempt is left.
-    if (uniqueViolationConstraint(error) !== "video_posting_verified_uidx") {
-      throw error;
-    }
+    // 7. The transaction is rolled back: nothing of this attempt is left.
+    if (!isVerifiedPostingConflict(error)) throw error;
     const mine = await ownVideoOnPost(actor.creatorId, post.id);
     if (mine) return { videoId: mine };
     throw new AlreadyLicensableElsewhereError();

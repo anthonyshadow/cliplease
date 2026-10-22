@@ -47,6 +47,7 @@ import {
   insertLicenseRequest,
   insertUploadVideo,
   publishVideo,
+  videoRow,
 } from "../helpers/factories";
 import { captureLogEvents } from "../helpers/logs";
 import {
@@ -69,7 +70,6 @@ import {
   pngBytes,
   posterKeyOf,
   putSigned,
-  rowOf,
   SMALL,
   sendParts,
   signedIn,
@@ -172,7 +172,7 @@ describe("a 3-part original (16 + 16 + 8 MiB) through the routes and the dev sto
     expect(await listFiles(uploadDirPath(upload.uploadId))).toEqual([
       "manifest.json",
     ]);
-    expect(await rowOf(v.id)).toMatchObject({
+    expect(await videoRow(v.id)).toMatchObject({
       originalStatus: "uploading",
       originalObjectKey: upload.key,
       originalUploadId: upload.uploadId,
@@ -228,7 +228,7 @@ describe("a 3-part original (16 + 16 + 8 MiB) through the routes and the dev sto
       200,
       { ok: true },
     );
-    expect(await rowOf(v.id)).toMatchObject({
+    expect(await videoRow(v.id)).toMatchObject({
       ...NO_UPLOAD,
       originalStatus: "ready",
       originalObjectKey: upload.key,
@@ -289,7 +289,7 @@ describe("completeUpload (original)", () => {
         code: "invalid",
       });
     }
-    expect((await rowOf(v.id)).originalStatus).toBe("uploading");
+    expect((await videoRow(v.id)).originalStatus).toBe("uploading");
 
     const assemble = vi.spyOn(localDriver(), "completeMultipart");
     await expectJson(
@@ -310,7 +310,7 @@ describe("completeUpload (original)", () => {
         { partNumber: 2, etag: `"${md5Hex(partOf(bytes, 2))}"` },
       ],
     });
-    expect((await rowOf(v.id)).originalStatus).toBe("ready");
+    expect((await videoRow(v.id)).originalStatus).toBe("ready");
   });
 
   it("answers parts_incomplete to a missing or short middle part and keeps the upload open to send it again (Q-35 a)", async () => {
@@ -325,7 +325,7 @@ describe("completeUpload (original)", () => {
         uploadId: upload.uploadId,
       });
     const stillOpen = async () => {
-      expect(await rowOf(v.id)).toMatchObject({
+      expect(await videoRow(v.id)).toMatchObject({
         originalStatus: "uploading",
         originalObjectKey: upload.key,
         originalUploadId: upload.uploadId,
@@ -372,7 +372,7 @@ describe("completeUpload (original)", () => {
 
     expect((await putSigned(url, partOf(bytes, 2))).status).toBe(200);
     expect(await complete()).toEqual({ ok: true });
-    expect(await rowOf(v.id)).toMatchObject({
+    expect(await videoRow(v.id)).toMatchObject({
       ...NO_UPLOAD,
       originalStatus: "ready",
       originalBytes: TOTAL,
@@ -404,7 +404,7 @@ describe("completeUpload (original)", () => {
         uploadId: upload.uploadId,
       });
     expect(await complete()).toEqual({ ok: false, code: "size_mismatch" });
-    expect(await rowOf(v.id)).toMatchObject({
+    expect(await videoRow(v.id)).toMatchObject({
       ...NO_UPLOAD,
       originalStatus: "failed",
       originalError: "size_mismatch",
@@ -433,7 +433,7 @@ describe("completeUpload (original)", () => {
         uploadId: upload.uploadId,
       }),
     ).toEqual({ ok: false, code: "bad_signature_bytes" });
-    expect(await rowOf(v.id)).toMatchObject({
+    expect(await videoRow(v.id)).toMatchObject({
       ...NO_UPLOAD,
       originalStatus: "failed",
       originalError: "bad_signature_bytes",
@@ -444,7 +444,7 @@ describe("completeUpload (original)", () => {
     expect(await listFiles(objectPath(`originals/${c.creatorId}`))).toEqual([]);
 
     expect(await abortUpload(c.actor, { videoId: v.id })).toEqual({ ok: true });
-    expect(await rowOf(v.id)).toMatchObject(NO_ORIGINAL);
+    expect(await videoRow(v.id)).toMatchObject(NO_ORIGINAL);
   });
 
   it("answers ok to a second complete on a ready original and changes nothing", async () => {
@@ -457,7 +457,7 @@ describe("completeUpload (original)", () => {
       { meta: { durationMs: 1000, width: 10, height: 20 } },
     );
     expect(result).toEqual({ ok: true });
-    const ready = await rowOf(v.id);
+    const ready = await videoRow(v.id);
 
     expect(
       await completeUpload(c.actor, {
@@ -467,7 +467,7 @@ describe("completeUpload (original)", () => {
         meta: { durationMs: 5, width: 5, height: 5 },
       }),
     ).toEqual({ ok: true });
-    expect(await rowOf(v.id)).toEqual(ready);
+    expect(await videoRow(v.id)).toEqual(ready);
     expect(await listFiles(objectPath(`originals/${c.creatorId}`))).toEqual([
       `${v.id}/${basename(upload.key)}`,
     ]);
@@ -482,7 +482,7 @@ describe("completeUpload (original)", () => {
       uploadId: upload.uploadId,
       bytes: bytesOf(SMALL),
     });
-    const open = await rowOf(v.id);
+    const open = await videoRow(v.id);
 
     for (const uploadId of [undefined, "", "u".repeat(1025)]) {
       await expectJson(
@@ -495,7 +495,7 @@ describe("completeUpload (original)", () => {
         { code: "invalid" },
       );
     }
-    expect(await rowOf(v.id)).toEqual(open);
+    expect(await videoRow(v.id)).toEqual(open);
   });
 
   it.each([
@@ -525,7 +525,7 @@ describe("completeUpload (original)", () => {
       );
       // Completes of one upload settle one after another (as on R2): the later ones find it done and answer ok too.
       expect(results).toEqual(results.map(() => ({ ok: true })));
-      expect(await rowOf(v.id)).toMatchObject({
+      expect(await videoRow(v.id)).toMatchObject({
         ...NO_UPLOAD,
         originalStatus: "ready",
         originalObjectKey: upload.key,
@@ -568,7 +568,7 @@ describe("completeUpload (original)", () => {
     ).toEqual({ ok: false, code: "not_found" });
     if (!next) throw new Error("the new start didn't run");
     expect(next.key).not.toBe(old.key);
-    expect(await rowOf(v.id)).toMatchObject({
+    expect(await videoRow(v.id)).toMatchObject({
       originalStatus: "uploading",
       originalObjectKey: next.key,
       originalUploadId: next.uploadId,
@@ -621,7 +621,7 @@ describe("completeUpload (original)", () => {
         uploadId: upload.uploadId,
       }),
     ).toEqual({ ok: false, code: "not_found" });
-    expect(await rowOf(v.id)).toMatchObject(NO_ORIGINAL);
+    expect(await videoRow(v.id)).toMatchObject(NO_ORIGINAL);
     expect(await pathExists(objectPath(upload.key))).toBe(false);
   });
 });
@@ -647,7 +647,7 @@ describe("completeUpload (original): races", () => {
       { ok: false, code: "bad_signature_bytes" },
       { ok: false, code: "bad_signature_bytes" },
     ]);
-    expect(await rowOf(v.id)).toMatchObject({
+    expect(await videoRow(v.id)).toMatchObject({
       ...NO_UPLOAD,
       originalStatus: "failed",
       originalError: "bad_signature_bytes",
@@ -705,7 +705,7 @@ describe("completeUpload (original): races", () => {
       { ok: false, code: "bad_signature_bytes" },
       { ok: false, code: "bad_signature_bytes" },
     ]);
-    expect(await rowOf(v.id)).toMatchObject({
+    expect(await videoRow(v.id)).toMatchObject({
       ...NO_UPLOAD,
       originalStatus: "failed",
       originalError: "bad_signature_bytes",
@@ -755,7 +755,7 @@ describe("completeUpload (original): races", () => {
         doneParts: [1, 2, 3],
       },
     });
-    expect(await rowOf(v.id)).toMatchObject({
+    expect(await videoRow(v.id)).toMatchObject({
       ...NO_UPLOAD,
       originalStatus: "ready",
       originalObjectKey: upload.key,
@@ -792,7 +792,7 @@ describe("completeUpload (original): the upload it names", () => {
       uploadId: second.uploadId,
       bytes: bytesOf(TWO_PARTS),
     });
-    const open = await rowOf(v.id);
+    const open = await videoRow(v.id);
 
     expect(
       await completeUpload(c.actor, {
@@ -802,7 +802,7 @@ describe("completeUpload (original): the upload it names", () => {
         meta: { durationMs: 1000, width: 10, height: 20 },
       }),
     ).toEqual({ ok: false, code: "not_found" });
-    expect(await rowOf(v.id)).toEqual(open);
+    expect(await videoRow(v.id)).toEqual(open);
     expect(open).toMatchObject({
       originalStatus: "uploading",
       originalUploadId: second.uploadId,
@@ -824,7 +824,7 @@ describe("completeUpload (original): the upload it names", () => {
         meta: { durationMs: 2000, width: 30, height: 40 },
       }),
     ).toEqual({ ok: true });
-    expect(await rowOf(v.id)).toMatchObject({
+    expect(await videoRow(v.id)).toMatchObject({
       ...NO_UPLOAD,
       originalStatus: "ready",
       originalObjectKey: second.key,
@@ -846,7 +846,7 @@ describe("completeUpload (original): the upload it names", () => {
       meta: { durationMs: 2000, width: 30, height: 40 },
     });
     expect(second.result).toEqual({ ok: true });
-    const ready = await rowOf(v.id);
+    const ready = await videoRow(v.id);
 
     // A ready row keeps no upload id to compare (03 §3.6): a retried complete of either upload is the no-op.
     expect(
@@ -857,7 +857,7 @@ describe("completeUpload (original): the upload it names", () => {
         meta: { durationMs: 1000, width: 10, height: 20 },
       }),
     ).toEqual({ ok: true });
-    expect(await rowOf(v.id)).toEqual(ready);
+    expect(await videoRow(v.id)).toEqual(ready);
   });
 
   it("leaves an original uploading, never ready, when its video is disabled while complete checks it (Q-38 a)", async () => {
@@ -884,7 +884,7 @@ describe("completeUpload (original): the upload it names", () => {
         meta: { durationMs: 1000, width: 10, height: 20 },
       }),
     ).toEqual({ ok: false, code: "not_found" });
-    expect(await rowOf(v.id)).toMatchObject({
+    expect(await videoRow(v.id)).toMatchObject({
       status: "disabled",
       originalStatus: "uploading",
       originalUploadId: upload.uploadId,
@@ -896,7 +896,7 @@ describe("completeUpload (original): the upload it names", () => {
 
     // Abort, still allowed on a disabled video, lets go of it.
     expect(await abortUpload(c.actor, { videoId: v.id })).toEqual({ ok: true });
-    expect(await rowOf(v.id)).toMatchObject({
+    expect(await videoRow(v.id)).toMatchObject({
       ...NO_ORIGINAL,
       status: "disabled",
     });
@@ -936,7 +936,7 @@ describe("a resume that finds its parts gone", () => {
       { code: "bad_signature_bytes" },
     );
     expect(completed).toEqual({ ok: false, code: "bad_signature_bytes" });
-    expect(await rowOf(v.id)).toMatchObject({
+    expect(await videoRow(v.id)).toMatchObject({
       ...NO_UPLOAD,
       originalStatus: "failed",
       originalError: "bad_signature_bytes",
@@ -965,7 +965,7 @@ describe("a resume that finds its parts gone", () => {
       { code: "upload_expired" },
     );
     if (!next) throw new Error("the new start didn't run");
-    expect(await rowOf(v.id)).toMatchObject({
+    expect(await videoRow(v.id)).toMatchObject({
       originalStatus: "uploading",
       originalObjectKey: next.key,
       originalUploadId: next.uploadId,
@@ -988,7 +988,7 @@ describe("a complete that died after assembling, before its database write", () 
     await assembleOnly(upload);
     expect(await pathExists(objectPath(upload.key))).toBe(true);
     expect(await pathExists(uploadDirPath(upload.uploadId))).toBe(false);
-    expect(await rowOf(videoId)).toMatchObject({
+    expect(await videoRow(videoId)).toMatchObject({
       originalStatus: "uploading",
       originalUploadId: upload.uploadId,
     });
@@ -999,7 +999,7 @@ describe("a complete that died after assembling, before its database write", () 
     const c = await newCreator(disk);
     const v = await newVideo(c.creatorId);
     const { upload, bytes } = await crashedAfterAssembly(c, v.id);
-    const open = await rowOf(v.id);
+    const open = await videoRow(v.id);
 
     expect(
       await presignUpload(
@@ -1017,7 +1017,7 @@ describe("a complete that died after assembling, before its database write", () 
         doneParts: [1, 2, 3],
       },
     });
-    expect(await rowOf(v.id)).toEqual(open);
+    expect(await videoRow(v.id)).toEqual(open);
     expect(await pathExists(objectPath(upload.key))).toBe(true);
 
     expect(
@@ -1027,7 +1027,7 @@ describe("a complete that died after assembling, before its database write", () 
         uploadId: upload.uploadId,
       }),
     ).toEqual({ ok: true });
-    expect(await rowOf(v.id)).toMatchObject({
+    expect(await videoRow(v.id)).toMatchObject({
       ...NO_UPLOAD,
       originalStatus: "ready",
       originalObjectKey: upload.key,
@@ -1043,7 +1043,7 @@ describe("a complete that died after assembling, before its database write", () 
 
     const response = await callUploadRoute("abort", { videoId: v.id });
     expect(response.status).toBe(204);
-    expect(await rowOf(v.id)).toMatchObject(NO_ORIGINAL);
+    expect(await videoRow(v.id)).toMatchObject(NO_ORIGINAL);
     expect(await pathExists(objectPath(upload.key))).toBe(false);
     expect(await listFiles(objectPath(`originals/${me.creatorId}`))).toEqual(
       [],
@@ -1064,7 +1064,7 @@ describe("a complete that died after assembling, before its database write", () 
       410,
       { code: "upload_expired" },
     );
-    expect(await rowOf(v.id)).toMatchObject({
+    expect(await videoRow(v.id)).toMatchObject({
       ...NO_UPLOAD,
       originalStatus: "failed",
       originalError: "upload_expired",
@@ -1106,7 +1106,7 @@ describe("resume and expiry (07 D80)", () => {
         doneParts: [1, 2],
       },
     });
-    const open = await rowOf(v.id);
+    const open = await videoRow(v.id);
     expect(await resume({ size: TOTAL - 1 })).toEqual({
       ok: false,
       code: "not_same_file",
@@ -1115,7 +1115,7 @@ describe("resume and expiry (07 D80)", () => {
       ok: false,
       code: "not_same_file",
     });
-    expect(await rowOf(v.id)).toEqual(open);
+    expect(await videoRow(v.id)).toEqual(open);
 
     await sendParts(c.actor, {
       videoId: v.id,
@@ -1142,7 +1142,7 @@ describe("resume and expiry (07 D80)", () => {
         originalStart(v.id, SMALL, { resume: true }),
       ),
     ).toEqual({ ok: false, code: "upload_expired" });
-    expect(await rowOf(v.id)).toMatchObject(NO_ORIGINAL);
+    expect(await videoRow(v.id)).toMatchObject(NO_ORIGINAL);
   });
 
   it("expires an upload started 25 h ago on resume: failed / upload_expired, upload columns cleared, parts gone", async () => {
@@ -1162,7 +1162,7 @@ describe("resume and expiry (07 D80)", () => {
         originalStart(v.id, SMALL, { resume: true }),
       ),
     ).toEqual({ ok: false, code: "upload_expired" });
-    expect(await rowOf(v.id)).toMatchObject({
+    expect(await videoRow(v.id)).toMatchObject({
       ...NO_UPLOAD,
       originalStatus: "failed",
       originalError: "upload_expired",
@@ -1197,7 +1197,7 @@ describe("resume and expiry (07 D80)", () => {
         uploadId: upload.uploadId,
       }),
     ).toEqual({ ok: false, code: "upload_expired" });
-    expect(await rowOf(v.id)).toMatchObject({
+    expect(await videoRow(v.id)).toMatchObject({
       ...NO_UPLOAD,
       originalStatus: "failed",
       originalError: "upload_expired",
@@ -1225,7 +1225,7 @@ describe("resume and expiry (07 D80)", () => {
               uploadId: upload.uploadId,
             });
       expect(result, call).toEqual({ ok: false, code: "upload_expired" });
-      expect(await rowOf(v.id), call).toMatchObject({
+      expect(await videoRow(v.id), call).toMatchObject({
         ...NO_UPLOAD,
         originalStatus: "failed",
         originalError: "upload_expired",
@@ -1251,7 +1251,7 @@ describe("abortUpload", () => {
       expect(response.status, `abort ${round}`).toBe(204);
       expect(response.headers.get("cache-control")).toBe("no-store");
       expect(await response.text()).toBe("");
-      expect(await rowOf(v.id)).toMatchObject(NO_ORIGINAL);
+      expect(await videoRow(v.id)).toMatchObject(NO_ORIGINAL);
       expect(await pathExists(uploadDirPath(upload.uploadId))).toBe(false);
     }
     expect(await pathExists(objectPath(upload.key))).toBe(false);
@@ -1268,14 +1268,14 @@ describe("abortUpload", () => {
       bytes: bytesOf(TWO_PARTS),
       partNumbers: [1],
     });
-    const open = await rowOf(v.id);
+    const open = await videoRow(v.id);
 
     const late = await callUploadRoute("abort", {
       videoId: v.id,
       uploadId: old.uploadId,
     });
     expect(late.status).toBe(204);
-    expect(await rowOf(v.id)).toEqual(open);
+    expect(await videoRow(v.id)).toEqual(open);
     expect(open).toMatchObject({
       originalStatus: "uploading",
       originalUploadId: newer.uploadId,
@@ -1287,7 +1287,7 @@ describe("abortUpload", () => {
       uploadId: newer.uploadId,
     });
     expect(named.status).toBe(204);
-    expect(await rowOf(v.id)).toMatchObject(NO_ORIGINAL);
+    expect(await videoRow(v.id)).toMatchObject(NO_ORIGINAL);
     expect(await pathExists(uploadDirPath(newer.uploadId))).toBe(false);
   });
 
@@ -1295,7 +1295,7 @@ describe("abortUpload", () => {
     const me = await signedIn(disk);
     const v = await newVideo(me.creatorId);
     await startOriginal(me.actor, v.id, SMALL);
-    const open = await rowOf(v.id);
+    const open = await videoRow(v.id);
 
     for (const uploadId of ["", "u".repeat(1025)]) {
       await expectJson(
@@ -1304,17 +1304,17 @@ describe("abortUpload", () => {
         { code: "invalid" },
       );
     }
-    expect(await rowOf(v.id)).toEqual(open);
+    expect(await videoRow(v.id)).toEqual(open);
   });
 
   it("never touches a ready original", async () => {
     const c = await newCreator(disk);
     const v = await newVideo(c.creatorId);
     const { upload } = await uploadOriginal(c.actor, v.id, bytesOf(SMALL));
-    const ready = await rowOf(v.id);
+    const ready = await videoRow(v.id);
 
     expect(await abortUpload(c.actor, { videoId: v.id })).toEqual({ ok: true });
-    expect(await rowOf(v.id)).toEqual(ready);
+    expect(await videoRow(v.id)).toEqual(ready);
     expect(ready).toMatchObject({
       originalStatus: "ready",
       originalObjectKey: upload.key,
@@ -1334,7 +1334,7 @@ describe("abortUpload", () => {
     await disable(v.id);
 
     expect(await abortUpload(c.actor, { videoId: v.id })).toEqual({ ok: true });
-    expect(await rowOf(v.id)).toMatchObject({
+    expect(await videoRow(v.id)).toMatchObject({
       ...NO_ORIGINAL,
       status: "disabled",
     });
@@ -1396,7 +1396,7 @@ describe("the original lock (07 D09, Q-39 a)", () => {
   it.each(LOCKED)("is original_locked for %s", async (_, setup) => {
     const c = await newCreator(disk);
     const v = await setup(c.creatorId);
-    const before = await rowOf(v.id);
+    const before = await videoRow(v.id);
 
     expect(await isOriginalLocked(v.id)).toBe(true);
     for (const resume of [false, true]) {
@@ -1404,7 +1404,7 @@ describe("the original lock (07 D09, Q-39 a)", () => {
         await presignUpload(c.actor, originalStart(v.id, SMALL, { resume })),
       ).toEqual({ ok: false, code: "original_locked" });
     }
-    expect(await rowOf(v.id)).toEqual(before);
+    expect(await videoRow(v.id)).toEqual(before);
     expect(await uploadsUnder(`originals/${c.creatorId}/${v.id}/`)).toEqual([]);
   });
 
@@ -1433,7 +1433,7 @@ describe("the original lock (07 D09, Q-39 a)", () => {
     expect(await isOriginalLocked(v.id)).toBe(false);
     const upload = await startOriginal(c.actor, v.id, SMALL);
     expect(upload.key).toMatch(originalKeyOf(c.creatorId, v.id));
-    expect((await rowOf(v.id)).originalStatus).toBe("uploading");
+    expect((await videoRow(v.id)).originalStatus).toBe("uploading");
   });
 });
 
@@ -1454,7 +1454,7 @@ describe("presignUpload (original): the lock read again under the row lock (07 D
   it("answers original_locked and aborts the new multipart upload", async () => {
     const c = await newCreator(disk);
     const v = await newVideo(c.creatorId, { status: "unpublished" });
-    const before = await rowOf(v.id);
+    const before = await videoRow(v.id);
     const created = checkoutDuringStart(v);
 
     expect(await presignUpload(c.actor, originalStart(v.id, SMALL))).toEqual({
@@ -1462,7 +1462,7 @@ describe("presignUpload (original): the lock read again under the row lock (07 D
       code: "original_locked",
     });
     expect(created).toHaveBeenCalledTimes(1);
-    expect(await rowOf(v.id)).toEqual(before);
+    expect(await videoRow(v.id)).toEqual(before);
     expect(await uploadsUnder(`originals/${c.creatorId}/${v.id}/`)).toEqual([]);
     expect(await listFiles(objectPath(`originals/${c.creatorId}`))).toEqual([]);
   });
@@ -1477,14 +1477,14 @@ describe("presignUpload (original): the lock read again under the row lock (07 D
       bytes: bytesOf(TWO_PARTS),
       partNumbers: [1],
     });
-    const open = await rowOf(v.id);
+    const open = await videoRow(v.id);
     checkoutDuringStart(v);
 
     expect(await presignUpload(c.actor, originalStart(v.id, SMALL))).toEqual({
       ok: false,
       code: "original_locked",
     });
-    expect(await rowOf(v.id)).toEqual(open);
+    expect(await videoRow(v.id)).toEqual(open);
     expect(await uploadsUnder(`originals/${c.creatorId}/${v.id}/`)).toEqual([
       first.uploadId,
     ]);
@@ -1510,7 +1510,7 @@ describe("presignUpload (original): a new start", () => {
     });
     expect(second.key).toMatch(originalKeyOf(c.creatorId, v.id, "mov"));
     expect(await pathExists(objectPath(first.upload.key))).toBe(false);
-    expect(await rowOf(v.id)).toMatchObject({
+    expect(await videoRow(v.id)).toMatchObject({
       originalStatus: "uploading",
       originalObjectKey: second.key,
       originalUploadId: second.uploadId,
@@ -1528,7 +1528,7 @@ describe("presignUpload (original): a new start", () => {
     });
     const third = await startOriginal(c.actor, v.id, SMALL);
     expect(await pathExists(uploadDirPath(second.uploadId))).toBe(false);
-    expect((await rowOf(v.id)).originalUploadId).toBe(third.uploadId);
+    expect((await videoRow(v.id)).originalUploadId).toBe(third.uploadId);
 
     await sendParts(c.actor, {
       videoId: v.id,
@@ -1552,7 +1552,7 @@ describe("presignUpload (original): a start whose transaction throws", () => {
   it("aborts the new multipart upload and leaves the row as it was", async () => {
     const c = await newCreator(disk);
     const v = await newVideo(c.creatorId);
-    const before = await rowOf(v.id);
+    const before = await videoRow(v.id);
     const driver = localDriver();
     const realCreate = driver.createMultipart;
     let created: string | undefined;
@@ -1570,7 +1570,7 @@ describe("presignUpload (original): a start whose transaction throws", () => {
     ).rejects.toThrow("connection reset");
     if (!created) throw new Error("no multipart upload was created");
     expect(await pathExists(uploadDirPath(created))).toBe(false);
-    expect(await rowOf(v.id)).toEqual(before);
+    expect(await videoRow(v.id)).toEqual(before);
     expect(await uploadsUnder(`originals/${c.creatorId}/${v.id}/`)).toEqual([]);
   });
 });
@@ -1583,7 +1583,7 @@ describe("presignUpload: the type and size checks behind the route's Zod", () =>
   it("answers bad_type and too_large for an original or a poster, and opens or signs nothing", async () => {
     const c = await newCreator(disk);
     const v = await newVideo(c.creatorId);
-    const before = await rowOf(v.id);
+    const before = await videoRow(v.id);
     const poster = {
       kind: "poster",
       videoId: v.id,
@@ -1612,7 +1612,7 @@ describe("presignUpload: the type and size checks behind the route's Zod", () =>
     }
     expect(created).not.toHaveBeenCalled();
     expect(signed).not.toHaveBeenCalled();
-    expect(await rowOf(v.id)).toEqual(before);
+    expect(await videoRow(v.id)).toEqual(before);
   });
 });
 
@@ -1662,7 +1662,7 @@ describe("presignParts", () => {
       404,
       { code: "not_found" },
     );
-    expect((await rowOf(v.id)).originalStatus).toBe("uploading");
+    expect((await videoRow(v.id)).originalStatus).toBe("uploading");
   });
 
   it("answers upload_expired for its open upload once the 24 h window is over, and changes nothing (07 D80)", async () => {
@@ -1670,7 +1670,7 @@ describe("presignParts", () => {
     const v = await newVideo(c.creatorId);
     const upload = await startOriginal(c.actor, v.id, TOTAL);
     await startedHoursAgo(v.id, 25);
-    const open = await rowOf(v.id);
+    const open = await videoRow(v.id);
     const call = (uploadId: string) =>
       presignParts(c.actor, { videoId: v.id, uploadId, partNumbers: [1] });
 
@@ -1683,7 +1683,7 @@ describe("presignParts", () => {
       ok: false,
       code: "not_found",
     });
-    expect(await rowOf(v.id)).toEqual(open);
+    expect(await videoRow(v.id)).toEqual(open);
   });
 
   it("refuses a video whose original isn't uploading", async () => {
@@ -1711,7 +1711,7 @@ describe("another creator's video", () => {
       uploadId: upload.uploadId,
       bytes: bytesOf(SMALL),
     });
-    const open = await rowOf(v.id);
+    const open = await videoRow(v.id);
     const notFound = { ok: false, code: "not_found" };
 
     expect(
@@ -1748,7 +1748,7 @@ describe("another creator's video", () => {
     ).toEqual(notFound);
     expect(await abortUpload(other.actor, { videoId: v.id })).toEqual(notFound);
 
-    expect(await rowOf(v.id)).toEqual(open);
+    expect(await videoRow(v.id)).toEqual(open);
     expect(await pathExists(uploadDirPath(upload.uploadId))).toBe(true);
     expect(
       await completeUpload(owner.actor, {
@@ -1791,7 +1791,7 @@ describe("posters (Q-34 a, Q-36 a)", () => {
     expect(url.searchParams.get("ct")).toBe("image/jpeg");
     expect(url.searchParams.get("len")).toBe(String(jpeg.length));
     // Nothing changes on the row until complete.
-    expect((await rowOf(v.id)).posterObjectKey).toBeNull();
+    expect((await videoRow(v.id)).posterObjectKey).toBeNull();
 
     expect((await putSigned(first.url, jpeg, first.headers)).status).toBe(200);
     expect((await readFile(objectPath(first.key))).equals(jpeg)).toBe(true);
@@ -1802,16 +1802,16 @@ describe("posters (Q-34 a, Q-36 a)", () => {
         uploadToken: first.uploadToken,
       });
     expect(await completeFirst()).toEqual({ ok: true });
-    expect(await rowOf(v.id)).toMatchObject({
+    expect(await videoRow(v.id)).toMatchObject({
       posterObjectKey: first.key,
       posterOrigin: "frame_capture",
     });
     expect(await completeFirst()).toEqual({ ok: true });
-    expect((await rowOf(v.id)).posterObjectKey).toBe(first.key);
+    expect((await videoRow(v.id)).posterObjectKey).toBe(first.key);
 
     const second = await uploadPoster(c.actor, v.id, jpeg, "creator_image");
     expect(second.result).toEqual({ ok: true });
-    expect(await rowOf(v.id)).toMatchObject({
+    expect(await videoRow(v.id)).toMatchObject({
       posterObjectKey: second.upload.key,
       posterOrigin: "creator_image",
     });
@@ -1832,7 +1832,7 @@ describe("posters (Q-34 a, Q-36 a)", () => {
       expect(bad.result).toEqual({ ok: false, code: "bad_signature_bytes" });
       expect(await pathExists(objectPath(bad.upload.key))).toBe(false);
     }
-    expect(await rowOf(v.id)).toMatchObject({
+    expect(await videoRow(v.id)).toMatchObject({
       posterObjectKey: current.upload.key,
       posterOrigin: "frame_capture",
     });
@@ -1892,8 +1892,8 @@ describe("posters (Q-34 a, Q-36 a)", () => {
         label,
       ).toEqual({ ok: false, code: "not_found" });
     }
-    expect((await rowOf(v.id)).posterObjectKey).toBeNull();
-    expect((await rowOf(otherVideo.id)).posterObjectKey).toBeNull();
+    expect((await videoRow(v.id)).posterObjectKey).toBeNull();
+    expect((await videoRow(otherVideo.id)).posterObjectKey).toBeNull();
 
     expect(
       await completeUpload(c.actor, {
@@ -1902,7 +1902,7 @@ describe("posters (Q-34 a, Q-36 a)", () => {
         uploadToken: upload.uploadToken,
       }),
     ).toEqual({ ok: true });
-    expect((await rowOf(v.id)).posterObjectKey).toBe(upload.key);
+    expect((await videoRow(v.id)).posterObjectKey).toBe(upload.key);
   });
 
   it("refuses a PUT with another Content-Type (403) or length (413 / 400), and a second PUT to the URL (412)", async () => {
@@ -1948,7 +1948,7 @@ describe("posters (Q-34 a, Q-36 a)", () => {
     const jpeg = await fixture("poster.jpg");
     const replaced = await uploadPoster(c.actor, live.id, jpeg);
     expect(replaced.result).toEqual({ ok: true });
-    expect((await rowOf(live.id)).posterObjectKey).toBe(replaced.upload.key);
+    expect((await videoRow(live.id)).posterObjectKey).toBe(replaced.upload.key);
 
     // Q-38 a: a complete before the PUT, or after the video is disabled, changes nothing.
     const next = await startPoster(c.actor, live.id, jpeg.length);
@@ -1959,11 +1959,11 @@ describe("posters (Q-34 a, Q-36 a)", () => {
         uploadToken: next.uploadToken,
       });
     expect(await completeNext()).toEqual({ ok: false, code: "not_found" });
-    expect((await rowOf(live.id)).posterObjectKey).toBe(replaced.upload.key);
+    expect((await videoRow(live.id)).posterObjectKey).toBe(replaced.upload.key);
     expect((await putSigned(next.url, jpeg, next.headers)).status).toBe(200);
     await disable(live.id);
     expect(await completeNext()).toEqual({ ok: false, code: "not_found" });
-    expect(await rowOf(live.id)).toMatchObject({
+    expect(await videoRow(live.id)).toMatchObject({
       status: "disabled",
       posterObjectKey: replaced.upload.key,
       posterOrigin: "frame_capture",
@@ -2017,7 +2017,7 @@ describe("posters no row points at", () => {
         uploadToken: next.uploadToken,
       }),
     ).toEqual({ ok: false, code: "not_found" });
-    expect(await rowOf(v.id)).toMatchObject({
+    expect(await videoRow(v.id)).toMatchObject({
       status: "disabled",
       posterObjectKey: current.upload.key,
       posterOrigin: "frame_capture",
@@ -2086,7 +2086,7 @@ describe("posters no row points at", () => {
         uploadToken: next.uploadToken,
       }),
     ).toEqual({ ok: true });
-    expect((await rowOf(v.id)).posterObjectKey).toBe(next.key);
+    expect((await videoRow(v.id)).posterObjectKey).toBe(next.key);
     expect(await listFiles(objectPath(`posters/${v.id}`))).toEqual(
       [basename(next.key), basename(fresh)].sort(),
     );
@@ -2342,14 +2342,14 @@ describe("the four upload routes", () => {
         { code: "invalid" },
       );
     }
-    expect(await rowOf(v.id)).toMatchObject(NO_ORIGINAL);
+    expect(await videoRow(v.id)).toMatchObject(NO_ORIGINAL);
   });
 
   it("answer 404 for another creator's video on all four", async () => {
     const owner = await newCreator(disk);
     const v = await newVideo(owner.creatorId);
     const upload = await startOriginal(owner.actor, v.id, SMALL);
-    const open = await rowOf(v.id);
+    const open = await videoRow(v.id);
     await signedIn(disk);
 
     for (const [name, body] of [
@@ -2366,7 +2366,7 @@ describe("the four upload routes", () => {
         code: "not_found",
       });
     }
-    expect(await rowOf(v.id)).toEqual(open);
+    expect(await videoRow(v.id)).toEqual(open);
     expect(await pathExists(uploadDirPath(upload.uploadId))).toBe(true);
   });
 
@@ -2446,7 +2446,7 @@ describe("the four upload routes", () => {
     }
     expect(created).not.toHaveBeenCalled();
     expect(signed).not.toHaveBeenCalled();
-    expect(await rowOf(v.id)).toMatchObject({
+    expect(await videoRow(v.id)).toMatchObject({
       ...NO_ORIGINAL,
       posterObjectKey: null,
     });
@@ -2485,7 +2485,7 @@ describe("the four upload routes", () => {
         { code: "invalid" },
       );
     }
-    expect(await rowOf(v.id)).toMatchObject(NO_ORIGINAL);
+    expect(await videoRow(v.id)).toMatchObject(NO_ORIGINAL);
     expect(await uploadsUnder(`originals/${me.creatorId}/${v.id}/`)).toEqual(
       [],
     );
@@ -2527,6 +2527,6 @@ describe("the four upload routes", () => {
     expect(written).not.toContain(secret);
     expect(written).not.toContain(upload.key);
     expect(written).not.toContain(upload.uploadId);
-    expect((await rowOf(v.id)).originalStatus).toBe("uploading");
+    expect((await videoRow(v.id)).originalStatus).toBe("uploading");
   });
 });

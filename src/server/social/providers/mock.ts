@@ -1,6 +1,10 @@
 import "server-only";
 import { createHash, randomBytes } from "node:crypto";
 import { PLATFORM_LABELS } from "../../../lib/brand";
+import {
+  MOCK_ACCOUNT_SUFFIX,
+  mockPermalink,
+} from "../../../lib/social/mock-ids";
 import { DAY_MS, HOUR_MS } from "../../../lib/time";
 import { env, type MockSocialScenario } from "../../env";
 import {
@@ -15,12 +19,14 @@ import { MOCK_POSTS, type MockPostRow } from "./mock-data";
 // The Demo provider (07 D36, amended by D53 and D68): a real start → callback round trip with no platform keys. Each
 // user gets their own account, keyed by the first 8 hex of sha256(user id), plus "_2" for "Connect another account";
 // the shared_account scenario gives everyone one account. The suffix travels in the code and the tokens, so every later
-// call knows the account (owner answer Q1 a). Never enabled outside development and test (07 D51, env.ts).
+// call knows the account (owner answer Q1 a). Never enabled outside development and test (07 D51, env.ts). The id
+// formats the parser shares are in lib/social/mock-ids.ts.
 
 const PAGE_SIZE = 12;
 const RATE_LIMIT_RETRY_SEC = 900; // "Try again in 15 min." (01 J2.13)
 const SHARED = "shared";
-const SUFFIX = "([0-9a-f]{8}(?:_2)?|shared)";
+/** An account suffix, captured. */
+const SUFFIX = `(${MOCK_ACCOUNT_SUFFIX})`;
 const CODE_RE = new RegExp(`^mock_code_${SUFFIX}\\.([A-Za-z0-9_-]{43})$`);
 const TOKEN_RE = new RegExp(`^mock_(access|refresh)_${SUFFIX}_([a-z0-9]+)$`);
 const POST_RE = new RegExp(`^mock_post_${SUFFIX}_(\\d{2})$`);
@@ -105,10 +111,6 @@ export function mockTokensFor(
 }
 
 const pad = (n: number) => String(n).padStart(2, "0");
-
-/** A mock post's canonical URL, made from its id alone (07 D68): what the sync stores as its permalink. */
-export const mockPermalink = (externalId: string) =>
-  `https://example.com/mock/${externalId}`;
 
 function toPost(suffix: string, row: MockPostRow): SocialPost {
   const externalId = `mock_post_${suffix}_${pad(row.n)}`;

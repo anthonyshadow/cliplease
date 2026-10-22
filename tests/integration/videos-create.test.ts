@@ -14,7 +14,7 @@ import { getVideoForCreator } from "../../src/server/videos/queries";
 import { formOf, redirectTo } from "../helpers/actions";
 import { mockNextHeaders, signedInCreator } from "../helpers/auth";
 import { resetDb } from "../helpers/db";
-import { insertLicenseRequest } from "../helpers/factories";
+import { insertLicenseRequest, videoRow } from "../helpers/factories";
 import { videosOf } from "../helpers/library-videos";
 import {
   fixture,
@@ -24,7 +24,6 @@ import {
   originalKeyOf,
   pathExists,
   posterKeyOf,
-  rowOf,
   uploadOriginal as sendOriginal,
   startOriginal,
   trackTestStorage,
@@ -74,7 +73,7 @@ describe("createVideoFromUpload (the domain function)", () => {
     });
 
     expect(videoId).toMatch(UUID);
-    expect(await rowOf(videoId)).toMatchObject({
+    expect(await videoRow(videoId)).toMatchObject({
       id: videoId,
       creatorId: c.creatorId,
       slug: "beach-day-at-dusk",
@@ -342,7 +341,7 @@ describe("a draft, its original and its poster, end to end", () => {
       start: { fileName: "sample.mp4" },
     });
     expect(sent.result).toEqual({ ok: true });
-    const withOriginal = await rowOf(id);
+    const withOriginal = await videoRow(id);
     expect(withOriginal).toMatchObject({
       originalStatus: "ready",
       originalUploadId: null,
@@ -357,7 +356,7 @@ describe("a draft, its original and its poster, end to end", () => {
 
     const posted = await uploadPoster(c.actor, id, jpeg);
     expect(posted.result).toEqual({ ok: true });
-    const row = await rowOf(id);
+    const row = await videoRow(id);
     const posterKey = row.posterObjectKey ?? "";
     expect(posterKey).toMatch(posterKeyOf(id));
     expect(row.posterOrigin).toBe("frame_capture");

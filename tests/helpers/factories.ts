@@ -1,6 +1,6 @@
 // Integration factories (P03): each inserts one valid row that satisfies every CORE CHECK, NOT NULL and FK, then
 // applies `overrides` last. Unique columns get random values, because rows build up across the tests of one file
-// (resetDb runs once per file). Later prompts reuse these.
+// (resetDb runs once per file). Later prompts reuse these, and read a video back with videoRow.
 import { randomBytes, randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import type { PgInsertValue, PgTable } from "drizzle-orm/pg-core";
@@ -242,6 +242,13 @@ export async function publishVideo(draft: Video): Promise<Video> {
     .returning();
   if (!live) throw new Error("no video to publish");
   return live;
+}
+
+/** The video's row as stored, failing the setup when there is none. */
+export async function videoRow(id: string): Promise<Video> {
+  const [row] = await db.select().from(video).where(eq(video.id, id));
+  if (!row) throw new Error("no video");
+  return row;
 }
 
 /**

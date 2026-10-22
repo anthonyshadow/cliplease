@@ -1,18 +1,20 @@
 import { describe, expect, it } from "vitest";
 import {
+  AlreadyLicensableElsewhereError,
+  NotPublicError,
+} from "../postings/errors";
+import {
   AlreadyLinkedError,
   SocialAuthError,
   SocialRateLimitError,
   SocialUpstreamError,
 } from "../social/errors";
 import {
-  AlreadyLicensableElsewhereError,
   confirmSameVideoErrorCode,
   makeLicensableErrorCode,
   NeedsReconnectError,
   NotFromLibraryError,
   NotOnAccountError,
-  NotPublicError,
   OriginalNotReadyError,
   PostNotFoundError,
   VideoNotFoundError,

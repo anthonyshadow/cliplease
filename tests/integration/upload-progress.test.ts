@@ -15,6 +15,7 @@ import {
   presignParts,
 } from "../../src/server/storage/uploads";
 import { resetDb } from "../helpers/db";
+import { videoRow } from "../helpers/factories";
 import { captureLogEvents } from "../helpers/logs";
 import {
   assembleOnly,
@@ -26,7 +27,6 @@ import {
   partOf,
   pathExists,
   putSigned,
-  rowOf,
   SMALL,
   sendParts,
   startedHoursAgo,
@@ -57,10 +57,10 @@ const auditCount = async () => {
 
 /** The progress, checking that reading it changed neither the row nor the audit log. */
 async function progressOf(actor: Actor, videoId: string) {
-  const row = await rowOf(videoId);
+  const row = await videoRow(videoId);
   const audits = await auditCount();
   const progress = await getOriginalUploadProgress(actor, { videoId });
-  expect(await rowOf(videoId)).toEqual(row);
+  expect(await videoRow(videoId)).toEqual(row);
   expect(await auditCount()).toBe(audits);
   return progress;
 }
@@ -154,7 +154,7 @@ describe("an expired upload", () => {
     await startedHoursAgo(videoId, 25);
 
     expect(await progressOf(c.actor, videoId)).toEqual({ state: "expired" });
-    expect((await rowOf(videoId)).originalStatus).toBe("uploading");
+    expect((await videoRow(videoId)).originalStatus).toBe("uploading");
   });
 
   it("is expired when its parts are gone and nothing is at the key", async () => {
@@ -203,7 +203,7 @@ describe("no progress (null)", () => {
       ["ready", ready],
       ["failed", failed],
     ] as const) {
-      expect((await rowOf(videoId)).originalStatus, status).toBe(status);
+      expect((await videoRow(videoId)).originalStatus, status).toBe(status);
       expect(await progressOf(c.actor, videoId), status).toBeNull();
     }
   });

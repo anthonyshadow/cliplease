@@ -71,11 +71,15 @@ export async function connect(query?: string) {
   return callback(location(started), oauthPair(started));
 }
 
-type DemoOptions = { second?: boolean; accessTokenExpiresAt?: Date };
+type DemoOptions = {
+  second?: boolean;
+  accessTokenExpiresAt?: Date;
+  connectedAt?: Date;
+};
 
 /**
  * A connected, never-synced Demo account for `creator`: the profile the mock reports and its mock tokens, sealed as
- * the callback seals them.
+ * the callback seals them, linked at `connectedAt` (now unless given).
  */
 export async function insertDemoAccount(
   creator: Pick<CreatorProfile, "id" | "userId">,
@@ -88,6 +92,7 @@ export async function insertDemoAccount(
     username: opts.second ? "demo.creator.2" : "demo.creator",
     displayName: opts.second ? "Demo Creator 2" : "Demo Creator",
     avatarUrl: opts.second ? "mock://avatar/02" : "mock://avatar/01",
+    connectedAt: opts.connectedAt,
     ...sealTokenColumns(id, mockTokensFor(creator.userId, "t1", opts)),
   });
 }

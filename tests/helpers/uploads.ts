@@ -17,7 +17,6 @@ import { POST as partsPOST } from "../../src/app/api/uploads/parts/route";
 import { POST as startPOST } from "../../src/app/api/uploads/start/route";
 import { db } from "../../src/db/client";
 import { video } from "../../src/db/schema";
-import type { Video } from "../../src/db/schema/types";
 import type { Actor } from "../../src/server/auth/actor";
 import { env } from "../../src/server/env";
 import { localDriver } from "../../src/server/storage/index";
@@ -347,13 +346,6 @@ export async function newDraft(
   const { videoId } = await createVideoFromUpload(c.actor, { title });
   disk.video(videoId);
   return videoId;
-}
-
-/** The video's row, failing the setup when there is none. */
-export async function rowOf(id: string): Promise<Video> {
-  const [row] = await db.select().from(video).where(eq(video.id, id));
-  if (!row) throw new Error("no video");
-  return row;
 }
 
 /** Moves the upload's start back by `hours`, by the database's clock. */

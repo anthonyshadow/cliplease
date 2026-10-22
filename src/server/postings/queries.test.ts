@@ -1,0 +1,225 @@
+import { describe, expect, it } from "vitest";
+import {
+  type OwnerPostingRow,
+  type PublicPostingRow,
+  toOwnerPosting,
+  toPublicPostings,
+} from "./queries";
+
+const CHECKED_AT = new Date("2026-10-21T12:00:00.000Z");
+const FETCHED_AT = new Date("2026-10-20T08:30:00.000Z");
+const LINKED_AT = new Date("2026-10-01T09:00:00.000Z");
+
+const VERIFIED_ROW: OwnerPostingRow = {
+  id: "posting-1",
+  platform: "mock",
+  otherLabel: null,
+  url: "https://example.com/mock/mock_post_c4180ab2_01",
+  isSource: true,
+  verification: "verified",
+  unverifiedReason: null,
+  verifiedUsername: "@demo.creator",
+  showLink: true,
+  checkedAt: CHECKED_AT,
+  position: 0,
+  accountStatus: "connected",
+  postId: "post-1",
+  thumbnailUrl: "mock://thumb/01",
+  thumbnailFetchedAt: FETCHED_AT,
+  durationSec: 14,
+};
+
+describe("toOwnerPosting", () => {
+  it("gives a verified posting its label, handle, thumbnail (with P11's ?v=) and duration", () => {
+    expect(toOwnerPosting(VERIFIED_ROW)).toEqual({
+      id: "posting-1",
+      platform: "mock",
+      label: "Demo",
+      url: "https://example.com/mock/mock_post_c4180ab2_01",
+      isSource: true,
+      verification: "verified",
+      unverifiedReason: null,
+      verifiedUsername: "@demo.creator",
+      accountStatus: "connected",
+      thumbnailSrc: `/api/library/thumbnails/post-1?v=${encodeURIComponent(FETCHED_AT.toISOString())}`,
+      durationSec: 14,
+      showLink: true,
+      checkedAt: CHECKED_AT.toISOString(),
+      position: 0,
+    });
+  });
+
+  it("gives a released posting no handle, thumbnail or duration, though it keeps its post", () => {
+    expect(
+      toOwnerPosting({
+        ...VERIFIED_ROW,
+        verification: "unverified",
+        unverifiedReason: "released",
+      }),
+    ).toMatchObject({
+      verification: "unverified",
+      unverifiedReason: "released",
+      verifiedUsername: null,
+      accountStatus: "connected",
+      thumbnailSrc: null,
+      durationSec: null,
+    });
+  });
+
+  it("gives a verified post with no stored image no thumbnail", () => {
+    expect(
+      toOwnerPosting({ ...VERIFIED_ROW, thumbnailUrl: null }).thumbnailSrc,
+    ).toBeNull();
+  });
+
+  it("names an Other posting by the creator's name, and a never-checked posting has no checkedAt", () => {
+    const other: OwnerPostingRow = {
+      ...VERIFIED_ROW,
+      platform: "other",
+      otherLabel: "Vimeo",
+      url: "https://vimeo.com/1",
+      isSource: false,
+      verification: "unverified",
+      unverifiedReason: "unverifiable",
+      verifiedUsername: null,
+      checkedAt: null,
+      position: 1,
+      accountStatus: null,
+      postId: null,
+      thumbnailUrl: null,
+      thumbnailFetchedAt: null,
+      durationSec: null,
+    };
+    expect(toOwnerPosting(other)).toMatchObject({
+      label: "Vimeo",
+      checkedAt: null,
+      accountStatus: null,
+    });
+  });
+});
+
+function publicRow(row: Partial<PublicPostingRow>): PublicPostingRow {
+  return {
+    platform: "youtube",
+    otherLabel: null,
+    url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    isSource: false,
+    verification: "verified",
+    verifiedUsername: "@maya.films",
+    verifiedAccountLinkedAt: LINKED_AT,
+    showLink: true,
+    position: 1,
+    accountStatus: "connected",
+    postStatus: "available",
+    ...row,
+  };
+}
+
+describe("toPublicPostings", () => {
+  it("lists verified postings first, then the rest, each by position", () => {
+    const { postings } = toPublicPostings([
+      publicRow({ platform: "x", verification: "unverified", position: 1 }),
+      publicRow({ platform: "tiktok", position: 3 }),
+      publicRow({
+        platform: "facebook",
+        verification: "unverified",
+        position: 0,
+      }),
+      publicRow({ platform: "youtube", position: 2 }),
+    ]);
+    expect(postings.map((p) => p.platform)).toEqual([
+      "youtube",
+      "tiktok",
+      "facebook",
+      "x",
+    ]);
+  });
+
+  it("makes the verified source posting primary, else the lowest-position verified one, else none", () => {
+    const source = publicRow({ platform: "mock", isSource: true, position: 0 });
+    const tiktok = publicRow({ platform: "tiktok", position: 2 });
+    const youtube = publicRow({ platform: "youtube", position: 1 });
+    expect(toPublicPostings([tiktok, source, youtube]).primary?.platform).toBe(
+      "mock",
+    );
+    expect(
+      toPublicPostings([
+        { ...source, verification: "unverified" },
+        tiktok,
+        youtube,
+      ]).primary?.platform,
+    ).toBe("youtube");
+    expect(
+      toPublicPostings([publicRow({ verification: "unverified" })]).primary,
+    ).toBeNull();
+    expect(toPublicPostings([])).toEqual({ primary: null, postings: [] });
+  });
+
+  it("shows a verified posting's handle and link date, and says when its account is disconnected", () => {
+    expect(toPublicPostings([publicRow({})]).postings[0]).toEqual({
+      platform: "youtube",
+      label: "YouTube",
+      verified: true,
+      verifiedUsername: "@maya.films",
+      linkedAt: LINKED_AT.toISOString(),
+      noLongerLinked: false,
+      url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      hostLabel: null,
+    });
+    expect(
+      toPublicPostings([publicRow({ accountStatus: "disconnected" })])
+        .postings[0]?.noLongerLinked,
+    ).toBe(true);
+  });
+
+  it("never shows a handle or a link date on a Not verified posting", () => {
+    expect(
+      toPublicPostings([
+        publicRow({
+          verification: "unverified",
+          accountStatus: "disconnected",
+        }),
+      ]).postings[0],
+    ).toMatchObject({
+      verified: false,
+      verifiedUsername: null,
+      linkedAt: null,
+      noLongerLinked: false,
+    });
+  });
+
+  it("gives the link only when shown, and not for a verified post that was removed", () => {
+    const url = (row: Partial<PublicPostingRow>) =>
+      toPublicPostings([publicRow(row)]).postings[0]?.url;
+    expect(url({ showLink: false })).toBeNull();
+    expect(url({ url: null })).toBeNull();
+    expect(url({ postStatus: "removed" })).toBeNull();
+    expect(url({ postStatus: "stale" })).toBe(
+      "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    );
+    expect(url({ verification: "unverified", postStatus: "removed" })).toBe(
+      "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    );
+  });
+
+  it("labels an Other link by its host, without www., only when the link shows", () => {
+    const vimeo = publicRow({
+      platform: "other",
+      otherLabel: "Vimeo",
+      url: "https://www.vimeo.com/1",
+      verification: "unverified",
+      verifiedUsername: null,
+      verifiedAccountLinkedAt: null,
+      accountStatus: null,
+      postStatus: null,
+    });
+    expect(toPublicPostings([vimeo]).postings[0]).toMatchObject({
+      label: "Vimeo",
+      url: "https://www.vimeo.com/1",
+      hostLabel: "vimeo.com",
+    });
+    expect(
+      toPublicPostings([{ ...vimeo, showLink: false }]).postings[0]?.hostLabel,
+    ).toBeNull();
+  });
+});

@@ -67,6 +67,15 @@ export const creatorActor = (c: {
   creatorId: c.creatorId,
 });
 
+/** A new creator with no account and no session, and the actor the session gate would build for it. */
+export async function bareCreator() {
+  const creator = await insertCreator();
+  return {
+    creator,
+    actor: creatorActor({ creatorId: creator.id, userId: creator.userId }),
+  };
+}
+
 export type SignedInCreator = {
   session: string;
   userId: string;

@@ -51,3 +51,8 @@ export function createSocialRegistry(
 
 export const { enabledPlatforms, getProvider, redirectUriFor } =
   createSocialRegistry(env);
+
+/** Whether the mock (Demo) platform is enabled: Demo links are read and Demo postings taken only then. */
+export function mockEnabled(): boolean {
+  return enabledPlatforms().includes("mock");
+}

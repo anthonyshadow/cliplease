@@ -12,6 +12,10 @@ import {
 import { db } from "../../src/db/client";
 import { socialAccount, socialPost } from "../../src/db/schema";
 import {
+  AlreadyLicensableElsewhereError,
+  NotPublicError,
+} from "../../src/server/postings/errors";
+import {
   SocialAuthError,
   SocialRateLimitError,
   SocialUpstreamError,
@@ -23,12 +27,10 @@ import {
 import { createVideoFromPost } from "../../src/server/videos/create";
 import { confirmSameVideo } from "../../src/server/videos/edit";
 import {
-  AlreadyLicensableElsewhereError,
   makeLicensableErrorCode,
   NeedsReconnectError,
   NotFromLibraryError,
   NotOnAccountError,
-  NotPublicError,
   OriginalNotReadyError,
   PostNotFoundError,
   VideoNotFoundError,
@@ -37,7 +39,13 @@ import { getVideoForCreator } from "../../src/server/videos/queries";
 import { mockNextHeaders, signedInCreator } from "../helpers/auth";
 import { accountRow, auditsOf, postNumber } from "../helpers/connect-flow";
 import { resetDb } from "../helpers/db";
-import { insertUploadVideo, markOriginalReady } from "../helpers/factories";
+import {
+  insertCreator,
+  insertUploadVideo,
+  insertVideoPosting,
+  markOriginalReady,
+  videoRow,
+} from "../helpers/factories";
 import { syncedDemo } from "../helpers/library";
 import {
   confirmedAt,
@@ -49,6 +57,8 @@ import {
   twoCreatorsOnOneAccount,
   videosOf,
 } from "../helpers/library-videos";
+import { captureLogEvents } from "../helpers/logs";
+import { postingRow, SNOW_TITLE } from "../helpers/postings";
 
 // Making a Library post licensable (P11; 02 §5.6, §7.7; 06 §4; 07 D12 b, D18, D36, D39, D43, D65, D66, D68, D72) against
 // the test database and the mock provider. The live check is counted on the raw adapter (mockProvider): the registry
@@ -61,8 +71,6 @@ afterEach(() => {
   vi.restoreAllMocks();
   setMockScenarioForTests(null);
 });
-
-const SNOW_TITLE = "He saw snow for the first time and lost it";
 
 /** A synced Demo creator and its post `nn`. */
 async function demoPost(nn = "01") {
@@ -214,6 +222,44 @@ describe("createVideoFromPost: the draft and its source posting", () => {
       showLink: false,
     });
   });
+
+  it("audits another creator's unverified paste of the post by id once it verifies here (video_posting.conflict, 07 D68)", async () => {
+    const { d, post } = await demoPost("07");
+    const pasted = {
+      platform: "mock",
+      url: post.permalink,
+      linkKey: post.linkKey,
+      unverifiedReason: "no_account",
+    } as const;
+    const other = await insertCreator();
+    const theirs = await insertVideoPosting(
+      await insertUploadVideo(other),
+      pasted,
+    );
+    // The creator's own unverified paste on an upload is no conflict.
+    await insertVideoPosting(
+      await insertUploadVideo({ id: d.account.creatorId }),
+      pasted,
+    );
+
+    const { videoId } = await createVideoFromPost(d.actor, post.id);
+
+    const [source] = await postingsOn(post.id);
+    expect(source).toMatchObject({ videoId, verification: "verified" });
+    expect(await auditsOf(source?.id ?? "", "video_posting.conflict")).toEqual([
+      {
+        actorType: "creator",
+        data: {
+          videoPostingId: source?.id,
+          platform: "mock",
+          conflictingPostingIds: [theirs.id],
+        },
+      },
+    ]);
+    // Nothing else changes: their paste stays as it was, and the new video is verified_owner.
+    expect(await postingRow(theirs.id)).toEqual(theirs);
+    expect((await videoRow(videoId)).ownership).toBe("verified_owner");
+  });
 });
 
 describe("createVideoFromPost: refusals write nothing", () => {
@@ -304,6 +350,48 @@ describe("createVideoFromPost: refusals write nothing", () => {
     expect(getPost).toHaveBeenCalledTimes(1);
     await expectNothingWritten(d.account.creatorId, post.id);
   });
+
+  it.each([
+    { kind: "another post's link", reason: "link_key_mismatch", other: "02" },
+    { kind: "not a link", reason: "not_a_url", other: null },
+  ])(
+    "refuses a synced permalink that is $kind before any platform call: nothing written, ids only in the log",
+    async ({ reason, other }) => {
+      const { d, post } = await demoPost();
+      const permalink =
+        other === null
+          ? "not a link"
+          : (await postNumber(d.account.id, other)).permalink;
+      await db
+        .update(socialPost)
+        .set({ permalink })
+        .where(eq(socialPost.id, post.id));
+      const getPost = spyGetPost();
+      const logged = captureLogEvents("videos.source_link_invalid");
+
+      const error = await createVideoFromPost(d.actor, post.id).catch(
+        (e: unknown) => e,
+      );
+
+      const { written, events } = logged();
+      expect(error).toBeInstanceOf(Error);
+      expect(error).toMatchObject({ message: "source_link_invalid" });
+      expect(getPost).not.toHaveBeenCalled();
+      await expectNothingWritten(d.account.creatorId, post.id);
+      expect(events).toMatchObject([
+        {
+          level: "error",
+          event: "videos.source_link_invalid",
+          socialPostId: post.id,
+          platform: "mock",
+          reason,
+        },
+      ]);
+      expect(written).not.toContain("https://");
+      expect(written).not.toContain(permalink);
+      expect(written).not.toContain(post.permalink);
+    },
+  );
 
   it("answers another creator's post, an unknown id, a non-uuid and a removed post as not found, with no platform call", async () => {
     const { d, post } = await demoPost();

@@ -6,6 +6,7 @@ import {
   createSocialRegistry,
   enabledPlatforms,
   getProvider,
+  mockEnabled,
   redirectUriFor,
 } from "./registry";
 import type { SocialProvider } from "./types";
@@ -83,6 +84,7 @@ describe("createSocialRegistry (02 §5.3)", () => {
 describe("the app's registry", () => {
   it("enables the mock in test runs and returns the same adapter every time", () => {
     expect(enabledPlatforms()).toEqual(["mock"]);
+    expect(mockEnabled()).toBe(true);
     expect(getProvider("mock")).toBe(getProvider("mock"));
     expect(redirectUriFor("mock")).toBe(
       `${env.APP_URL}/api/connect/mock/callback`,
