@@ -1,5 +1,5 @@
 import { eq, sql } from "drizzle-orm";
-import { afterAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { db } from "../../../src/db/client";
 import {
   licenseRequest,
@@ -8,7 +8,7 @@ import {
   video,
   videoPosting,
 } from "../../../src/db/schema";
-import { expectDbError, PG_ERROR, resetDb } from "../../helpers/db";
+import { expectDbError, PG_ERROR } from "../../helpers/db";
 import {
   insertCreator,
   insertLibraryVideo,
@@ -22,9 +22,6 @@ import {
   instagramReelUrl,
   randomHex,
 } from "../../helpers/factories";
-
-// Its rows must not stay in the shared test database.
-afterAll(resetDb);
 
 /** A creator with a connected Instagram account and a post whose link_key is `linkKey`. */
 async function instagramPost(linkKey?: string) {

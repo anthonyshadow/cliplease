@@ -1,14 +1,6 @@
 import { eq } from "drizzle-orm";
 import { NextRequest } from "next/server";
-import {
-  afterAll,
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GET as avatarGET } from "../../../src/app/api/connections/avatars/[accountId]/route";
 import { db } from "../../../src/db/client";
 import { socialAccount } from "../../../src/db/schema";
@@ -30,13 +22,11 @@ import {
   location,
   postsOf,
 } from "../../helpers/connect-flow";
-import { resetDb } from "../../helpers/db";
 
 // Reconnect, "Connect another account" and the avatar proxy (J2.8, J2.10, J2.11, J2.16; 02 §7.6; 07 D37, D42) against
 // the real route handlers and the test database.
 vi.mock("next/headers", () => import("../../helpers/next-headers"));
 
-afterAll(resetDb);
 beforeEach(() => mockNextHeaders(null));
 afterEach(() => {
   vi.restoreAllMocks();

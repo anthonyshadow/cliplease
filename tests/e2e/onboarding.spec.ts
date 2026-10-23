@@ -126,7 +126,8 @@ test("a new creator onboards, sets up payouts, has a public page and signs out",
     viewport: { width: 375, height: 812 },
   });
   const visitor = await visitorContext.newPage();
-  const missing = `/@no.such.handle.${handle.slice(4)}`;
+  // A fresh handle: valid, and no creator has it, so the page looks it up and finds nothing.
+  const missing = `/@${uniqueHandle(testInfo)}`;
   const visitorErrors = collectConsoleErrors(visitor, [
     { status: 404, pathname: missing },
   ]);

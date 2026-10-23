@@ -41,7 +41,6 @@ import {
   type StartUploadInput,
 } from "../../src/server/storage/uploads";
 import { mockNextHeaders } from "../helpers/auth";
-import { resetDb } from "../helpers/db";
 import {
   insertLicense,
   insertLicenseRequest,
@@ -94,10 +93,7 @@ vi.mock("next/headers", () => import("../helpers/next-headers"));
 
 const disk = trackTestStorage();
 
-afterAll(async () => {
-  await disk.clean();
-  await resetDb();
-});
+afterAll(() => disk.clean());
 beforeEach(() => mockNextHeaders(null));
 afterEach(() => vi.restoreAllMocks());
 

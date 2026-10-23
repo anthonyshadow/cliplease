@@ -3,6 +3,7 @@ import path from "node:path";
 import { expect, type Page, test } from "@playwright/test";
 import { collectConsoleErrors } from "./helpers/console";
 import { signUpCreator } from "./helpers/creator";
+import { waitForLibrary } from "./helpers/library";
 import {
   pressButton,
   pressLink,
@@ -68,7 +69,7 @@ async function uploadThenLeave(page: Page) {
   ).toBeVisible();
   await expect(uploadCard(page)).toHaveCount(0);
   await pressLink(page, "Library");
-  await page.waitForURL("/dashboard/library");
+  await waitForLibrary(page);
   await expect(
     uploadCard(page).getByText(`Uploading ${DRAFT_TITLE}`),
   ).toBeVisible();
@@ -351,7 +352,7 @@ test("Q-42: the upload carries on across pages; the card shows it, Open goes bac
   await expect(card).toHaveCount(0);
 
   await pressLink(page, "Library");
-  await page.waitForURL("/dashboard/library");
+  await waitForLibrary(page);
   await expect(card.getByText(`Uploading ${DRAFT_TITLE}`)).toBeVisible();
   await held.release();
   await expect(card.getByText("Upload complete")).toBeVisible({
@@ -365,7 +366,7 @@ test("Q-42: the upload carries on across pages; the card shows it, Open goes bac
   await expect(card).toHaveCount(0);
   // Seen on its page: the card doesn't come back elsewhere.
   await pressLink(page, "Library");
-  await page.waitForURL("/dashboard/library");
+  await waitForLibrary(page);
   await expect(card).toHaveCount(0);
   expect(errors).toEqual([]);
 });

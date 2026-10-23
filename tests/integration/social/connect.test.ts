@@ -1,13 +1,5 @@
 import { and, asc, eq, sql } from "drizzle-orm";
-import {
-  afterAll,
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "../../../src/db/client";
 import { auditEvent, socialAccount, socialPost } from "../../../src/db/schema";
 import { MINUTE_MS } from "../../../src/lib/time";
@@ -47,13 +39,11 @@ import {
   oauthPair,
   start,
 } from "../../helpers/connect-flow";
-import { resetDb } from "../../helpers/db";
 import { captureLogEvents } from "../../helpers/logs";
 
 // The connect round trip (02 §7.2, 07 D37) against the real route handlers (tests/helpers/connect-flow.ts).
 vi.mock("next/headers", () => import("../../helpers/next-headers"));
 
-afterAll(resetDb);
 beforeEach(() => mockNextHeaders(null));
 afterEach(() => {
   vi.restoreAllMocks();

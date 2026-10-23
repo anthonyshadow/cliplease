@@ -1,14 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import {
-  afterAll,
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createVideoFromPost as makeLicensable } from "../../src/app/(dashboard)/dashboard/videos/new/actions";
 import { db } from "../../src/db/client";
 import { socialAccount, socialPost } from "../../src/db/schema";
@@ -23,7 +15,6 @@ import { setMockScenarioForTests } from "../../src/server/social/providers/mock"
 import { formOf, NOT_FOUND, redirectTo } from "../helpers/actions";
 import { mockNextHeaders, signedInCreator } from "../helpers/auth";
 import { postNumber } from "../helpers/connect-flow";
-import { resetDb } from "../helpers/db";
 import { syncedDemo } from "../helpers/library";
 import {
   expectNothingWritten,
@@ -39,7 +30,6 @@ import {
 // database and the mock provider. The domain function itself is tests/integration/ownership.test.ts's.
 vi.mock("next/headers", () => import("../helpers/next-headers"));
 
-afterAll(resetDb);
 beforeEach(() => mockNextHeaders(null));
 afterEach(() => {
   vi.restoreAllMocks();

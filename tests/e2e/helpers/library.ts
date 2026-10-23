@@ -11,6 +11,16 @@ import { pressLink } from "./press";
 
 export const LIBRARY = "/dashboard/library";
 
+/**
+ * Waits for the Library page itself, not only its URL. The page streams in behind its loading.tsx, so the URL is there
+ * while its data still loads; a goto, or going offline, then cancels that stream, and Next answers by loading the Library
+ * again, which interrupts the test's next navigation. Only the page renders the h1; the loading skeleton has none.
+ */
+export async function waitForLibrary(page: Page) {
+  await page.waitForURL(LIBRARY);
+  await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+}
+
 /** The grid's tiles (04 §9.12). The loading skeleton's grid has no data-library-grid, so it never counts. */
 export const tiles = (page: Page) =>
   page.locator("[data-library-grid] > [data-post-tile]");

@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { acquireTestRunLock } from "../helpers/test-run-lock";
+import { startTestRun } from "../helpers/test-run-lock";
 
 // Fake URLs only: every case refuses before connecting, so none reaches a database.
 const DEV =
@@ -28,13 +28,13 @@ function root(files: Record<string, string>): string {
 describe("the test-run lock (tests/helpers/test-run-lock.ts)", () => {
   it("runs the test-database guard on .env.test before connecting", async () => {
     await expect(
-      acquireTestRunLock(
+      startTestRun(
         root({ ".env.test": `APP_ENV=development\nDATABASE_URL=${TEST}\n` }),
         "integration",
       ),
     ).rejects.toThrow(/APP_ENV is not test/);
     await expect(
-      acquireTestRunLock(
+      startTestRun(
         root({
           ".env.test": `APP_ENV=test\nDATABASE_URL=${DEV}\nDATABASE_URL_UNPOOLED=${DEV}\n`,
           ".env.local": `DATABASE_URL=${DEV}\n`,
@@ -45,7 +45,7 @@ describe("the test-run lock (tests/helpers/test-run-lock.ts)", () => {
   });
 
   it("needs a direct connection, named in a clear error without the password", async () => {
-    const error = await acquireTestRunLock(
+    const error = await startTestRun(
       root({ ".env.test": `APP_ENV=test\nDATABASE_URL=${TEST}\n` }),
       "integration",
     ).catch((e: unknown) => e);

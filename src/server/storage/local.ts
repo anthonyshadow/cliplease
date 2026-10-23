@@ -32,8 +32,16 @@ import {
 // multipart emulated under .data/storage/.multipart/{uploadId}/ (manifest.json, {n}.part with its MD5 in {n}.etag) with
 // R2's rules. Every write goes to a temp file renamed on success, so a cut-off PUT leaves no partial object or part.
 
-/** Where the local driver keeps objects (the [int] helpers clean up under it). */
-export const LOCAL_STORAGE_ROOT = path.join(process.cwd(), ".data", "storage");
+/**
+ * Where the local driver keeps objects (the [int] helpers clean up under it). Its turbopackIgnore comment, and those on
+ * objectPath and uploadDir, keep the build from tracing the project, .data included, into the server output: this
+ * driver runs only in development and test (07 D51).
+ */
+export const LOCAL_STORAGE_ROOT = path.join(
+  /*turbopackIgnore: true*/ process.cwd(),
+  ".data",
+  "storage",
+);
 
 const KEY = /^(originals|posters|licenses)\/[A-Za-z0-9._/-]+$/;
 const SEGMENT = /^[A-Za-z0-9._-]+$/;
@@ -181,7 +189,7 @@ export function createLocalStorage({
   now?: () => number;
 }): LocalStorage {
   const objectPath = (key: string) => {
-    const resolved = path.resolve(root, key);
+    const resolved = path.resolve(/*turbopackIgnore: true*/ root, key);
     if (!isStorageKey(key) || !resolved.startsWith(root + path.sep)) {
       throw new StorageKeyError();
     }
@@ -189,7 +197,7 @@ export function createLocalStorage({
   };
   const uploadDir = (uploadId: string) => {
     if (!isUploadId(uploadId)) throw new StorageKeyError();
-    return path.join(root, ".multipart", uploadId);
+    return path.join(/*turbopackIgnore: true*/ root, ".multipart", uploadId);
   };
   const expS = (expiresIn: number) => Math.floor(now() / 1000) + expiresIn;
 

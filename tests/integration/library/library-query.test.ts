@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { eq, inArray, type SQL, sql } from "drizzle-orm";
 import type { PgUpdateSetSource } from "drizzle-orm/pg-core";
-import { afterAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { db } from "../../../src/db/client";
 import { socialAccount, socialPost } from "../../../src/db/schema";
 import {
@@ -24,7 +24,6 @@ import {
 import type { SocialPost } from "../../../src/server/social/types";
 import { bareCreator } from "../../helpers/auth";
 import { demoAccount, postNumber, postsOf } from "../../helpers/connect-flow";
-import { resetDb } from "../../helpers/db";
 import {
   insertLibraryVideo,
   insertSocialAccount,
@@ -46,7 +45,6 @@ import {
 
 // The Library query (02 §5.4, 03 §7.2; 07 D13, D48, D72) against the test database. Each case has its own creator;
 // the Demo accounts are synced through the mock provider (24 posts, newest first: 01 … 24).
-afterAll(resetDb);
 
 const SNOW_CAPTION =
   "He saw snow for the first time and lost it #dogs #firstsnow";

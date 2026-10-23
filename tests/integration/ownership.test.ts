@@ -1,14 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import {
-  afterAll,
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "../../src/db/client";
 import { socialAccount, socialPost } from "../../src/db/schema";
 import {
@@ -35,7 +27,6 @@ import {
 import { getVideoForCreator } from "../../src/server/videos/queries";
 import { mockNextHeaders } from "../helpers/auth";
 import { accountRow, auditsOf, postNumber } from "../helpers/connect-flow";
-import { resetDb } from "../helpers/db";
 import {
   insertCreator,
   insertUploadVideo,
@@ -60,7 +51,6 @@ import { postingRow, SNOW_TITLE } from "../helpers/postings";
 // hands out a wrapper that cleans its reads and calls the adapter's getPost at each call, as P07's suites rely on.
 vi.mock("next/headers", () => import("../helpers/next-headers"));
 
-afterAll(resetDb);
 beforeEach(() => mockNextHeaders(null));
 afterEach(() => {
   vi.restoreAllMocks();

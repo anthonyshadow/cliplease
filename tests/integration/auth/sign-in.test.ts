@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { count, eq } from "drizzle-orm";
-import { afterAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { db } from "../../../src/db/client";
 import {
   emailLog,
@@ -19,13 +19,10 @@ import {
   tryCode,
   userByEmail,
 } from "../../helpers/auth";
-import { resetDb } from "../../helpers/db";
 import { readLatestEmail, wrongCode } from "../../helpers/read-latest-email";
 
 // Better Auth 1.7.7 email OTP (02 §9.1, 07 D47, D88). auth.api.* skips the limiter and the origin check; the limiter
-// and /update-user cases go through auth.handler. The listed admins must never stay behind as creators, so the file
-// empties the database.
-afterAll(resetDb);
+// and /update-user cases go through auth.handler.
 
 const otpIdentifier = (email: string) => `sign-in-otp-${email}`;
 

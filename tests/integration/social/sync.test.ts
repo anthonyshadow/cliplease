@@ -1,14 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
-import {
-  afterAll,
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "../../../src/db/client";
 import { socialAccount, socialPost, video } from "../../../src/db/schema";
 import { MINUTE_MS } from "../../../src/lib/time";
@@ -41,7 +33,6 @@ import {
   postNumber,
   postsOf,
 } from "../../helpers/connect-flow";
-import { resetDb } from "../../helpers/db";
 import {
   insertLibraryVideo,
   insertUploadVideo,
@@ -54,7 +45,6 @@ import { captureLogEvents } from "../../helpers/logs";
 vi.mock("next/headers", () => import("../../helpers/next-headers"));
 vi.mock("next/cache", () => ({ refresh: vi.fn(), revalidatePath: vi.fn() }));
 
-afterAll(resetDb);
 beforeEach(() => mockNextHeaders(null));
 afterEach(() => {
   vi.restoreAllMocks();

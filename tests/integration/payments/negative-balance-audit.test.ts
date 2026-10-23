@@ -1,7 +1,6 @@
-import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ensureConnectedAccount } from "../../../src/server/payments/connect";
 import { paymentsDriver } from "../../../src/server/payments/registry";
-import { resetDb } from "../../helpers/db";
 import { insertCreator } from "../../helpers/factories";
 import { captureLogEvents } from "../../helpers/logs";
 
@@ -21,7 +20,6 @@ vi.mock("../../../src/server/audit", async (importOriginal) => {
   };
 });
 
-afterAll(resetDb);
 afterEach(() => vi.restoreAllMocks());
 
 describe("ensureConnectedAccount when the debits failure row can't be written", () => {

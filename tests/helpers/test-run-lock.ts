@@ -1,18 +1,21 @@
 import { Client } from "pg";
-import { checkTestDatabaseFiles } from "./test-database";
+import { pruneOldEmails } from "./read-latest-email";
+import { checkTestDatabaseFiles, emptyPublicTables } from "./test-database";
 
-// One test run at a time: test:int empties every table of the .env.test database the e2e server uses, and both suites
-// share .data (PROGRESS P03). Both runners take this session advisory lock for their whole run, on a direct connection
-// (Neon's PgBouncer pools by transaction, so a pooled session can't hold it). It frees itself if the process dies.
+// One test run at a time: both suites empty every table of the .env.test database the e2e server uses and share .data
+// (PROGRESS P03). Both runners take this session advisory lock for their whole run, on a direct connection (Neon's
+// PgBouncer pools by transaction, so a pooled session can't hold it). It frees itself if the process dies.
 const LOCK_KEY = "cliplease.test_run";
 
 export type TestSuite = "integration" | "e2e";
 
 /**
- * Takes the test-run lock on the database that `root`'s .env.test names, after the same guard the tests use. Resolves
- * to the function that releases it; throws a clear error when another run holds it or the database can't be reached.
+ * Starts a test run: takes the test-run lock on the database that `root`'s .env.test names, after the same guard the
+ * tests use; then empties that database on the lock's own connection, so the run starts clean whatever an interrupted
+ * run left, and deletes the test emails sent more than a day ago. Resolves to the function that releases the lock;
+ * throws a clear error when another run holds it or the database can't be reached.
  */
-export async function acquireTestRunLock(
+export async function startTestRun(
   root: string,
   suite: TestSuite,
 ): Promise<() => Promise<void>> {
@@ -51,6 +54,16 @@ export async function acquireTestRunLock(
     await client.end();
     throw new Error(
       `The ${suite} run can't start: another test run (bun run test:int or bun run test:e2e) is using the test database and .data. Run them one after the other.`,
+    );
+  }
+  try {
+    await emptyPublicTables(client);
+    await pruneOldEmails();
+  } catch (error) {
+    await client.end();
+    throw new Error(
+      `The ${suite} run can't empty the test database and old test emails.`,
+      { cause: error },
     );
   }
   // Ending the session releases the lock.

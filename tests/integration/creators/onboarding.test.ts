@@ -1,5 +1,5 @@
 import { asc, eq, sql } from "drizzle-orm";
-import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { completeOnboarding as completeOnboardingAction } from "../../../src/app/(dashboard)/onboarding/actions";
 import { db } from "../../../src/db/client";
 import {
@@ -37,7 +37,7 @@ import {
   newCreatorEmail,
   signInWithOtp,
 } from "../../helpers/auth";
-import { expectDbError, PG_ERROR, resetDb } from "../../helpers/db";
+import { expectDbError, PG_ERROR } from "../../helpers/db";
 import {
   insertCreator,
   insertUser,
@@ -48,7 +48,6 @@ import {
 // database. Outside a request, redirect() throws an error whose digest names the target.
 vi.mock("next/headers", () => import("../../helpers/next-headers"));
 
-afterAll(resetDb);
 beforeEach(() => mockNextHeaders(null));
 
 /** Signs a new email in for the action's requireUser and returns its session user. */

@@ -1,7 +1,8 @@
 // Reads the emails the console driver writes (src/server/email/drivers/console.ts). Plain Node only: the Playwright
 // runner imports this file and has no app environment.
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
+import { DAY_MS } from "../../src/lib/time";
 
 export type SentEmail = {
   template: string;
@@ -48,6 +49,20 @@ export async function readLatestEmail({
     }
     await new Promise((resolve) => setTimeout(resolve, POLL_MS));
   }
+}
+
+/**
+ * Deletes the emails sent more than a day ago, by the time their name starts with (the driver's temp files end in .tmp
+ * and stay). Nothing in the app deletes them, every sign-in adds one, and readLatestEmail lists the folder on each poll.
+ */
+export async function pruneOldEmails(): Promise<void> {
+  const before = new Date(Date.now() - DAY_MS).toISOString();
+  const old = (await listFiles()).filter(
+    (name) => name.endsWith(".json") && name < before,
+  );
+  await Promise.all(
+    old.map((name) => rm(path.join(EMAIL_SINK_DIR, name), { force: true })),
+  );
 }
 
 async function listFiles(): Promise<string[]> {

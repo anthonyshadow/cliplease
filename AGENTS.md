@@ -24,7 +24,8 @@ On a product rule for exclusive licenses, renewals, renewal pricing, reservation
 
 **Step 0 — Prove the previous prompt is done.**
 - Read `PROGRESS.md`. Confirm the previous prompt is marked done and has no unresolved blockers.
-- Run the previous prompt's **Verify** commands (typecheck, lint, tests, and any URL checks it lists).
+- Run the previous prompt's **Verify** commands: `bun run check:step0 <its e2e specs>` (see Test commands below), plus
+  any URL checks it lists.
 - Re-check its **Acceptance criteria** against the code. Open the files; don't trust the log alone.
 - If anything fails or is missing: **stop**. Report what failed (command + output excerpt), propose the
   smallest fix, and ask whether to fix it now or continue. Do not start the new prompt on a broken base.
@@ -38,13 +39,26 @@ On a product rule for exclusive licenses, renewals, renewal pricing, reservation
 **Step 2 — Plan.** Post a short plan (≤10 bullets): files you'll create/change, tests you'll add,
 anything risky. Keep it inside the prompt's scope.
 
-**Step 3 — Build.** Do only the prompt's Tasks. Respect its "Out of scope". Small, reviewable changes.
+**Step 3 — Build.** Do only the prompt's Tasks. Respect its "Out of scope". Small, reviewable changes. Test as you go
+with `bun run test:changed`, `bun run test:int:changed` and the specs you touch.
 
-**Step 4 — Verify.** Run every command in the prompt's Verify section. Fix failures. Then check each
-acceptance criterion and mark it ✅ or ❌ with evidence (command output, file path, URL).
+**Step 4 — Verify.** Run every command in the prompt's Verify section, all its e2e specs in one `bun run test:e2e`.
+Fix failures. End with `bun run check:full`. Then check each acceptance criterion and mark it ✅ or ❌ with evidence
+(command output, file path, URL).
 
 **Step 5 — Wrap up.** Update `PROGRESS.md` (format in §6). Commit with message `Pxx: <title>`.
 Report back: what changed, how you verified it, decisions you made, open questions, and the next prompt.
+
+**Test commands (owner answers Q-87–Q-89).** Run `bun run test:db` before testing: it starts the local Postgres 18 test
+database (Docker Desktop) and migrates it; `.env.test.local` (git-ignored) points the tests at it.
+- `bun run test:changed` / `bun run test:int:changed`: only the unit or integration tests whose imports reach a changed
+  file (a change to the test setup or to a file tests read without importing, such as a migration, runs them all).
+- `bun run test:e2e a.spec.ts b.spec.ts`: one invocation per verify step, never one per spec (each one builds the app).
+- `bun run check:full`: typecheck, lint, token lint, unit, integration and every e2e spec; a green run is recorded in
+  `.data/last-green`.
+- `bun run check:step0 [specs]`: typecheck, lint, token lint and unit always. When the files are exactly those of the
+  last green `check:full`, it skips integration and e2e; otherwise it runs the integration tests the changes reach and
+  the given specs (all when none).
 
 ## 3. Always stop and ask when…
 - A credential, API key, account, domain or paid service is needed (never invent or reuse keys).
@@ -109,7 +123,7 @@ Current prompt: P07 · Last verified: P06 · Blockers: none
 ```
 
 ## 7. Definition of done (every prompt)
-- `bun run typecheck`, `bun run lint` and `bun run test` pass with zero errors.
+- `bun run check:full` passes (typecheck, lint, token lint, unit, integration, e2e) with zero errors.
 - Every acceptance criterion is ✅ with evidence.
 - New pure logic has unit tests; new and changed pages render without console errors at 375, 768, 1024, 1280 and 1920 px (plus a 2560 px spot check), in light and dark, with no horizontal scroll at any width from 320 to 2560, and follow the four layout tiers of docs/04 §5.2 (Mobile < 768 · Tablet `md:` · Desktop `lg:` · XL `2xl:`).
 - Light and dark themes both look right for anything you touched.

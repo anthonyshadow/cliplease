@@ -22,7 +22,6 @@ import {
   signInWithOtp,
   userByEmail,
 } from "../helpers/auth";
-import { resetDb } from "../helpers/db";
 import {
   type Bytes,
   fixture,
@@ -39,10 +38,7 @@ vi.mock("next/headers", () => import("../helpers/next-headers"));
 
 const disk = trackTestStorage();
 
-afterAll(async () => {
-  await disk.clean();
-  await resetDb();
-});
+afterAll(() => disk.clean());
 beforeEach(() => mockNextHeaders(null));
 
 /** In .env.test's ADMIN_EMAILS: its first sign-in makes it an admin (07 D88). */

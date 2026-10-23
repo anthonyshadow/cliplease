@@ -17,7 +17,6 @@ import {
 } from "../../src/server/videos/queries";
 import { formOf, redirectTo } from "../helpers/actions";
 import { mockNextHeaders, signedInCreator } from "../helpers/auth";
-import { resetDb } from "../helpers/db";
 import { insertLicenseRequest, videoRow } from "../helpers/factories";
 import { libraryDraft, videosOf } from "../helpers/library-videos";
 import {
@@ -43,10 +42,7 @@ vi.mock("next/headers", () => import("../helpers/next-headers"));
 
 const disk = trackTestStorage();
 
-afterAll(async () => {
-  await disk.clean();
-  await resetDb();
-});
+afterAll(() => disk.clean());
 beforeEach(() => mockNextHeaders(null));
 
 const slugsOf = async (creatorId: string) =>

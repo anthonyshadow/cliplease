@@ -4,6 +4,7 @@ import path from "node:path";
 import { expect, type Page, test } from "@playwright/test";
 import { collectConsoleErrors, type ExpectedFailure } from "./helpers/console";
 import { signUpCreator } from "./helpers/creator";
+import { waitForLibrary } from "./helpers/library";
 import { pressButton, pressLink, waitInPage } from "./helpers/press";
 import {
   AT_REST,
@@ -51,6 +52,8 @@ const ABORTED_PARTS: ExpectedFailure = { abortedUnder: "/api/dev/storage/" };
 const ABORTED_PART_URLS: ExpectedFailure = {
   abortedUnder: "/api/uploads/parts",
 };
+// The router's background prefetches a test's setOffline(true) cuts.
+const OFFLINE: ExpectedFailure = { offline: true };
 
 let bigFileWritten: Promise<string> | undefined;
 
@@ -408,7 +411,7 @@ test("offline pauses the upload with Cancel only and sends nothing; back online 
   context,
 }) => {
   test.setTimeout(120_000);
-  const errors = collectConsoleErrors(page, [ABORTED_PARTS]);
+  const errors = collectConsoleErrors(page, [ABORTED_PARTS, OFFLINE]);
   const big = await bigFile();
   await signUpCreator(page, { payouts: false });
   await createDraft(page);
@@ -468,7 +471,7 @@ test("Q-47: offline on another page, the card says Upload paused with the title 
   context,
 }) => {
   test.setTimeout(120_000);
-  const errors = collectConsoleErrors(page);
+  const errors = collectConsoleErrors(page, [OFFLINE]);
   const big = await bigFile();
   await signUpCreator(page, { payouts: false });
   const videoId = await createDraft(page);
@@ -481,7 +484,7 @@ test("Q-47: offline on another page, the card says Upload paused with the title 
 
   // Next's navigation needs the network: go to the Library first, then offline.
   await pressLink(page, "Library");
-  await page.waitForURL("/dashboard/library");
+  await waitForLibrary(page);
   const card = uploadCard(page);
   await expect(card.getByText(`Uploading ${DRAFT_TITLE}`)).toBeVisible();
 

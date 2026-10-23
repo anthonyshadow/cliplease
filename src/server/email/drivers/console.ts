@@ -5,8 +5,16 @@ import path from "node:path";
 import { type AppEnv, env, isDevAppEnv } from "@/server/env";
 import type { EmailDriver } from "../types";
 
-/** Where the console driver keeps sent emails (git-ignored). Tests and e2e read them back. */
-export const EMAIL_SINK_DIR = path.join(process.cwd(), ".data", "emails");
+/**
+ * Where the console driver keeps sent emails (git-ignored). Tests and e2e read them back. The turbopackIgnore comment
+ * keeps the build from tracing the project, .data included, into the server output: this driver runs only in development
+ * and test (07 D51).
+ */
+export const EMAIL_SINK_DIR = path.join(
+  /*turbopackIgnore: true*/ process.cwd(),
+  ".data",
+  "emails",
+);
 
 /**
  * The dev and test transport (07 D51): prints a plain block (to, subject, text) with process.stdout.write, so the dev

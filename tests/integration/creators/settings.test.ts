@@ -1,6 +1,6 @@
 import { asc, eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
-import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   saveDisplayName,
   updateTimeZoneFromDevice,
@@ -20,7 +20,6 @@ import {
   newCreatorEmail,
   signInWithOtp,
 } from "../../helpers/auth";
-import { resetDb } from "../../helpers/db";
 import { uniqueTestHandle } from "../../helpers/factories";
 
 // Settings (05 §6.11, 07 D20, D84): the display-name and time-zone actions and updateTimeZone. Outside a request
@@ -28,7 +27,6 @@ import { uniqueTestHandle } from "../../helpers/factories";
 vi.mock("next/headers", () => import("../../helpers/next-headers"));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
-afterAll(resetDb);
 beforeEach(() => {
   mockNextHeaders(null);
   vi.mocked(revalidatePath).mockClear();

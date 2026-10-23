@@ -3,7 +3,7 @@ import { sourcePageHref, videoStepHref } from "../../src/lib/videos/steps";
 import { collectConsoleErrors } from "./helpers/console";
 import { signUpCreator } from "./helpers/creator";
 import { expectAbove, expectLeftOf } from "./helpers/layout";
-import { LIBRARY, libraryPostId, tiles } from "./helpers/library";
+import { libraryPostId, tiles, waitForLibrary } from "./helpers/library";
 import {
   trackExternalRequests,
   trackPageFetches,
@@ -244,7 +244,7 @@ test("J5.10: post 02 (38 s) warns above the tick wherever the browser read the f
   await page.waitForURL(videoStepHref(videoId, "file"));
   await expect(main.getByText(/^Original attached/).first()).toBeVisible();
   await pressLink(page, "Back");
-  await page.waitForURL(LIBRARY);
+  await waitForLibrary(page);
   await expect(tiles(page)).toHaveCount(24);
   expect(errors).toEqual([]);
 });

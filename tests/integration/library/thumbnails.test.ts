@@ -2,14 +2,13 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import type { PgUpdateSetSource } from "drizzle-orm/pg-core";
 import { NextRequest } from "next/server";
-import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GET as thumbnailGET } from "../../../src/app/api/library/thumbnails/[postId]/route";
 import { db } from "../../../src/db/client";
 import { socialPost } from "../../../src/db/schema";
 import { streamPlatformImage } from "../../../src/server/social/thumbnails";
 import { mockNextHeaders, signedInCreator } from "../../helpers/auth";
 import { at, postNumber } from "../../helpers/connect-flow";
-import { resetDb } from "../../helpers/db";
 import { insertSocialAccount, insertSocialPost } from "../../helpers/factories";
 import { syncedDemo } from "../../helpers/library";
 
@@ -17,7 +16,6 @@ import { syncedDemo } from "../../helpers/library";
 // database. It serves only the signed-in creator's own mock thumbnails and never calls a platform.
 vi.mock("next/headers", () => import("../../helpers/next-headers"));
 
-afterAll(resetDb);
 beforeEach(() => mockNextHeaders(null));
 
 const thumbnail = (postId: string) =>

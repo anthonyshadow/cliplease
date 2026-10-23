@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { refresh } from "next/cache";
 import {
-  afterAll,
   afterEach,
   beforeEach,
   describe,
@@ -42,7 +41,6 @@ import { getVideoStepFacts } from "../../src/server/videos/queries";
 import { formOf, NOT_FOUND, redirectTo } from "../helpers/actions";
 import { mockNextHeaders, signedInCreator } from "../helpers/auth";
 import { postNumber } from "../helpers/connect-flow";
-import { resetDb } from "../helpers/db";
 import {
   insertSocialAccount,
   insertUploadVideo,
@@ -82,7 +80,6 @@ vi.mock("../../src/server/videos/edit", async (importOriginal) => {
   };
 });
 
-afterAll(resetDb);
 beforeEach(() => {
   mockNextHeaders(null);
   vi.mocked(refresh).mockClear();

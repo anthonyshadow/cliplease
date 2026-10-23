@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "../../../src/db/client";
 import { session, user } from "../../../src/db/schema";
 import { DAY_MS, MINUTE_MS } from "../../../src/lib/time";
@@ -21,7 +21,6 @@ import {
   signInWithOtp,
   userByEmail,
 } from "../../helpers/auth";
-import { resetDb } from "../../helpers/db";
 import { insertCreator } from "../../helpers/factories";
 import { headers as requestHeaders } from "../../helpers/next-headers";
 
@@ -43,7 +42,6 @@ vi.mock("next/headers", async () => {
   };
 });
 
-afterAll(resetDb);
 beforeEach(() => {
   mockNextHeaders(null);
   forwarded.page = null;

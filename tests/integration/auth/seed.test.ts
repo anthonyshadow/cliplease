@@ -1,6 +1,6 @@
 import { asc, count, eq, inArray } from "drizzle-orm";
 import type { PgTable } from "drizzle-orm/pg-core";
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { runSeed } from "../../../scripts/seed";
 import { db } from "../../../src/db/client";
 import {
@@ -29,8 +29,6 @@ import {
 // `bun run db:seed [--demo]` (03 §8.1, 07 D53, D88) with .env.test's ADMIN_EMAILS (e2e-admin@example.com,
 // e2e-admin-2@example.com), PAYMENTS_DRIVER=fake, the mock provider and its default scenario.
 beforeEach(resetDb);
-// Maya's demo rows must not stay in the shared test database.
-afterAll(resetDb);
 
 const seed = () => runSeed({ appEnv: "test", demo: false });
 const demoSeed = () => runSeed({ appEnv: "test", demo: true });

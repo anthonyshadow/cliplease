@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { expect, type Page, type TestInfo, test } from "@playwright/test";
 import { linkDemoAccount } from "./connections";
+import { waitForLibrary } from "./library";
 import { signInWithEmail, uniqueEmail } from "./sign-in";
 
 // One letter per Playwright project (07 D154), the letters P22's run ids use: c chromium-desktop, w webkit-iphone,
@@ -16,12 +17,13 @@ const PROJECT_LETTER: Readonly<Partial<Record<string, string>>> = {
 const RUN_ID = Date.now().toString(36);
 
 /**
- * A run-unique dotted handle, `e2e.<run id><4 hex><project letter>` (17 characters, valid for HANDLE_RE). The random
- * part and the letter keep two tests, and the same test on two projects running at once, apart.
+ * A run-unique dotted handle, `e2e.<run id><8 hex><project letter>` (21 characters, valid for HANDLE_RE). The random
+ * part (four bytes: two repeated within a run) and the letter keep two tests, and the same test on two projects running
+ * at once, apart.
  */
 export function uniqueHandle(testInfo: TestInfo): string {
   const letter = PROJECT_LETTER[testInfo.project.name] ?? "z";
-  return `e2e.${RUN_ID}${randomBytes(2).toString("hex")}${letter}`;
+  return `e2e.${RUN_ID}${randomBytes(4).toString("hex")}${letter}`;
 }
 
 /**
@@ -70,7 +72,7 @@ export async function signUpCreator(
     await setUpPayouts(page);
   } else {
     await page.getByRole("link", { name: "Skip for now" }).click();
-    await page.waitForURL("/dashboard/library");
+    await waitForLibrary(page);
   }
   return { email, handle };
 }

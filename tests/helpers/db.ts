@@ -1,9 +1,9 @@
 import { fileURLToPath } from "node:url";
-import { DrizzleQueryError, sql } from "drizzle-orm";
+import { DrizzleQueryError } from "drizzle-orm";
 import { DatabaseError } from "pg";
 import { assert, expect } from "vitest";
-import { db, pool } from "../../src/db/client";
-import { checkTestDatabaseFiles } from "./test-database";
+import { pool } from "../../src/db/client";
+import { checkTestDatabaseFiles, emptyPublicTables } from "./test-database";
 
 const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 
@@ -20,21 +20,10 @@ export function assertTestDatabase(): void {
   });
 }
 
-/** Empties every table in schema public (Drizzle's journal lives in schema drizzle and stays). */
+/** Empties every table in schema public, after the guard. */
 export async function resetDb(): Promise<void> {
   assertTestDatabase();
-  const tables = await db.execute<{ tablename: string }>(
-    sql`select tablename from pg_tables where schemaname = 'public'`,
-  );
-  if (tables.rows.length === 0) {
-    throw new Error(
-      "The test database has no tables: run NODE_ENV=test bun run db:migrate",
-    );
-  }
-  const names = tables.rows.map((t) => sql.identifier(t.tablename));
-  await db.execute(
-    sql`truncate table ${sql.join(names, sql`, `)} restart identity cascade`,
-  );
+  await emptyPublicTables(pool);
 }
 
 /** The SQLSTATE codes the integration tests assert. */

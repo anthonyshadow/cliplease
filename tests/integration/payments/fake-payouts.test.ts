@@ -1,14 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
-import {
-  afterAll,
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GET as setUpPayouts } from "../../../src/app/api/stripe/onboarding/route";
 import { db } from "../../../src/db/client";
 import { auditEvent, creatorProfile } from "../../../src/db/schema";
@@ -31,7 +23,6 @@ import {
   userByEmail,
 } from "../../helpers/auth";
 import { auditsOf as auditsWithActorOf } from "../../helpers/connect-flow";
-import { resetDb } from "../../helpers/db";
 import { insertCreator } from "../../helpers/factories";
 import { captureLogEvents } from "../../helpers/logs";
 
@@ -39,7 +30,6 @@ import { captureLogEvents } from "../../helpers/logs";
 // spy on paymentsDriver("cad")'s methods sees every call the code makes through the registry for CAD.
 vi.mock("next/headers", () => import("../../helpers/next-headers"));
 
-afterAll(resetDb);
 beforeEach(() => mockNextHeaders(null));
 afterEach(() => {
   vi.restoreAllMocks();

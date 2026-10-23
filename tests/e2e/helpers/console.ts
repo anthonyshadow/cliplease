@@ -3,14 +3,19 @@ import { expect, type Page } from "@playwright/test";
 /**
  * A failed response the page is expected to log, e.g. a document 404 or the 400 from a wrong sign-in code; or, with
  * `abortedUnder`, the requests under that path a test cut off with route.abort('failed') (Chromium logs each one;
- * WebKit logs none).
+ * WebKit logs none); or, with `offline`, the router's RSC fetches that a test's context.setOffline(true) cut short.
  */
 export type ExpectedFailure =
   | { status: number; pathname: string }
-  | { abortedUnder: string };
+  | { abortedUnder: string }
+  | { offline: true };
 
+// How every failed load's console error starts. Next prefetches the NavBar's links in the background after a page loads;
+// a test that goes offline right then cuts them, and each browser logs its own network error with no status (Chromium
+// "net::ERR_INTERNET_DISCONNECTED", WebKit "WebKit encountered an internal error"). Seen in 2 of 8 runs of Q-47.
+const FAILED_LOAD = "Failed to load resource: ";
 const FAILED_RESOURCE = /^Failed to load resource: .*status of (\d{3})\b/;
-const ROUTE_ABORTED = "Failed to load resource: net::ERR_FAILED";
+const ROUTE_ABORTED = `${FAILED_LOAD}net::ERR_FAILED`;
 // WebKit reports a fetch that a navigation cancels as a page error ("<url> due to access control checks."). Next's
 // background RSC prefetches hit it whenever a test leaves a page right after loading it (seen in 14 of 40 probe runs);
 // Chromium stays quiet. For a router RSC fetch it is not an app error.
@@ -68,13 +73,24 @@ export function collectConsoleErrors(
     const pathname = URL.canParse(url) ? new URL(url).pathname : null;
     const isExpected =
       (pathname !== null &&
-        expected.some((failure) =>
-          "abortedUnder" in failure
-            ? text === ROUTE_ABORTED &&
+        expected.some((failure) => {
+          if ("abortedUnder" in failure) {
+            return (
+              text === ROUTE_ABORTED &&
               pathname.startsWith(failure.abortedUnder)
-            : String(failure.status) === status &&
-              pathname === failure.pathname,
-        )) ||
+            );
+          }
+          if ("offline" in failure) {
+            return (
+              text.startsWith(FAILED_LOAD) &&
+              status === undefined &&
+              isRouterRscUrl(url)
+            );
+          }
+          return (
+            String(failure.status) === status && pathname === failure.pathname
+          );
+        })) ||
       (url.startsWith("blob:") && text.endsWith(CANCELLED_BLOB_LOAD));
     if (!isExpected) errors.push(text);
     if (text === LOAD_FAILED && url.includes("/_next/static/chunks/")) {

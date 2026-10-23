@@ -14,7 +14,6 @@ import {
   getOriginalUploadProgress,
   presignParts,
 } from "../../src/server/storage/uploads";
-import { resetDb } from "../helpers/db";
 import { videoRow } from "../helpers/factories";
 import { captureLogEvents } from "../helpers/logs";
 import {
@@ -44,10 +43,7 @@ vi.mock("next/headers", () => import("../helpers/next-headers"));
 
 const disk = trackTestStorage();
 
-afterAll(async () => {
-  await disk.clean();
-  await resetDb();
-});
+afterAll(() => disk.clean());
 afterEach(() => vi.restoreAllMocks());
 
 const auditCount = async () => {

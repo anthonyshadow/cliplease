@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
 export default defineConfig({
   plugins: [react()],
@@ -14,6 +14,22 @@ export default defineConfig({
   },
   test: {
     setupFiles: ["./tests/setup/load-env.ts"],
+    // `--changed` (bun run test:changed, test:int:changed) runs only the tests whose imports reach a changed file. A
+    // change to any of these runs every test: files read without being imported, and what the setup files import (no
+    // test imports it, so no test would be picked). Env files other than .env.example are ignored by git and never show
+    // as changed: run the full suite after editing one.
+    forceRerunTriggers: [
+      ...configDefaults.forceRerunTriggers,
+      "**/bun.lock",
+      "**/tsconfig.json",
+      "**/.env.example",
+      "**/drizzle/**",
+      "**/src/app/globals.css",
+      "**/src/db/client.ts",
+      "**/tests/fixtures/**",
+      "**/tests/setup/**",
+      "**/tests/helpers/{db,read-latest-email,test-database,test-run-lock}.ts",
+    ],
     reporters: [["default", { summary: false }]],
     projects: [
       {

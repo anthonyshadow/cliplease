@@ -1,5 +1,5 @@
 import { eq, sql } from "drizzle-orm";
-import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { db, pool } from "../../../src/db/client";
 import { socialAccount } from "../../../src/db/schema";
 import { DAY_MS, MINUTE_MS } from "../../../src/lib/time";
@@ -29,14 +29,12 @@ import {
   demoAccount,
   insertDemoAccount,
 } from "../../helpers/connect-flow";
-import { resetDb } from "../../helpers/db";
 import { insertCreator } from "../../helpers/factories";
 
 // 07 D12 (c): concurrent requests refresh a token once. Under rotating_refresh a second refresh with the same refresh
 // token fails, so anything but one refresh would flip the account to needs_reconnect. The pool's 10 connections all wait
 // on the row lock at once.
 
-afterAll(resetDb);
 afterEach(() => {
   vi.restoreAllMocks();
   setMockScenarioForTests(null);

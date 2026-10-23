@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { loadMoreLibraryPosts } from "../../../src/app/(dashboard)/dashboard/library/actions";
 import {
   type ActionResult,
@@ -13,7 +13,6 @@ import {
   signedInCreator,
 } from "../../helpers/auth";
 import { postNumber, postsOf } from "../../helpers/connect-flow";
-import { resetDb } from "../../helpers/db";
 import { insertSocialAccount, insertSocialPost } from "../../helpers/factories";
 import {
   cursorAfter,
@@ -29,7 +28,6 @@ import {
 // client island calls it, with the session read through the mocked next/headers.
 vi.mock("next/headers", () => import("../../helpers/next-headers"));
 
-afterAll(resetDb);
 beforeEach(() => mockNextHeaders(null));
 
 const INVALID_INPUT = {
