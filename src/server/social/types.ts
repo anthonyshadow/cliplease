@@ -6,8 +6,9 @@ import type {
 } from "../../lib/domain/values";
 
 // The provider contract (02 §5.3, research/social.md §7.1), with 07 D68 (findPostByLinkKey, SocialPost.linkKey) and D83
-// (optionalScopes, extraScopes). Two deviations: getAuthorizeUrl's optional `mockSubject` (P06, owner answer Q1 a) and
-// refreshToken's `signal` (the refresh deadline cancels the call, so a rotated refresh token is never dropped).
+// (optionalScopes, extraScopes). Three deviations: getAuthorizeUrl's optional `mockSubject` (P06, owner answer Q1 a),
+// refreshToken's `signal` (the refresh deadline cancels the call, so a rotated refresh token is never dropped), and the
+// optional `signal` of getPost and findPostByLinkKey (owner answer Q-82 a: a save's link checks share one deadline).
 // statsFor arrives with Instagram views (P28b). Relative imports: the P09 seed loads the mock under tsx.
 
 export type SocialPostKind = SocialPostMediaType; // 'video' | 'reel' | 'short'
@@ -92,6 +93,11 @@ export interface AuthorizeUrlInput {
  */
 export type RevokeOutcome = "revoked" | "unsupported" | "failed";
 
+/** A lookup by id's options: the caller's deadline (owner answer Q-82 a). */
+export interface PostLookupOptions {
+  signal?: AbortSignal;
+}
+
 export interface SocialProvider {
   readonly platform: SocialProviderId;
   /** "Instagram" | "TikTok" | "YouTube" | "Demo" */
@@ -119,17 +125,22 @@ export interface SocialProvider {
   getProfile(accessToken: string): Promise<SocialProfile>;
   /** Videos only. */
   listPosts(accessToken: string, i: ListPostsInput): Promise<ListPostsResult>;
-  /** Live ownership check: null unless the post belongs to `externalAccountId`. */
+  /**
+   * Live ownership check: null unless the post belongs to `externalAccountId`. An aborted `signal` (the caller's
+   * deadline, Q-82 a) fails the call as SocialUpstreamError; real adapters pass it to every request.
+   */
   getPost(
     accessToken: string,
     externalId: string,
     externalAccountId: string,
+    opts?: PostLookupOptions,
   ): Promise<SocialPost | null>;
-  /** Posting verification by parsed id, never a pasted URL (07 D68). */
+  /** Posting verification by parsed id, never a pasted URL (07 D68). `signal` as for getPost. */
   findPostByLinkKey(
     accessToken: string,
     linkKey: string,
     externalAccountId: string,
+    opts?: PostLookupOptions,
   ): Promise<SocialPost | null>;
   /** Batched thumbnail refresh ([H7]). */
   getPosts(accessToken: string, externalIds: string[]): Promise<SocialPost[]>;

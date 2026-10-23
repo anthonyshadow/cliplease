@@ -249,15 +249,17 @@ export const mockProvider: SocialProvider = {
     };
   },
 
-  async getPost(accessToken, externalId, externalAccountId) {
+  async getPost(accessToken, externalId, externalAccountId, opts) {
+    // The caller's deadline passed (Q-82 a): fail as a real request cut short would, before answering.
+    if (opts?.signal?.aborted) throw new SocialUpstreamError();
     const suffix = tokenSuffix(accessToken, "access");
     if (accountIdOf(suffix) !== externalAccountId) return null;
     return postForAccount(suffix, externalId);
   },
 
-  async findPostByLinkKey(accessToken, linkKey, externalAccountId) {
+  async findPostByLinkKey(accessToken, linkKey, externalAccountId, opts) {
     // The mock's link key is its post id (07 D68).
-    return mockProvider.getPost(accessToken, linkKey, externalAccountId);
+    return mockProvider.getPost(accessToken, linkKey, externalAccountId, opts);
   },
 
   async getPosts(accessToken, externalIds) {

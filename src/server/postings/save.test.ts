@@ -5,9 +5,10 @@ import type { PlannedPosting } from "../../lib/postings/plan";
 import {
   newPostingColumns,
   type PostingInput,
+  type PriorPosting,
+  type RowCheck,
   recheckColumns,
   saveVideoPostingsInput,
-  type VerifiedPostingNow,
 } from "./save";
 import type { PostingCheckResult } from "./verify";
 
@@ -176,7 +177,9 @@ function unverifiedCheck(reason: PostingUnverifiedReason): PostingCheckResult {
   return { verification: "unverified", reason };
 }
 
-const KEPT: VerifiedPostingNow = {
+const KEPT: PriorPosting = {
+  verification: "verified",
+  unverifiedReason: null,
   socialAccountId: "acct-0",
   socialPostId: "post-0",
   verifiedUsername: "@demo.creator",
@@ -191,6 +194,26 @@ const LINK_COLUMNS = {
   otherLabel: null,
   url: MOCK_URL,
   linkKey: MOCK_ID,
+};
+
+/** KEPT's verification columns, as a carried or kept row writes them. */
+const { showLink: _keptShowLink, ...KEPT_VERIFICATION } = KEPT;
+
+/** A prior row of the same post saved Not verified: a released one keeps its social ids for audit. */
+const RELEASED: PriorPosting = {
+  ...KEPT,
+  verification: "unverified",
+  unverifiedReason: "released",
+  showLink: true,
+};
+
+/** Not verified with no social ids: what an unverified write leaves besides its reason and checked_at. */
+const NO_IDS = {
+  socialAccountId: null,
+  socialPostId: null,
+  verifiedUsername: null,
+  verifiedAccountLinkedAt: null,
+  verifiedAt: null,
 };
 
 describe("newPostingColumns", () => {
@@ -312,6 +335,106 @@ describe("newPostingColumns", () => {
       });
     },
   );
+});
+
+describe("newPostingColumns: the Switch follows the post when the step sends none (owner answer Q-86 a)", () => {
+  const showLink = (
+    check: RowCheck,
+    prior: PriorPosting | undefined,
+    row: PlannedPosting = ROW,
+  ) => newPostingColumns(row, check, prior, NOW).showLink;
+  const hidden: PriorPosting = {
+    ...RELEASED,
+    unverifiedReason: "not_found",
+    showLink: false,
+  };
+
+  it("keeps a link saved hidden hidden, whether it verifies now or not; the input's Switch still wins", () => {
+    for (const check of [
+      verifiedCheck("public"),
+      unverifiedCheck("not_found"),
+      unverifiedCheck("check_failed"),
+      "carried",
+      "not_reached",
+    ] as const) {
+      expect(showLink(check, hidden)).toBe(false);
+      expect(showLink(check, hidden, { ...ROW, showLink: true })).toBe(true);
+    }
+  });
+
+  it("gives a link saved shown but not verified the default: hidden once it verifies as an unlisted post (07 D18)", () => {
+    expect(showLink(verifiedCheck("unlisted"), RELEASED)).toBe(false);
+    expect(showLink(verifiedCheck("public"), RELEASED)).toBe(true);
+    expect(showLink(unverifiedCheck("not_found"), RELEASED)).toBe(true);
+  });
+
+  it("keeps a verified link's value, shown or hidden, and gives a new link the default", () => {
+    expect(showLink(verifiedCheck("public"), KEPT)).toBe(false);
+    expect(
+      showLink(verifiedCheck("unlisted"), { ...KEPT, showLink: true }),
+    ).toBe(true);
+    expect(showLink(verifiedCheck("unlisted"), undefined)).toBe(false);
+    expect(showLink(unverifiedCheck("no_account"), undefined)).toBe(true);
+  });
+});
+
+describe("newPostingColumns: rows step 5 didn't check now", () => {
+  it.each<[string, PriorPosting]>([
+    ["a verified one", KEPT],
+    ["a released one, social ids and all", RELEASED],
+    [
+      "a not_found one",
+      {
+        ...RELEASED,
+        ...NO_IDS,
+        unverifiedReason: "not_found",
+        checkedAt: KEPT.checkedAt,
+      },
+    ],
+  ])(
+    "carries the saved row's verification over unchanged, checked_at included (Q-84 a): %s",
+    (_, prior) => {
+      const { showLink, ...verification } = prior;
+      expect(newPostingColumns(ROW, "carried", prior, NOW)).toEqual({
+        ...LINK_COLUMNS,
+        ...verification,
+        showLink,
+      });
+    },
+  );
+
+  it("keeps a verified post's fields and checked_at when the budget ran out before its turn (Q-82 a with Q-69 a)", () => {
+    expect(newPostingColumns(ROW, "not_reached", KEPT, NOW)).toEqual({
+      ...LINK_COLUMNS,
+      ...KEPT_VERIFICATION,
+      showLink: false,
+    });
+  });
+
+  it("saves any other row the budget didn't reach as check_failed with no new checked_at (Q-82 a)", () => {
+    expect(newPostingColumns(ROW, "not_reached", RELEASED, NOW)).toEqual({
+      ...LINK_COLUMNS,
+      ...NO_IDS,
+      verification: "unverified",
+      unverifiedReason: "check_failed",
+      checkedAt: RELEASED.checkedAt,
+      showLink: true,
+    });
+    expect(newPostingColumns(ROW, "not_reached", undefined, NOW)).toEqual({
+      ...LINK_COLUMNS,
+      ...NO_IDS,
+      verification: "unverified",
+      unverifiedReason: "check_failed",
+      checkedAt: null,
+      showLink: true,
+    });
+  });
+
+  it("saves a carried row whose saved row is gone meanwhile (a concurrent save) as check_failed, not checked", () => {
+    expect(newPostingColumns(ROW, "carried", undefined, NOW)).toEqual(
+      newPostingColumns(ROW, "not_reached", undefined, NOW),
+    );
+  });
 });
 
 describe("recheckColumns", () => {

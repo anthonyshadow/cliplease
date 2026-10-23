@@ -43,8 +43,25 @@ export class PostingsLockedError extends Error {
   }
 }
 
-/** Why a set of postings is refused whole: over POSTINGS_MAX with the source, or `notPosted` on a Library video. */
-export type InvalidPostingsCode = "too_many" | "not_posted_library";
+/**
+ * Check again within POSTING_CHECK_COOLDOWN_MS of the posting's last check (owner answer Q-84 a): that result stands and
+ * the platform isn't asked ("Checked a moment ago. Try again in a few seconds.").
+ */
+export class CheckedRecentlyError extends Error {
+  constructor() {
+    super("checked_recently");
+    this.name = "CheckedRecentlyError";
+  }
+}
+
+/**
+ * Why a set of postings is refused whole: over POSTINGS_MAX with the source, `notPosted` on a Library video, or nothing
+ * chosen on a video with no source posting (no rows and not `notPosted`: "Say where it was posted").
+ */
+export type InvalidPostingsCode =
+  | "too_many"
+  | "not_posted_library"
+  | "nothing_chosen";
 
 /** A set of postings saveVideoPostings refuses before any parse, platform call or write. */
 export class InvalidPostingsError extends Error {

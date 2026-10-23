@@ -30,8 +30,8 @@ export const linkFieldId = (key: string) => `posting-link-${key}`;
 /**
  * "Show buyers this link" (04 §9.33; 07 D18), on a link row and the Library source row: the Switch, then D18's note
  * while a verified unlisted post's link is off (the Switch described by it). A Radix Switch posts "on" or nothing, so
- * the Switch has no name: a hidden `name` posts "true" / "false" only while `value` is given, and when it is absent
- * the server keeps the saved value or applies its default.
+ * the Switch has no name: a hidden `name` posts "true" / "false" only while `value` is given (the creator turned it
+ * this visit, owner answer Q-86 a); when it is absent the server keeps the saved value or applies its default.
  */
 export function ShowLinkSwitch({
   checked,
@@ -208,7 +208,7 @@ export function PostingLinkRow({
           onCheckedChange={onSwitch}
           unlisted={saved?.visibility === "unlisted" && !switchOn}
           name={postingFieldKey(index, "showLink")}
-          value={showLinkValue(row, saved)}
+          value={showLinkValue(row)}
         />
       ) : null}
       {removable ? (

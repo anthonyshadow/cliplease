@@ -1,5 +1,6 @@
 import "server-only";
-import { and, eq, ne } from "drizzle-orm";
+import { and, eq, gt, isNotNull, notExists, or, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { z } from "zod";
 import { db } from "../../db/client";
 import { socialAccount, video, videoPosting } from "../../db/schema";
@@ -31,6 +32,12 @@ import {
 import { mockEnabled } from "../social/registry";
 import { VideoNotFoundError } from "../videos/errors";
 import {
+  stepFactColumns,
+  stepFactsOf,
+  type VideoStepState,
+} from "../videos/queries";
+import {
+  CheckedRecentlyError,
   InvalidPostingsError,
   NotPublicError,
   PostingsLockedError,
@@ -46,17 +53,28 @@ import {
   verifiedPostingConflictError,
 } from "./ownership";
 import { getOwnerPosting, listVideoPostings } from "./queries";
-import { type PostingCheckResult, verifyPostingLink } from "./verify";
+import {
+  type PostingCheckResult,
+  type PostingDeadline,
+  postingDeadline,
+  verifyPostingLink,
+} from "./verify";
 
 // "Where was it posted?" writes (02 §5.12, §6.1; 03 §5.2; 06 §5b; 07 D66, D68, D69): saveVideoPostings and Check again.
 // Every link is read again here (planPostings, the rule the Continue's postingsInputChanged compares with; the browser's
-// parse is never trusted) and checked by id outside any transaction; then one transaction locks the video, checks it
+// parse is never trusted) and checked by id outside any transaction, a save's checks sharing one deadline and Check
+// again having its own (POSTING_CHECKS_BUDGET_MS, owner answer Q-82 a); then one transaction locks the video, checks it
 // and the cross-creator rule again, writes the postings, audits conflicts (auditNewlyVerified) and calls
-// refreshVideoOwnership. A posting verified on this video keeps its verified fields when a check of it fails (owner
-// answer Q-69 a: only checked_at moves) or when the account it was verified through isn't connected now (Q-70 a: no
-// check runs, so checked_at stays too). The is_source posting is never deleted or replaced here. Postings change only
-// while the video is off (POSTINGS_EDITABLE: "Turn off to edit where it was posted."). Audits carry platforms and
-// counts, never a link or a link key.
+// refreshVideoOwnership. A post checked within POSTING_CHECK_COOLDOWN_MS keeps its last result with no call (Q-84 a). A
+// posting verified on this video keeps its verified fields when a check of it fails (owner answer Q-69 a: only
+// checked_at moves), when the account it was verified through isn't connected now (Q-70 a: no check runs, so checked_at
+// stays too) or when the deadline came before its turn (Q-82 a, no check either). "Show buyers this link" follows the
+// post across saves (Q-86 a, chosenShowLink): the step posts a Switch only once the creator turned it. The is_source
+// posting is never deleted or replaced here. Postings change only while the video is off (POSTINGS_EDITABLE: "Turn off
+// to edit where it was posted."). Audits carry platforms and counts, never a link or a link key.
+
+/** How long a posting's last check stands before the platform is asked about it again (owner answer Q-84 a). */
+export const POSTING_CHECK_COOLDOWN_MS = 30_000;
 
 /** Reasons that leave a posting verified on this video verified (Q-69 a, Q-70 a). A not_found is a real downgrade. */
 const KEEPS_VERIFIED: readonly PostingUnverifiedReason[] = [
@@ -88,40 +106,81 @@ const NO_ACCOUNT: PostingCheckResult = {
   reason: "no_account",
 };
 
+/** An account of the creator, for checkedRecently's "(re)connected or synced since" test. */
+const since = alias(socialAccount, "since");
+
 /**
- * The posts verified on this video through an account that isn't connected now, as `platform:link_key`, the source
- * posting included (Check again reads it; a save never checks a copy of it, planPostings drops one). They keep their
- * verified fields without a check (Q-70 a): another account on that platform can't see them, so its not_found would
- * be no answer.
+ * Whether a posting's last check still stands (owner answer Q-84 a), by the database clock: checked within
+ * POSTING_CHECK_COOLDOWN_MS, and no account of the creator on its platform (re)connected or synced since. Either makes
+ * the last answer stale, so the platform is asked: Q-74 a's check after Link / Reconnect {Platform}, and Sync and check
+ * again.
  */
-async function verifiedThroughUnlinkedAccount(
+const checkedRecently = sql<boolean>`(${videoPosting.checkedAt} is not null
+  and ${videoPosting.checkedAt} > now() - make_interval(secs => ${POSTING_CHECK_COOLDOWN_MS / 1000})
+  and ${notExists(
+    db
+      .select({ id: since.id })
+      .from(since)
+      .where(
+        and(
+          eq(since.creatorId, videoPosting.creatorId),
+          sql`${since.provider}::text = ${videoPosting.platform}::text`,
+          or(
+            gt(since.connectedAt, videoPosting.checkedAt),
+            gt(since.lastSyncedAt, videoPosting.checkedAt),
+          ),
+        ),
+      ),
+  )})`;
+
+/**
+ * A saved posting's two reasons to ask no platform, selected with it (left-joined to its verifying social_account):
+ * `unlinked`, verified through an account that isn't connected now, so it keeps its verified fields with no check
+ * (Q-70 a: another account on that platform can't see the post, so its not_found would be no answer); `recent`, its
+ * last check still stands (checkedRecently, Q-84 a).
+ */
+const checkFlags = {
+  unlinked: sql<boolean>`coalesce(${videoPosting.verification} = 'verified' and ${socialAccount.status} <> 'connected', false)`,
+  recent: checkedRecently,
+};
+
+/** checkFlags as read. */
+type CheckFlags = { unlinked: boolean; recent: boolean };
+
+/**
+ * Save step 5's one read: checkFlags of the video's saved non-source posts, by `platform:link_key`. The save never
+ * checks a copy of the source posting (planPostings drops one); Check again reads the flags with its posting.
+ */
+async function savedCheckFlags(
   videoId: string,
-): Promise<Set<string>> {
+): Promise<Map<string, CheckFlags>> {
   const rows = await db
-    .select({ platform: videoPosting.platform, linkKey: videoPosting.linkKey })
+    .select({
+      platform: videoPosting.platform,
+      linkKey: videoPosting.linkKey,
+      ...checkFlags,
+    })
     .from(videoPosting)
-    .innerJoin(
-      socialAccount,
-      eq(socialAccount.id, videoPosting.socialAccountId),
-    )
+    .leftJoin(socialAccount, eq(socialAccount.id, videoPosting.socialAccountId))
     .where(
       and(
         eq(videoPosting.videoId, videoId),
-        eq(videoPosting.verification, "verified"),
-        ne(socialAccount.status, "connected"),
+        eq(videoPosting.isSource, false),
+        isNotNull(videoPosting.linkKey),
       ),
     );
-  return new Set(
-    rows.flatMap((row) =>
-      row.linkKey === null ? [] : [postKey(row.platform, row.linkKey)],
+  return new Map(
+    rows.flatMap(({ platform, linkKey, unlinked, recent }) =>
+      linkKey === null
+        ? []
+        : [[postKey(platform, linkKey), { unlinked, recent }] as const],
     ),
   );
 }
 
 /**
- * One row's check, outside any transaction (save step 5, Check again step 3): a post verified on this video through an
- * account that isn't connected now (`unlinked`, from verifiedThroughUnlinkedAccount) is NO_ACCOUNT with no call
- * (Q-70 a); any other row goes to verifyPostingLink.
+ * One posting's check outside any transaction, under `deadline` (save step 5, Check again step 3): an `unlinked` one
+ * (checkFlags) is NO_ACCOUNT with no call (Q-70 a); any other goes to verifyPostingLink.
  */
 async function checkPosting(
   creatorId: string,
@@ -130,20 +189,55 @@ async function checkPosting(
     linkKey: string | null;
     url: string | null;
   },
-  unlinked: ReadonlySet<string>,
+  unlinked: boolean,
+  deadline: PostingDeadline,
 ): Promise<PostingCheckResult> {
-  if (
-    row.linkKey !== null &&
-    unlinked.has(postKey(row.platform, row.linkKey))
-  ) {
-    return NO_ACCOUNT;
-  }
-  return verifyPostingLink(creatorId, row);
+  if (unlinked) return NO_ACCOUNT;
+  return verifyPostingLink(creatorId, row, deadline);
 }
 
-/** The saved postings, or a field error per input row (its index in `postings`) and nothing saved. */
+/**
+ * How save step 5 left a row unchecked: `carried`, its post checked within POSTING_CHECK_COOLDOWN_MS, so the saved
+ * row's verification is kept as it is (Q-84 a); `not_reached`, the checks' budget ran out before its turn, so it is
+ * check_failed with no call (Q-82 a). newPostingColumns writes both.
+ */
+export type UncheckedRow = "carried" | "not_reached";
+
+/** A row as save step 5 leaves it: a check's result, or how it went unchecked. */
+export type RowCheck = PostingCheckResult | UncheckedRow;
+
+/**
+ * Save step 5 for one planned row: carried when its post's saved check is recent, else checkPosting under the save's
+ * one deadline. A link the deadline stopped before any platform call (notReached) is not_reached: not checked.
+ */
+async function checkRow(
+  creatorId: string,
+  row: PlannedPosting,
+  saved: ReadonlyMap<string, CheckFlags>,
+  deadline: PostingDeadline,
+): Promise<RowCheck> {
+  const flags =
+    row.linkKey === null
+      ? undefined
+      : saved.get(postKey(row.platform, row.linkKey));
+  if (flags?.recent) return "carried";
+  const check = await checkPosting(
+    creatorId,
+    row,
+    flags?.unlinked ?? false,
+    deadline,
+  );
+  return check.verification === "unverified" && check.notReached
+    ? "not_reached"
+    : check;
+}
+
+/**
+ * The saved postings and the video's step facts as the save's write left them (its final video update, so the Continue
+ * needn't read them again), or a field error per input row (its index in `postings`) and nothing saved.
+ */
 export type SaveVideoPostingsResult =
-  | { ok: true; postings: OwnerPostingDTO[] }
+  | { ok: true; postings: OwnerPostingDTO[]; facts: VideoStepState }
   | { ok: false; fields: Record<number, PostingLinkError | "private"> };
 
 /**
@@ -215,9 +309,14 @@ export type PostingColumns = Omit<
   | "updatedAt"
 >;
 
-/** A verified posting of this video, as a save finds it before replacing the rows. */
-export type VerifiedPostingNow = Pick<
+/**
+ * A saved non-source posting of this video, as a save finds it before replacing the rows: the prior row of the post a
+ * planned row names (replacePostings' priorByPost).
+ */
+export type PriorPosting = Pick<
   VideoPosting,
+  | "verification"
+  | "unverifiedReason"
   | "socialAccountId"
   | "socialPostId"
   | "verifiedUsername"
@@ -244,18 +343,69 @@ function verifiedColumns(
   } as const;
 }
 
+/** A prior row's verification columns as they are, checked_at included (Q-84 a's carry-over; Q-69 a, Q-70 a's keep). */
+function verificationOf(prior: PriorPosting) {
+  return {
+    verification: prior.verification,
+    unverifiedReason: prior.unverifiedReason,
+    socialAccountId: prior.socialAccountId,
+    socialPostId: prior.socialPostId,
+    verifiedUsername: prior.verifiedUsername,
+    verifiedAccountLinkedAt: prior.verifiedAccountLinkedAt,
+    verifiedAt: prior.verifiedAt,
+    checkedAt: prior.checkedAt,
+  };
+}
+
+/** The columns of a posting saved Not verified: its reason and no social ids. */
+function unverifiedColumns(
+  reason: PostingUnverifiedReason,
+  checkedAt: Date | null,
+) {
+  return {
+    verification: "unverified",
+    unverifiedReason: reason,
+    socialAccountId: null,
+    socialPostId: null,
+    verifiedUsername: null,
+    verifiedAccountLinkedAt: null,
+    verifiedAt: null,
+    checkedAt,
+  } as const;
+}
+
 /**
- * Step 6's row: the canonical url and link key, and what the check decided. Verified → verified now, the link shown
- * unless the post is unlisted (07 D18); a post this video already held verified (`kept`) keeps its show_link, the
- * creator's choice or that first default (the step posts no unchanged Switch). A check_failed or no_account for a post verified on this video now (`kept`) →
- * that posting's verified fields as they were: checked now after Q-69 a's failed check, its checked_at kept when Q-70 a
- * ran no check. Otherwise unverified with its reason and no social ids, checked now unless no check ran (unverifiable,
- * no_link). The input's showLink wins when it has one.
+ * "Show buyers this link" for a saved row (owner answer Q-86 a): the input's Switch when the step sent one (the creator
+ * turned it this visit); else the prior row's value when it was hidden (verified or not) or verified; else `byDefault`.
+ */
+function chosenShowLink(
+  row: PlannedPosting,
+  prior: PriorPosting | undefined,
+  byDefault: boolean,
+): boolean {
+  if (row.showLink !== undefined) return row.showLink;
+  if (prior && (!prior.showLink || prior.verification === "verified")) {
+    return prior.showLink;
+  }
+  return byDefault;
+}
+
+/**
+ * Step 6's row: the canonical url and link key, and what step 5 left (`check`), given `prior`, the saved non-source row
+ * of the same post if there is one ("kept" when it is verified):
+ * - verified now → verified now, with the account and the post;
+ * - `carried` (Q-84 a) → the prior row's verification columns unchanged, checked_at included; its prior row gone
+ *   meanwhile (a concurrent save) → as `not_reached`;
+ * - a check_failed or no_account (Q-69 a, Q-70 a), or `not_reached` (Q-82 a), for a kept post → its verified fields as
+ *   they were, checked now only after Q-69 a's failed check (no check ran for the other two);
+ * - otherwise Not verified with its reason (`not_reached` is check_failed) and no social ids, checked now unless no
+ *   check ran: none for unverifiable and no_link, the prior row's checked_at for `not_reached`.
+ * show_link is chosenShowLink's (Q-86 a), whose default shows the link unless the post verified now is unlisted (07 D18).
  */
 export function newPostingColumns(
   row: PlannedPosting,
-  check: PostingCheckResult,
-  kept: VerifiedPostingNow | undefined,
+  check: RowCheck,
+  prior: PriorPosting | undefined,
   now: Date,
 ): PostingColumns {
   const link = {
@@ -264,40 +414,30 @@ export function newPostingColumns(
     url: row.url,
     linkKey: row.linkKey,
   };
+  const kept = prior?.verification === "verified" ? prior : undefined;
+  const unlistedNow =
+    typeof check !== "string" &&
+    check.verification === "verified" &&
+    check.visibility === "unlisted";
+  const showLink = chosenShowLink(row, prior, !unlistedNow);
+  if (check === "carried" && prior) {
+    return { ...link, ...verificationOf(prior), showLink };
+  }
+  if (typeof check === "string") {
+    const columns = kept
+      ? verificationOf(kept)
+      : unverifiedColumns("check_failed", prior?.checkedAt ?? null);
+    return { ...link, ...columns, showLink };
+  }
   if (check.verification === "verified") {
-    return {
-      ...link,
-      ...verifiedColumns(check, now),
-      showLink:
-        row.showLink ?? kept?.showLink ?? check.visibility !== "unlisted",
-    };
+    return { ...link, ...verifiedColumns(check, now), showLink };
   }
   if (kept && keepsVerified(check)) {
-    return {
-      ...link,
-      verification: "verified",
-      unverifiedReason: null,
-      socialAccountId: kept.socialAccountId,
-      socialPostId: kept.socialPostId,
-      verifiedUsername: kept.verifiedUsername,
-      verifiedAccountLinkedAt: kept.verifiedAccountLinkedAt,
-      verifiedAt: kept.verifiedAt,
-      checkedAt: check.reason === "check_failed" ? now : kept.checkedAt,
-      showLink: row.showLink ?? kept.showLink,
-    };
+    const checkedAt = check.reason === "check_failed" ? now : kept.checkedAt;
+    return { ...link, ...verificationOf(kept), checkedAt, showLink };
   }
-  return {
-    ...link,
-    verification: "unverified",
-    unverifiedReason: check.reason,
-    socialAccountId: null,
-    socialPostId: null,
-    verifiedUsername: null,
-    verifiedAccountLinkedAt: null,
-    verifiedAt: null,
-    checkedAt: NOT_CHECKED.includes(check.reason) ? null : now,
-    showLink: row.showLink ?? true,
-  };
+  const checkedAt = NOT_CHECKED.includes(check.reason) ? null : now;
+  return { ...link, ...unverifiedColumns(check.reason, checkedAt), showLink };
 }
 
 /**
@@ -349,22 +489,26 @@ async function lockEditableVideo(
  * Saves "Where was it posted?" (02 §5.12, 07 D69), in this order:
  * 1. the input (saveVideoPostingsInput; a ZodError when it fails), a creator actor, the creator's own video (else
  *    VideoNotFoundError), `draft` or `unpublished` (else PostingsLockedError), `notPosted` only on an upload (else
- *    InvalidPostingsError('not_posted_library')), the source posting plus the rows ≤ POSTINGS_MAX (else 'too_many');
+ *    InvalidPostingsError('not_posted_library')), something chosen on a video with no source posting (rows or
+ *    `notPosted`, else 'nothing_chosen'), the source posting plus the rows ≤ POSTINGS_MAX (else 'too_many');
  * 2–3. planPostings: each link read again; any that doesn't read → `{ ok: false, fields }`, no call and no write;
  * 4. the cross-creator rule for every row with a link key, verified or not (AlreadyLicensableElsewhereError,
  *    AlreadyOnYourVideoError, each with the refused row's input `index`: Q-78 a), before any platform call;
- * 5. checkPosting for each row, one at a time, outside any transaction (verifyPostingLink; a post verified here through
- *    an account that isn't connected now is not checked and keeps its checked_at: Q-70 a): a private post →
- *    `fields[index] = 'private'`, and nothing is written;
+ * 5. checkRow for each row, one at a time, outside any transaction, all under one deadline of
+ *    POSTING_CHECKS_BUDGET_MS (postingDeadline, Q-82 a): a post whose saved check still stands is carried over with no call (Q-84 a,
+ *    checkedRecently); a post verified here through an account that isn't connected now is not checked (Q-70 a); a row
+ *    the deadline stopped before any platform call is not_reached (check_failed, no call, no checked_at); any other goes
+ *    to verifyPostingLink.
+ *    A private post → `fields[index] = 'private'`, and nothing is written;
  * 6. one transaction: the video locked and checked again, the cross-creator rule again, the non-source rows replaced at
- *    positions 1…n in input order (newPostingColumns), auditNewlyVerified (a `video_posting.conflict` audit per posting
- *    that became verified while other creators hold it unverified), refreshVideoOwnership, postings_confirmed_at
- *    now (also with no rows), the same-video tick cleared only when the set of verified posts changed, and audit
- *    `video.postings_saved { platforms, verified }` (platforms in position order, the source's included). A lost
- *    video_posting_verified_uidx → AlreadyOnYourVideoError when the creator's own other video won, else
- *    AlreadyLicensableElsewhereError (verifiedPostingConflictError). `sourceShowLink`, when given, sets the source row's
- *    show_link in the same transaction (Q-73 a);
- * 7. the postings as the owner's DTOs.
+ *    positions 1…n in input order (newPostingColumns, each with the saved row of its post), auditNewlyVerified (a
+ *    `video_posting.conflict` audit per posting that became verified while other creators hold it unverified),
+ *    refreshVideoOwnership, postings_confirmed_at now (also with no rows), the same-video tick cleared only when the set
+ *    of verified posts changed, and audit `video.postings_saved { platforms, verified }` (platforms in position order,
+ *    the source's included). A lost video_posting_verified_uidx → AlreadyOnYourVideoError when the creator's own other
+ *    video won, else AlreadyLicensableElsewhereError (verifiedPostingConflictError). `sourceShowLink`, when given, sets
+ *    the source row's show_link in the same transaction (Q-73 a);
+ * 7. the postings as the owner's DTOs, and the step facts the final video update returned.
  */
 export async function saveVideoPostings(
   a: Actor,
@@ -398,6 +542,9 @@ export async function saveVideoPostings(
     current.sourcePlatform === null
       ? null
       : { platform: current.sourcePlatform, linkKey: current.sourceLinkKey };
+  if (!source && !input.notPosted && input.postings.length === 0) {
+    throw new InvalidPostingsError("nothing_chosen");
+  }
   if ((source ? 1 : 0) + input.postings.length > POSTINGS_MAX) {
     throw new InvalidPostingsError("too_many");
   }
@@ -426,14 +573,15 @@ export async function saveVideoPostings(
   await assertPostingsAvailable(db, targets);
 
   // 5.
-  const checked: { row: PlannedPosting; check: PostingCheckResult }[] = [];
+  const checked: { row: PlannedPosting; check: RowCheck }[] = [];
   const fields: Record<number, "private"> = {};
-  const unlinked = await verifiedThroughUnlinkedAccount(input.videoId);
+  const saved = await savedCheckFlags(input.videoId);
+  const deadline = postingDeadline();
   for (const row of plan.rows) {
     try {
       checked.push({
         row,
-        check: await checkPosting(actor.creatorId, row, unlinked),
+        check: await checkRow(actor.creatorId, row, saved, deadline),
       });
     } catch (error) {
       if (!(error instanceof NotPublicError)) throw error;
@@ -443,11 +591,12 @@ export async function saveVideoPostings(
   if (Object.keys(fields).length > 0) return { ok: false, fields };
 
   // 6.
+  let facts: VideoStepState;
   try {
-    await db.transaction(async (tx) => {
+    facts = await db.transaction(async (tx) => {
       await lockEditableVideo(tx, actor.creatorId, input.videoId);
       await assertPostingsAvailable(tx, targets);
-      await replacePostings(tx, actor, input.videoId, {
+      return replacePostings(tx, actor, input.videoId, {
         checked,
         sourceShowLink: input.sourceShowLink,
       });
@@ -457,14 +606,33 @@ export async function saveVideoPostings(
   }
 
   // 7.
-  return { ok: true, postings: await listVideoPostings(actor, input.videoId) };
+  return {
+    ok: true,
+    postings: await listVideoPostings(actor, input.videoId),
+    facts,
+  };
+}
+
+/**
+ * A posting's post as replacePostings' priorByPost keys it (Q-86 a): `platform:link_key`, else (an Other link) its
+ * platform and canonical url; null for a row with no link.
+ */
+function priorKey(posting: {
+  platform: PostingPlatform;
+  linkKey: string | null;
+  url: string | null;
+}): string | null {
+  if (posting.linkKey !== null)
+    return postKey(posting.platform, posting.linkKey);
+  return posting.url === null ? null : `${posting.platform} ${posting.url}`;
 }
 
 /**
  * saveVideoPostings' write, inside its transaction with the video locked: the non-source rows replaced at positions
- * 1…n, the source row's show_link when `sourceShowLink` is given (Q-73 a: nothing else on it changes; an upload has no
- * source row), auditNewlyVerified, refreshVideoOwnership, postings_confirmed_at, the same-video tick and
- * `video.postings_saved`.
+ * 1…n, each written with the saved non-source row of its post (priorByPost: what Q-69 a and Q-70 a keep, Q-84 a carries
+ * over and Q-86 a's Switch follows), the source row's show_link when `sourceShowLink` is given (Q-73 a: nothing else on
+ * it changes; an upload has no source row), auditNewlyVerified, refreshVideoOwnership, postings_confirmed_at, the
+ * same-video tick and `video.postings_saved`. Returns the step facts as the final video update left them.
  */
 async function replacePostings(
   tx: Pick<typeof db, "select" | "insert" | "update" | "delete">,
@@ -474,17 +642,19 @@ async function replacePostings(
     checked,
     sourceShowLink,
   }: {
-    checked: readonly { row: PlannedPosting; check: PostingCheckResult }[];
+    checked: readonly { row: PlannedPosting; check: RowCheck }[];
     sourceShowLink: boolean | undefined;
   },
-): Promise<void> {
+): Promise<VideoStepState> {
   const now = new Date();
   const before = await tx
     .select({
       isSource: videoPosting.isSource,
       platform: videoPosting.platform,
       linkKey: videoPosting.linkKey,
+      url: videoPosting.url,
       verification: videoPosting.verification,
+      unverifiedReason: videoPosting.unverifiedReason,
       socialAccountId: videoPosting.socialAccountId,
       socialPostId: videoPosting.socialPostId,
       verifiedUsername: videoPosting.verifiedUsername,
@@ -495,15 +665,11 @@ async function replacePostings(
     })
     .from(videoPosting)
     .where(eq(videoPosting.videoId, videoId));
-  // Q-69 a, Q-70 a: what a post verified on this video keeps when its check fails or can't run, by `platform:link_key`.
-  const verifiedNow = new Map(
-    before.flatMap((posting) =>
-      !posting.isSource &&
-      posting.verification === "verified" &&
-      posting.linkKey !== null
-        ? [[postKey(posting.platform, posting.linkKey), posting] as const]
-        : [],
-    ),
+  const priorByPost = new Map(
+    before.flatMap((posting) => {
+      const key = posting.isSource ? null : priorKey(posting);
+      return key === null ? [] : [[key, posting] as const];
+    }),
   );
   await tx
     .delete(videoPosting)
@@ -511,20 +677,21 @@ async function replacePostings(
       and(eq(videoPosting.videoId, videoId), eq(videoPosting.isSource, false)),
     );
   // Positions 1…n in input order, so the source row and these are the video's postings in position order.
-  const rows = checked.map(({ row, check }, n) => ({
-    ...newPostingColumns(
-      row,
-      check,
-      row.linkKey === null
-        ? undefined
-        : verifiedNow.get(postKey(row.platform, row.linkKey)),
-      now,
-    ),
-    videoId,
-    creatorId: actor.creatorId,
-    isSource: false,
-    position: n + 1,
-  }));
+  const rows = checked.map(({ row, check }, n) => {
+    const key = priorKey(row);
+    return {
+      ...newPostingColumns(
+        row,
+        check,
+        key === null ? undefined : priorByPost.get(key),
+        now,
+      ),
+      videoId,
+      creatorId: actor.creatorId,
+      isSource: false,
+      position: n + 1,
+    };
+  });
   if (rows.length > 0) await tx.insert(videoPosting).values(rows);
   if (sourceShowLink !== undefined && before.some((p) => p.isSource)) {
     await tx
@@ -542,13 +709,15 @@ async function replacePostings(
     verifiedKeys(before),
   );
   await refreshVideoOwnership(tx, videoId);
-  await tx
+  const [facts] = await tx
     .update(video)
     .set({
       postingsConfirmedAt: now,
       ...(changed ? { sameVideoConfirmedAt: null } : {}),
     })
-    .where(eq(video.id, videoId));
+    .where(eq(video.id, videoId))
+    .returning(stepFactColumns);
+  if (!facts) throw new Error("saveVideoPostings: the locked video is gone");
   // The audit reads platforms and verification only, so the source row's show_link as read before is fine here.
   const after = [...before.filter((posting) => posting.isSource), ...rows];
   await writeAudit(tx, actor, {
@@ -561,16 +730,20 @@ async function replacePostings(
         .length,
     },
   });
+  return stepFactsOf(facts);
 }
 
 /**
  * Check again (02 §5.12, 07 D66): one posting checked again by id, in this order:
  * 1. the posting through its video (`video.creator_id` = the creator's, else VideoNotFoundError, as for an id that isn't
- *    a uuid), the video `draft` or `unpublished` (else PostingsLockedError). A posting with no link key, or on a platform
- *    that can't be verified, comes back unchanged with no call;
+ *    a uuid), the video `draft` or `unpublished` (else PostingsLockedError), and its checkFlags. A posting with no link
+ *    key, or on a platform that can't be verified, comes back unchanged with no call;
  * 2. the cross-creator rule: a released posting another creator verified meanwhile → AlreadyLicensableElsewhereError;
- * 3. checkPosting outside any transaction (verifyPostingLink; none for a posting verified through an account that isn't
- *    connected now, the source posting included: Q-70 a); NotPublicError is thrown and nothing is written;
+ *    then its last check standing (checkedRecently: within POSTING_CHECK_COOLDOWN_MS, no account (re)connected or
+ *    synced since) → CheckedRecentlyError, with no call (Q-84 a);
+ * 3. checkPosting outside any transaction, under its own deadline of POSTING_CHECKS_BUDGET_MS (Q-82 a: the
+ *    deadline cutting the call is check_failed); none for a posting verified through an account that isn't connected
+ *    now, the source posting included (Q-70 a). NotPublicError is thrown and nothing is written;
  * 4. one transaction: the video locked, its status and the cross-creator rule checked again, then that posting only
  *    (recheckColumns: checked_at now, or nothing written when no check ran), auditNewlyVerified (a
  *    `video_posting.conflict` audit when it became verified), refreshVideoOwnership, and the same-video tick
@@ -594,9 +767,11 @@ export async function recheckPosting(
       linkKey: videoPosting.linkKey,
       url: videoPosting.url,
       status: video.status,
+      ...checkFlags,
     })
     .from(videoPosting)
     .innerJoin(video, eq(video.id, videoPosting.videoId))
+    .leftJoin(socialAccount, eq(socialAccount.id, videoPosting.socialAccountId))
     .where(
       and(
         eq(videoPosting.id, i.postingId),
@@ -616,7 +791,7 @@ export async function recheckPosting(
 /** recheckPosting's steps 2–4 for a posting with a link key on a platform that can be verified. */
 async function checkAgain(
   actor: CreatorActor,
-  posting: {
+  posting: CheckFlags & {
     id: string;
     videoId: string;
     platform: PostingPlatform;
@@ -632,11 +807,16 @@ async function checkAgain(
     linkKey: posting.linkKey,
   };
   await assertPostingAvailable(db, target);
+  if (posting.recent) throw new CheckedRecentlyError();
 
   // 3. A posting verified through an account that isn't connected now, the source posting too, keeps its fields and its
   // checked_at: no call (Q-70 a).
-  const unlinked = await verifiedThroughUnlinkedAccount(posting.videoId);
-  const check = await checkPosting(actor.creatorId, posting, unlinked);
+  const check = await checkPosting(
+    actor.creatorId,
+    posting,
+    posting.unlinked,
+    postingDeadline(),
+  );
 
   // 4.
   const now = new Date();

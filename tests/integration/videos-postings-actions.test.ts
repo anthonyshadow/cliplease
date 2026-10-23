@@ -7,6 +7,7 @@ import {
   describe,
   expect,
   it,
+  type Mock,
   vi,
 } from "vitest";
 import {
@@ -22,6 +23,7 @@ import { GENERIC_ERROR_MESSAGE } from "../../src/lib/result";
 import { signInPath } from "../../src/lib/sign-in";
 import {
   resolveStep,
+  videoHref,
   videoStepFacts,
   videoStepHref,
 } from "../../src/lib/videos/steps";
@@ -32,6 +34,10 @@ import {
 } from "../../src/server/library/queries";
 import { listVideoPostings } from "../../src/server/postings/queries";
 import { SocialUpstreamError } from "../../src/server/social/errors";
+import {
+  confirmSameVideo,
+  withdrawSameVideo,
+} from "../../src/server/videos/edit";
 import { getVideoStepFacts } from "../../src/server/videos/queries";
 import { formOf, NOT_FOUND, redirectTo } from "../helpers/actions";
 import { mockNextHeaders, signedInCreator } from "../helpers/auth";
@@ -51,6 +57,7 @@ import {
   spyGetPost,
 } from "../helpers/library-videos";
 import {
+  backdateCheckedAt,
   expectOwnershipInvariant,
   insertVerifiedElsewhere,
   postingRow,
@@ -58,12 +65,22 @@ import {
 } from "../helpers/postings";
 
 // Where posted's Server Actions (P11c Task 3; 02 §6.1; 04 §9.33, §11.10; 05 §6.5 States; 07 D68, D69; owner answers
-// Q-75 a, Q-78 a, Q-81 a): saveVideoPostings, the one Continue that also stores the same-video tick (P11's File-step
-// confirmSameVideo action is gone), and recheckPosting (Check again). Their session gates, the field and form errors
-// the step reads, the tick and where Continue goes; and the step's account read (listPostingAccountStates). The
-// domain's own cases are in postings.test.ts.
+// Q-75 a, Q-78 a, Q-81 a, Q-83 a, Q-84 a): saveVideoPostings, the one Continue that also stores the same-video tick or
+// takes it back (P11's File-step confirmSameVideo action is gone), and recheckPosting (Check again). Their session
+// gates, the field and form errors the step reads, the tick and where Continue goes; and the step's account read
+// (listPostingAccountStates). The domain's own cases are in postings.test.ts. The tick's two domain calls run for real
+// behind spies, so a test can turn the video on just before one of them (a race no other hook reaches).
 vi.mock("next/headers", () => import("../helpers/next-headers"));
 vi.mock("next/cache", () => ({ refresh: vi.fn() }));
+vi.mock("../../src/server/videos/edit", async (importOriginal) => {
+  const edit =
+    await importOriginal<typeof import("../../src/server/videos/edit")>();
+  return {
+    ...edit,
+    confirmSameVideo: vi.fn(edit.confirmSameVideo),
+    withdrawSameVideo: vi.fn(edit.withdrawSameVideo),
+  };
+});
 
 afterAll(resetDb);
 beforeEach(() => {
@@ -76,6 +93,7 @@ afterEach(async () => {
 });
 
 const LOCKED = "Turn off to edit where it was posted.";
+const FACEBOOK_REEL = "https://www.facebook.com/reel/1234567890123";
 
 /** A staying Continue's answer. */
 const stays = (sameVideoMissing: boolean) => ({
@@ -123,6 +141,31 @@ async function savedDemoUpload(nn = "01") {
   const setup = await uploadWithDemo(nn);
   await continueWith(setup.upload.id, row(0, "mock", setup.link));
   return { ...setup, key: await keyOf(setup.me.actor, setup.upload.id) };
+}
+
+/** savedDemoUpload with the tick stored by a second Continue (which goes to Rights), and that ticked form. */
+async function tickedDemoUpload() {
+  const setup = await savedDemoUpload();
+  const ticked = {
+    ...row(0, "mock", setup.link),
+    sameVideo: "on",
+    verifiedKey: setup.key,
+  };
+  await expect(continueWith(setup.upload.id, ticked)).rejects.toMatchObject(
+    redirectTo(videoStepHref(setup.upload.id, "rights")),
+  );
+  vi.mocked(refresh).mockClear();
+  return { ...setup, ticked };
+}
+
+type TickCall = (a: Actor, videoId: string) => Promise<void>;
+
+/** The real tick call behind `spy`, run once just after the video is turned on (published) under the action's feet. */
+function turnOnBefore(spy: Mock<TickCall>, real: TickCall, videoId: string) {
+  spy.mockImplementationOnce(async (a, id) => {
+    await publishVideo(await videoRow(videoId));
+    await real(a, id);
+  });
 }
 
 describe("saveVideoPostings (Where posted's Continue)", () => {
@@ -320,6 +363,126 @@ describe("saveVideoPostings (Where posted's Continue)", () => {
     ]);
   });
 
+  it("takes a stored tick back when the block showed it unticked: the step stays and asks for it (owner answer Q-83 a)", async () => {
+    const { me, upload, link, key, ticked } = await tickedDemoUpload();
+    const ids = (await postingsOf(upload.id)).map((p) => p.id);
+
+    expect(
+      await continueWith(upload.id, {
+        ...row(0, "mock", link),
+        verifiedKey: key,
+      }),
+    ).toEqual(stays(true));
+    expect(await confirmedAt(upload.id)).toBeNull();
+    expect(refreshes()).toBe(1);
+    // Nothing else changed: no save, so the posting keeps its id.
+    expect((await postingsOf(upload.id)).map((p) => p.id)).toEqual(ids);
+    const facts = await getVideoStepFacts(me.actor, upload.id);
+    if (!facts) throw new Error("no facts");
+    expect(videoStepFacts(facts).postingsDone).toBe(false);
+
+    // Ticked again: stored anew, and on to Rights.
+    await expect(continueWith(upload.id, ticked)).rejects.toMatchObject(
+      redirectTo(videoStepHref(upload.id, "rights")),
+    );
+    expect(await confirmedAt(upload.id)).toBeInstanceOf(Date);
+  });
+
+  it("takes the tick back in the Continue that also saves a change keeping the verified posts", async () => {
+    const { upload, link, key } = await tickedDemoUpload();
+
+    expect(
+      await continueWith(upload.id, {
+        ...row(0, "mock", link),
+        ...row(1, "facebook", FACEBOOK_REEL),
+        verifiedKey: key,
+      }),
+    ).toEqual(stays(true));
+    expect(await confirmedAt(upload.id)).toBeNull();
+    expect((await postingsOf(upload.id)).map((p) => p.platform)).toEqual([
+      "mock",
+      "facebook",
+    ]);
+  });
+
+  it("keeps a stored tick when the form didn't show the block for these posts (a missing or stale key) and moves on", async () => {
+    const { upload, link } = await tickedDemoUpload();
+    const first = await confirmedAt(upload.id);
+    vi.mocked(withdrawSameVideo).mockClear();
+
+    for (const verifiedKey of [
+      "",
+      "mock https://example.com/mock/mock_post_0badc0de_01",
+    ]) {
+      await expect(
+        continueWith(upload.id, { ...row(0, "mock", link), verifiedKey }),
+      ).rejects.toMatchObject(redirectTo(videoStepHref(upload.id, "rights")));
+    }
+    expect(await confirmedAt(upload.id)).toEqual(first);
+    expect(vi.mocked(withdrawSameVideo)).not.toHaveBeenCalled();
+  });
+
+  it("answers a video turned on before the tick is stored or taken back with the Locked copy, changing nothing", async () => {
+    const real = await vi.importActual<
+      typeof import("../../src/server/videos/edit")
+    >("../../src/server/videos/edit");
+    const locked = {
+      ok: false,
+      error: { code: "postings_locked", message: LOCKED },
+    };
+
+    const ticking = await savedDemoUpload();
+    turnOnBefore(
+      vi.mocked(confirmSameVideo),
+      real.confirmSameVideo,
+      ticking.upload.id,
+    );
+    expect(
+      await continueWith(ticking.upload.id, {
+        ...row(0, "mock", ticking.link),
+        sameVideo: "on",
+        verifiedKey: ticking.key,
+      }),
+    ).toEqual(locked);
+    expect(await confirmedAt(ticking.upload.id)).toBeNull();
+
+    const unticking = await tickedDemoUpload();
+    const stored = await confirmedAt(unticking.upload.id);
+    turnOnBefore(
+      vi.mocked(withdrawSameVideo),
+      real.withdrawSameVideo,
+      unticking.upload.id,
+    );
+    expect(
+      await continueWith(unticking.upload.id, {
+        ...row(0, "mock", unticking.link),
+        verifiedKey: unticking.key,
+      }),
+    ).toEqual(locked);
+    expect(await confirmedAt(unticking.upload.id)).toEqual(stored);
+    expect(refreshes()).toBe(1);
+  });
+
+  it("moves an unpublished video on to its page, not to Rights (it is past the draft)", async () => {
+    const me = await signedInCreator();
+    const off = await insertUploadVideo(
+      { id: me.creatorId },
+      { status: "unpublished" },
+    );
+    const page = redirectTo(videoHref(off.id));
+
+    await expect(
+      continueWith(off.id, row(0, "facebook", FACEBOOK_REEL)),
+    ).rejects.toMatchObject(page);
+    expect(await postingsOf(off.id)).toMatchObject([
+      { platform: "facebook", position: 1 },
+    ]);
+    await expect(
+      continueWith(off.id, row(0, "facebook", FACEBOOK_REEL)),
+    ).rejects.toMatchObject(page);
+    expect(refreshes()).toBe(0);
+  });
+
   it("on a Library draft, asks for the tick on the first Continue; with it, stores it, the source row's Switch and goes to Rights (Q-73 a)", async () => {
     const me = await signedInCreator();
     const draft = await libraryDraft(me);
@@ -502,6 +665,8 @@ describe("recheckPosting (Check again)", () => {
     const [posting] = await postingsOf(upload.id);
     if (!posting) throw new Error("no posting");
     expect(posting.unverifiedReason).toBe("check_failed");
+    // Past Q-84 a's 30 s, so the platform is asked again.
+    await backdateCheckedAt(posting.id);
     vi.mocked(refresh).mockClear();
 
     expect(await recheckPosting({ postingId: posting.id })).toEqual({
@@ -519,11 +684,34 @@ describe("recheckPosting (Check again)", () => {
     expect((await videoRow(upload.id)).ownership).toBe("verified_owner");
   });
 
-  it("answers a posting on a published video with the Locked copy and checks nothing", async () => {
+  it("answers a posting checked in the last 30 s with “Checked a moment ago…”, asking the platform nothing (owner answer Q-84 a)", async () => {
     const { upload, link } = await uploadWithDemo();
     await continueWith(upload.id, row(0, "mock", link));
     const [posting] = await postingsOf(upload.id);
     if (!posting) throw new Error("no posting");
+    const getPost = spyGetPost();
+    vi.mocked(refresh).mockClear();
+
+    expect(await recheckPosting({ postingId: posting.id })).toEqual({
+      ok: false,
+      error: {
+        code: "checked_recently",
+        message: "Checked a moment ago. Try again in a few seconds.",
+      },
+    });
+    expect(getPost).not.toHaveBeenCalled();
+    expect(await postingRow(posting.id)).toEqual(posting);
+    expect(refreshes()).toBe(1);
+  });
+
+  it("answers a posting on a published video with the Locked copy and checks nothing", async () => {
+    const { upload, link } = await uploadWithDemo();
+    await continueWith(upload.id, row(0, "mock", link));
+    const [saved] = await postingsOf(upload.id);
+    if (!saved) throw new Error("no posting");
+    // Past Q-84 a's 30 s: the lock alone refuses it.
+    await backdateCheckedAt(saved.id);
+    const posting = await postingRow(saved.id);
     await publishVideo(upload);
     const getPost = spyGetPost();
 

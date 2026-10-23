@@ -2,6 +2,7 @@ import "server-only";
 import {
   AlreadyLicensableElsewhereError,
   NotPublicError,
+  PostingsLockedError,
 } from "../postings/errors";
 import { SocialRateLimitError, SocialUpstreamError } from "../social/errors";
 
@@ -90,17 +91,22 @@ export function makeLicensableErrorCode(
   return null;
 }
 
-/** confirmSameVideo's refusals as ActionResult codes. */
+/** confirmSameVideo's and withdrawSameVideo's refusals as ActionResult codes. */
 export type ConfirmSameVideoErrorCode =
   | "not_found"
+  | "postings_locked"
   | "no_verified_posting"
   | "original_not_ready";
 
-/** The code for an error confirmSameVideo threw, or null for anything else (the action rethrows it). */
+/**
+ * The code for an error confirmSameVideo or withdrawSameVideo threw, or null for anything else (the action rethrows it).
+ * `postings_locked` is the video no longer `draft` or `unpublished` ("Turn off to edit where it was posted.").
+ */
 export function confirmSameVideoErrorCode(
   error: unknown,
 ): ConfirmSameVideoErrorCode | null {
   if (error instanceof VideoNotFoundError) return "not_found";
+  if (error instanceof PostingsLockedError) return "postings_locked";
   if (error instanceof NoVerifiedPostingError) return "no_verified_posting";
   if (error instanceof OriginalNotReadyError) return "original_not_ready";
   return null;

@@ -183,9 +183,15 @@ export async function releasePosting(
   await refreshVideoOwnership(db, posting.videoId);
 }
 
-/** Moves the posting's checked_at an hour back, so a later check visibly moves it. Returns the new value. */
-export async function backdateCheckedAt(postingId: string): Promise<Date> {
-  const at = new Date(Date.now() - HOUR_MS);
+/**
+ * Moves the posting's checked_at `by` ms back (an hour: past the 30-second cooldown, owner answer Q-84 a, and so a later
+ * check visibly moves it). Returns the new value.
+ */
+export async function backdateCheckedAt(
+  postingId: string,
+  by = HOUR_MS,
+): Promise<Date> {
+  const at = new Date(Date.now() - by);
   await db
     .update(videoPosting)
     .set({ checkedAt: at })

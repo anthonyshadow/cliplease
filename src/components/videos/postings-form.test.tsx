@@ -491,7 +491,7 @@ describe("PostingsForm: what Continue posts", () => {
     expect(posted().get("postings.0.showLink")).toBe("true");
   });
 
-  it("posts a saved link's Switch only when it was saved off, or toggled", () => {
+  it("posts a saved link's Switch only once the creator turns it: a saved off shows off and posts nothing (owner answer Q-86 a)", () => {
     const off = savedPosting({
       id: "00000000-0000-4000-8000-0000000000d1",
       showLink: false,
@@ -503,9 +503,19 @@ describe("PostingsForm: what Continue posts", () => {
     });
     renderForm({ postings: [off, on] });
     const fd = posted();
-    expect(fd.get("postings.0.showLink")).toBe("false");
+    expect(fd.has("postings.0.showLink")).toBe(false);
     expect(fd.has("postings.1.showLink")).toBe(false);
     expect(fd.get("postings.0.link")).toBe(off.url);
+    const [offSwitch, onSwitch] = screen.getAllByRole("switch", {
+      name: "Show buyers this link",
+    });
+    expect(offSwitch.getAttribute("aria-checked")).toBe("false");
+    expect(onSwitch.getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(offSwitch);
+    expect(posted().get("postings.0.showLink")).toBe("true");
+    fireEvent.click(offSwitch);
+    expect(posted().get("postings.0.showLink")).toBe("false");
+    expect(posted().has("postings.1.showLink")).toBe(false);
   });
 
   it("keeps what was typed after a refusal and puts each error under its field, focused", async () => {

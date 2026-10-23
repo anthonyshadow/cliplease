@@ -67,7 +67,10 @@ export type PostingsFormVideo = {
   sameVideoConfirmed: boolean;
 };
 
-/** A row's line after Sync and check again or Check again (FieldMessages): a sync that couldn't run, or a refusal. */
+/**
+ * A row's line after Sync and check again or Check again (FieldMessages): a helper for a sync that couldn't run or a
+ * check pressed again too soon (owner answer Q-84 a: the last result stands), an error for any other refusal.
+ */
 type RowNote = { helper: string } | { error: string };
 
 const without = <T,>(set: ReadonlySet<T>, value: T) => {
@@ -92,7 +95,9 @@ const without = <T,>(set: ReadonlySet<T>, value: T) => {
  *
  * Row actions run outside the form post (runAction): Check again (recheckPosting), Sync and check again (syncAccount on
  * each connected account of the platform in turn, then recheckPosting), Link / Reconnect {Platform} (a Connect link).
- * Back from a connect with ?connected=<provider> (owner answer Q-74 a), each no_account or check_failed link on that
+ * A check pressed within 30 s of the last one keeps that result and says "Checked a moment ago…" under the row (Q-84 a),
+ * unless an account on its platform was linked or synced since (the server's checkedRecently), so Sync and check again
+ * and the return check below still ask the platform. Back from a connect with ?connected=<provider> (owner answer Q-74 a), each no_account or check_failed link on that
  * platform is checked again once, after StripConnectParams has dropped the parameter (a URL change during a Server Action
  * can cancel it). Nothing here fetches, previews or renders a pasted link (07 D67).
  */
@@ -216,9 +221,13 @@ export function PostingsForm({
         setNotes((n) => ({ ...n, [posting.id]: { helper: lines.join(" ") } }));
       }
     } else {
+      const { code, message } = checked.error;
       setNotes((n) => ({
         ...n,
-        [posting.id]: { error: checked.error.message },
+        [posting.id]:
+          code === "checked_recently"
+            ? { helper: message }
+            : { error: message },
       }));
     }
     if (own) focusNext({ kind: "row", key: posting.id });

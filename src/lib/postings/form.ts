@@ -10,12 +10,11 @@
 //                              read back in <i> order and compacted: gaps are fine, other indices are ignored.
 //   postings.<i>.otherLabel    Other rows only: "Where? (for example, Vimeo)", as typed (the server tidies it).
 //   postings.<i>.link          the link as typed; empty (or spaces) is a row with no link.
-//   postings.<i>.showLink      "true" | "false" (07 D18, OQ-17): the Switch once the creator toggled it this visit;
-//                              else "false" while the link is still the saved one and its saved Switch is off; else
-//                              absent, so the server keeps the saved value or applies its default (an unlisted post's
-//                              link hidden). A saved true is never posted back: on a row saved unverified it is the
-//                              default, not a choice, and posting it would show an unlisted post's link once it
-//                              verifies on this save.
+//   postings.<i>.showLink      "true" | "false" (07 D18, OQ-17; owner answer Q-86 a): the Switch, only once the
+//                              creator turned it this visit; else absent, and the server's save decides: a post the
+//                              video already holds (same platform and canonical url, whichever field it is in) keeps
+//                              its saved value, so a hidden link stays hidden; a new one gets the default (an unlisted
+//                              post's link hidden).
 //   notPosted                  "on" while "I haven't posted it anywhere yet." is ticked (uploads only).
 //   sourceShowLink             "true" | "false": the locked Library source row's Switch (Q-73 a) once the creator
 //                              turned it this visit; else absent (always on uploads), so the server keeps the saved value.

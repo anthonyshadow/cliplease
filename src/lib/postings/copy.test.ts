@@ -50,6 +50,7 @@ describe("POSTINGS_COPY (04 §11.10 “Where was it posted?”)", () => {
       unlistedNote:
         "This video is unlisted. Buyers won't see the link unless you turn it on.",
       checking: "Checking the link…",
+      checkedRecently: "Checked a moment ago. Try again in a few seconds.",
       move: "Move",
       noLongerLinked: "no longer linked",
       locked: "Turn off to edit where it was posted.",
@@ -486,7 +487,7 @@ describe("postingResultCopy (04 §9.33 Link field states, §11.10)", () => {
   });
 });
 
-describe("SAME_VIDEO_COPY (07 D69; owner answer Q-75 a)", () => {
+describe("SAME_VIDEO_COPY (07 D69; owner answers Q-75, Q-85 a)", () => {
   it("has the tick, its missing-tick error and the cover's caption", () => {
     expect(SAME_VIDEO_COPY.tick).toBe("These posts show this same video");
     expect(SAME_VIDEO_COPY.missingTick).toBe(
@@ -499,5 +500,15 @@ describe("SAME_VIDEO_COPY (07 D69; owner answer Q-75 a)", () => {
     expect(SAME_VIDEO_COPY.postCaption("Demo", false)).toBe("Post");
     expect(SAME_VIDEO_COPY.postCaption("Demo", true)).toBe("Demo post");
     expect(SAME_VIDEO_COPY.postCaption("YouTube", true)).toBe("YouTube post");
+  });
+
+  it("names a warning's post by platform, and by account too when given one (Q-85 a)", () => {
+    expect(SAME_VIDEO_COPY.warningPost("TikTok", null)).toBe("TikTok post");
+    expect(SAME_VIDEO_COPY.warningPost("TikTok", "@maya.films")).toBe(
+      "TikTok post on @maya.films",
+    );
+    expect(SAME_VIDEO_COPY.warningPost("YouTube", "Maya Films")).toBe(
+      "YouTube post on Maya Films",
+    );
   });
 });

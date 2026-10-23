@@ -14,15 +14,17 @@ import type { sameVideoView } from "./posting-picker-state";
 type SameVideo = NonNullable<ReturnType<typeof sameVideoView>>;
 
 /**
- * "These posts show this same video" (07 D69, 01 J5.10; moved from the File step; owner answers Q-75, Q-76 a): a `fill`
- * block in the step column, shown while at least one saved posting is verified. The cover image ("Cover image", P10b's
- * poster route) first, then each verified post's picture through the creator-only thumbnail proxy (64 px tall,
- * contained, never cropped; "Post", or "{Platform} post" when there are several), in one wrapping row: one line whenever
- * it fits, wrapping instead of ever scrolling or widening the page (07 D146, D153). Then a warning per post whose length
- * differs from the file's by more than 1 s, above the required tick. The tick posts `sameVideo=on` with `verifiedKey`,
- * the posts it confirms; it renders ticked once confirmed, and the caller keys the block on that key and the stored
- * tick, so a different verified set brings it back unticked. Missing on a Continue that needed it: "Confirm these
- * posts show this same video" on the box (the caller moves focus there). Never a pasted or stored posting URL in an image.
+ * "These posts show this same video" (07 D69, 01 J5.10; moved from the File step; owner answers Q-75, Q-76, Q-83, Q-85
+ * a): a `fill` block in the step column, shown while at least one saved posting is verified. The cover image ("Cover
+ * image", P10b's poster route) first, then each verified post's picture through the creator-only thumbnail proxy (64 px
+ * tall, contained, never cropped; "Post", or "{Platform} post" when there are several), in one wrapping row: one line
+ * whenever it fits, wrapping instead of ever scrolling or widening the page (07 D146, D153). Then a warning per post
+ * whose length differs from the file's by more than 1 s (sameVideoView names the post), above the required tick. The
+ * tick posts `sameVideo=on` with `verifiedKey`, the posts it confirms; it renders ticked once confirmed, and unticked it
+ * posts only the key, so Continue takes a stored tick back (Q-83 a). The caller keys the block on that key and the
+ * stored tick, so a different verified set, or a tick taken back, brings it back unticked. Missing on a Continue that
+ * needed it: "Confirm these posts show this same video" on the box (the caller moves focus there). Never a pasted or
+ * stored posting URL in an image.
  */
 export function SameVideoBlock({
   view,

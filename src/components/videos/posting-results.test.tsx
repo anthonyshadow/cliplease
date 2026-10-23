@@ -304,7 +304,7 @@ describe("row actions", () => {
     );
   });
 
-  it("a refused check shows its words under the row", async () => {
+  it("a refused check shows its words under the row, as an error", async () => {
     const posting = unverified({ unverifiedReason: "released" });
     recheck.mockResolvedValueOnce({
       ok: false,
@@ -318,11 +318,41 @@ describe("row actions", () => {
     fireEvent.click(
       within(rowOf(posting)).getByRole("button", { name: "Check again" }),
     );
-    await waitFor(() =>
-      expect(rowOf(posting).textContent).toContain(
+    const note = await waitFor(() =>
+      within(rowOf(posting)).getByText(
         "This post is already licensable from another ClipLease account.",
       ),
     );
+    expect(note.closest("p")?.id).toBe(`posting-note-${posting.id}-error`);
+  });
+
+  it("a check pressed again too soon keeps the last result and says so as a helper, not an error (owner answer Q-84 a)", async () => {
+    const posting = unverified({ unverifiedReason: "check_failed" });
+    recheck.mockResolvedValueOnce({
+      ok: false,
+      error: {
+        code: "checked_recently",
+        message: "Checked a moment ago. Try again in a few seconds.",
+      },
+    });
+    renderForm({ postings: [posting] });
+    fireEvent.click(
+      within(rowOf(posting)).getByRole("button", { name: "Check again" }),
+    );
+    const note = await waitFor(() =>
+      within(rowOf(posting)).getByText(
+        "Checked a moment ago. Try again in a few seconds.",
+      ),
+    );
+    // FieldMessages' helper line, not its error line.
+    expect(note.id).toBe(`posting-note-${posting.id}-helper`);
+    expect(note.className).not.toContain("text-danger-text");
+    expect(resultIn(rowOf(posting))).toContain(
+      "We couldn't check this right now.",
+    );
+    expect(
+      within(rowOf(posting)).getByRole("button", { name: "Check again" }),
+    ).toBeTruthy();
   });
 
   it("back from a connect (?connected=mock) checks that platform's no_account and check_failed links once (Q-74 a)", async () => {
@@ -373,7 +403,7 @@ describe("the same-video block (07 D69; Q-75, Q-76 a)", () => {
     expect(block.querySelector("iframe")).toBeNull();
   });
 
-  it("names each post and warns per post when there are several", () => {
+  it("names each post and warns per post when there are several, naming the account of a shared platform (Q-85 a)", () => {
     const post02 = savedPosting({});
     renderForm({ postings: [SOURCE_POSTING, post02] });
     const block = document.querySelector<HTMLElement>(
@@ -383,7 +413,7 @@ describe("the same-video block (07 D69; Q-75, Q-76 a)", () => {
       [...block.querySelectorAll("figcaption")].map((c) => c.textContent),
     ).toEqual(["Cover image", "Demo post", "Demo post"]);
     expect(within(block).getByRole("status").textContent).toBe(
-      "This file is 0:14 but the Demo post is 0:38. Make sure it's the same video.",
+      "This file is 0:14 but the Demo post on @demo.creator is 0:38. Make sure it's the same video.",
     );
   });
 
@@ -403,7 +433,7 @@ describe("the same-video block (07 D69; Q-75, Q-76 a)", () => {
     ).toBeTruthy();
   });
 
-  it("posts the tick with the posts it confirms, and renders it ticked once confirmed", () => {
+  it("posts the tick with the posts it confirms, renders it ticked once confirmed, and unticked posts the key alone", () => {
     const post02 = savedPosting({});
     renderForm({ postings: [post02] });
     const form = document.querySelector("form") as HTMLFormElement;
@@ -419,13 +449,17 @@ describe("the same-video block (07 D69; Q-75, Q-76 a)", () => {
       postings: [post02],
       video: { ...VIDEO, sameVideoConfirmed: true },
     });
-    expect(
-      (
-        screen.getByLabelText(
-          "These posts show this same video",
-        ) as HTMLInputElement
-      ).checked,
-    ).toBe(true);
+    const stored = screen.getByLabelText(
+      "These posts show this same video",
+    ) as HTMLInputElement;
+    expect(stored.checked).toBe(true);
+    // Unticked, it posts the key alone: Continue takes the stored tick back (owner answer Q-83 a).
+    fireEvent.click(stored);
+    const untick = new FormData(
+      document.querySelector("form") as HTMLFormElement,
+    );
+    expect(untick.get("sameVideo")).toBeNull();
+    expect(untick.get("verifiedKey")).toBe(verifiedPostingsKey([post02]));
   });
 
   it("is absent while nothing is verified", () => {

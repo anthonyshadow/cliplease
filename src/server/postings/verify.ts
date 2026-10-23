@@ -18,7 +18,7 @@ import {
 } from "../social/errors";
 import { getProvider } from "../social/registry";
 import { isKeptVideo, upsertPosts } from "../social/sync";
-import { withAccessToken } from "../social/tokens";
+import { NoTimeToRefreshError, withAccessToken } from "../social/tokens";
 import type { PostVisibility, SocialPost } from "../social/types";
 import { NotPublicError } from "./errors";
 
@@ -26,12 +26,15 @@ import { NotPublicError } from "./errors";
 // of the creator's `connected` accounts: a synced social_post confirmed live, or a platform lookup by id whose post is
 // written to social_post. The pasted URL is never fetched, HEADed, oEmbedded or redirect-resolved (07 D67, AGENTS.md §5):
 // the adapters are asked by id, against their fixed hosts. Callers run this before they open their write, never inside
-// it, so a platform call never holds a row lock. Logs carry ids and the platform, never a link.
+// it, so a platform call never holds a row lock. A caller's `signal` bounds the platform calls (owner answer Q-82 a:
+// a save's checks share POSTING_CHECKS_BUDGET_MS, Check again has its own). Logs carry ids and the platform, never a link.
 
 /** Instagram /me/media pages findPostByLinkKey scans for a shortcode (07 §7.2; P28's adapter imports it). */
 export const POSTING_LOOKUP_MAX_PAGES = 4;
 /** Connected accounts a lookup by id tries per link, newest connect first (07 D68; OQ-15 sets no account cap). */
 const POSTING_LOOKUP_MAX_ACCOUNTS = 3;
+/** The platform-call budget a save's link checks share, and Check again's own (owner answer Q-82 a). */
+export const POSTING_CHECKS_BUDGET_MS = 45_000;
 
 /** What a check found (02 §5.12): the post that verifies the link, or why the link stays Not verified. */
 export type PostingCheckResult =
@@ -46,7 +49,15 @@ export type PostingCheckResult =
       /** The live visibility: `unlisted` hides the link by default (07 D18). */
       visibility: PostVisibility | null;
     }
-  | { verification: "unverified"; reason: PostingUnverifiedReason };
+  | {
+      verification: "unverified";
+      reason: PostingUnverifiedReason;
+      /**
+       * check_failed only: the deadline came before this link's first platform call (owner answer Q-82 a), so it wasn't
+       * checked at all and keeps no checked_at; a call the deadline cut is a plain check_failed.
+       */
+      notReached?: true;
+    };
 
 /** A connected account that can verify: it has a handle or a name to show (verifiedAs). */
 type CheckAccount = {
@@ -60,6 +71,17 @@ type CheckAccount = {
 
 /** A platform call that failed in a way a later Check again can fix (07 D68): the link gets check_failed. */
 const FAILED = Symbol("check_failed");
+/** No platform call was made: the deadline had passed, or a token refresh couldn't have finished before it (Q-82 a). */
+const NOT_ASKED = Symbol("not_asked");
+
+/** A save's or a Check again's one deadline (POSTING_CHECKS_BUDGET_MS): its signal, and when a token refresh must end. */
+export type PostingDeadline = { signal: AbortSignal; refreshBy: number };
+
+/** A new deadline POSTING_CHECKS_BUDGET_MS from now (owner answer Q-82 a). */
+export const postingDeadline = (): PostingDeadline => ({
+  signal: AbortSignal.timeout(POSTING_CHECKS_BUDGET_MS),
+  refreshBy: Date.now() + POSTING_CHECKS_BUDGET_MS,
+});
 
 function unverified(reason: PostingUnverifiedReason): PostingCheckResult {
   return { verification: "unverified", reason };
@@ -84,6 +106,9 @@ function unverified(reason: PostingUnverifiedReason): PostingCheckResult {
  * A post that isn't a kept video, or whose link key differs from the parsed one, counts as none. A rate limit, a platform
  * failure or a refused token (after withAccessToken's one retry, which also marks the account needs_reconnect) is that
  * account's check_failed; any other error is thrown. `url` is never read: only the id is matched.
+ * `signal` (Q-82 a) goes to every getPost and findPostByLinkKey. Once it has aborted no platform call starts, not even on
+ * the next lookup account: a call it would need is check_failed (a call it cut fails as SocialUpstreamError, also
+ * check_failed). Steps 1–3 answer from the link and the database as before.
  */
 export async function verifyPostingLink(
   creatorId: string,
@@ -92,7 +117,24 @@ export async function verifyPostingLink(
     linkKey: string | null;
     url: string | null;
   },
+  opts: Partial<PostingDeadline> = {},
 ): Promise<PostingCheckResult> {
+  const { signal } = opts;
+  // Whether a platform call was made for this link: a check_failed with none is notReached (Q-82 a).
+  let asked = false;
+  const ask = async (
+    account: CheckAccount,
+    call: (token: string) => Promise<SocialPost | null>,
+  ) => {
+    const answer = await askPlatform(account, opts, call);
+    if (answer !== NOT_ASKED) asked = true;
+    return answer;
+  };
+  const notReached = (): PostingCheckResult => ({
+    verification: "unverified",
+    reason: "check_failed",
+    notReached: true,
+  });
   // 1 and 2.
   const { platform, linkKey } = link;
   if (!isOneOf(VERIFIABLE_POSTING_PLATFORMS, platform)) {
@@ -158,9 +200,12 @@ export async function verifyPostingLink(
   for (const account of usable) {
     const match = matches.find((m) => m.socialAccountId === account.id);
     if (!match) continue;
-    const live = await askPlatform(account, (token) =>
-      provider.getPost(token, match.providerPostId, account.providerAccountId),
+    const live = await ask(account, (token) =>
+      provider.getPost(token, match.providerPostId, account.providerAccountId, {
+        signal,
+      }),
     );
+    if (live === NOT_ASKED) return notReached();
     if (live === FAILED) return unverified("check_failed");
     const post = sameLink(live, linkKey);
     return post ? verified(account, post) : unverified("not_found");
@@ -170,9 +215,17 @@ export async function verifyPostingLink(
   // 5.
   let failed = false;
   for (const account of usable.slice(0, POSTING_LOOKUP_MAX_ACCOUNTS)) {
-    const found = await askPlatform(account, (token) =>
-      provider.findPostByLinkKey(token, linkKey, account.providerAccountId),
+    const found = await ask(account, (token) =>
+      provider.findPostByLinkKey(token, linkKey, account.providerAccountId, {
+        signal,
+      }),
     );
+    // Past the deadline: no call on this account or the next; none at all for this link is not reached.
+    if (found === NOT_ASKED) {
+      if (!asked) return notReached();
+      failed = true;
+      break;
+    }
     if (found === FAILED) {
       failed = true;
       continue;
@@ -185,15 +238,27 @@ export async function verifyPostingLink(
 
 /**
  * One platform call with the account's token (07 D12 b). A rate limit, a platform failure or a refused token is FAILED,
- * logged by id and error name only (a Drizzle error can carry bound parameters); anything else is thrown.
+ * logged by id and error name only (a Drizzle error can carry bound parameters); anything else is thrown. NOT_ASKED, with
+ * no call, past the deadline (`signal` aborted) or when a token refresh couldn't finish by `refreshBy` (Q-82 a).
  */
 async function askPlatform(
   account: CheckAccount,
+  { signal, refreshBy }: Partial<PostingDeadline>,
   call: (token: string) => Promise<SocialPost | null>,
-): Promise<SocialPost | null | typeof FAILED> {
+): Promise<SocialPost | null | typeof FAILED | typeof NOT_ASKED> {
+  const failed = (error: unknown): typeof FAILED => {
+    logEvent("warn", "postings.check_failed", {
+      socialAccountId: account.id,
+      platform: account.provider,
+      error: errorName(error),
+    });
+    return FAILED;
+  };
+  if (signal?.aborted) return NOT_ASKED;
   try {
-    return await withAccessToken(account.id, call);
+    return await withAccessToken(account.id, call, { refreshBy });
   } catch (error) {
+    if (error instanceof NoTimeToRefreshError) return NOT_ASKED;
     if (
       !(error instanceof SocialRateLimitError) &&
       !(error instanceof SocialUpstreamError) &&
@@ -201,12 +266,7 @@ async function askPlatform(
     ) {
       throw error;
     }
-    logEvent("warn", "postings.check_failed", {
-      socialAccountId: account.id,
-      platform: account.provider,
-      error: errorName(error),
-    });
-    return FAILED;
+    return failed(error);
   }
 }
 

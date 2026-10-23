@@ -37,9 +37,9 @@ export type CreatorSourcePostDTO = Pick<
 
 /**
  * What the Make licensable steps turn on (07 D69): src/lib/videos/steps.ts' videoStepFacts derives resolveStep's
- * VideoStepFacts from it. Part of CreatorVideoDTO, and read alone, uncached, by getVideoStepFacts. `hasVerifiedPosting`
- * is `video.ownership = 'verified_owner'`, the summary refreshVideoOwnership keeps in step with the postings in every
- * posting write (07 D66).
+ * VideoStepFacts from it. Part of CreatorVideoDTO, read alone, uncached, by getVideoStepFacts, and returned by
+ * saveVideoPostings as its write left them. `hasVerifiedPosting` is `video.ownership = 'verified_owner'`, the summary
+ * refreshVideoOwnership keeps in step with the postings in every posting write (07 D66).
  */
 export type VideoStepState = {
   status: VideoStatus;
@@ -80,8 +80,11 @@ function ownerPosterSrc(id: string, posterObjectKey: string | null) {
   return `/api/media/posters/${id}?v=${v.slice(0, 8)}`;
 }
 
-/** The step facts' columns, read by both readers below. */
-const stepFactColumns = {
+/**
+ * The step facts' columns: read by both readers below, and returned by saveVideoPostings' final video update (its
+ * `facts`, so the Continue needn't read them again).
+ */
+export const stepFactColumns = {
   status: video.status,
   originalStatus: video.originalStatus,
   source: video.source,
@@ -91,7 +94,8 @@ const stepFactColumns = {
   rightsAttestedAt: video.rightsAttestedAt,
 };
 
-function stepFactsOf(
+/** The step facts from a row of stepFactColumns. */
+export function stepFactsOf(
   row: Pick<Video, keyof typeof stepFactColumns>,
 ): VideoStepState {
   return {

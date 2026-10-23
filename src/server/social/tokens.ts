@@ -87,6 +87,17 @@ const REFRESH_MARGIN_MS = 5 * MINUTE_MS;
 const REFRESH_TIMEOUT_MS = 10_000;
 
 /**
+ * A token refresh that wasn't started because it couldn't finish before the caller's `refreshBy` (a save's checks share
+ * one deadline, owner answer Q-82 a): no platform call was made, the account is fine.
+ */
+export class NoTimeToRefreshError extends SocialUpstreamError {
+  constructor() {
+    super("no time left to refresh the token");
+    this.name = "NoTimeToRefreshError";
+  }
+}
+
+/**
  * What to do with a stored access token (02 §7.4 step 2, 07 D12). Instagram refreshes a long-lived token in its last
  * 30 days, at most once a day, and can't revive an expired one; TikTok, YouTube and the mock refresh in the last 5 minutes.
  * A token without an expiry is used as it is.
@@ -258,12 +269,19 @@ async function refreshUnderLock(
   }
 }
 
-async function freshToken(accountId: string): Promise<HeldToken> {
+async function freshToken(
+  accountId: string,
+  refreshBy: number | undefined,
+): Promise<HeldToken> {
   const row = await readTokenRow(accountId);
   const held = row ? heldToken(accountId, row) : null;
   const decision = row ? refreshDecision(row.provider, row, new Date()) : null;
   if (!held || decision === "reconnect") throw refusal(row?.tokenRefreshedAt);
   if (decision === "use") return held;
+  // Never started when it couldn't finish in time; one already running is never cut (it may rotate the refresh token).
+  if (refreshBy !== undefined && Date.now() + REFRESH_TIMEOUT_MS > refreshBy) {
+    throw new NoTimeToRefreshError();
+  }
   const { tokens, refreshedAt } = await refreshUnderLock(accountId);
   return { token: tokens.accessToken, refreshedAt };
 }
@@ -306,7 +324,7 @@ async function orReconnect<T>(
 export async function getFreshAccessToken(accountId: string): Promise<string> {
   return orReconnect(
     accountId,
-    async () => (await freshToken(accountId)).token,
+    async () => (await freshToken(accountId, undefined)).token,
   );
 }
 
@@ -318,9 +336,10 @@ export async function getFreshAccessToken(accountId: string): Promise<string> {
 export async function withAccessToken<T>(
   accountId: string,
   fn: (token: string) => Promise<T>,
+  opts: { refreshBy?: number } = {},
 ): Promise<T> {
   return orReconnect(accountId, async () => {
-    const held = await freshToken(accountId);
+    const held = await freshToken(accountId, opts.refreshBy);
     try {
       return await fn(held.token);
     } catch (error) {

@@ -1,10 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { db } from "../../db/client";
 import type { PostingPlatform } from "../../lib/domain/values";
-import { POSTING_LOOKUP_MAX_PAGES, verifyPostingLink } from "./verify";
+import {
+  POSTING_CHECKS_BUDGET_MS,
+  POSTING_LOOKUP_MAX_PAGES,
+  verifyPostingLink,
+} from "./verify";
 
-// The steps that answer before any read (07 D68 steps 1 and 2). The rest needs the database and the mock provider:
-// tests/integration/postings.test.ts.
+// The steps that answer before any read (07 D68 steps 1 and 2), past the deadline too (Q-82 a). The rest needs the
+// database and the mock provider: tests/integration/postings.test.ts.
 
 const CREATOR = "0b6f3c1e-8d2a-4f5b-9c7e-1a2b3c4d5e6f";
 
@@ -44,7 +48,26 @@ describe("verifyPostingLink", () => {
     },
   );
 
-  it("lets Instagram's lookup scan 4 pages (07 §7.2)", () => {
+  it.each<[PostingPlatform, string | null, string]>([
+    ["x", "1790000000000000001", "unverifiable"],
+    ["mock", null, "no_link"],
+  ])(
+    "answers %s (key %s) %s past the deadline too: no check was needed (Q-82 a)",
+    async (platform, linkKey, reason) => {
+      const select = vi.spyOn(db, "select");
+      await expect(
+        verifyPostingLink(
+          CREATOR,
+          { platform, linkKey, url: null },
+          { signal: AbortSignal.abort() },
+        ),
+      ).resolves.toEqual({ verification: "unverified", reason });
+      expect(select).not.toHaveBeenCalled();
+    },
+  );
+
+  it("lets Instagram's lookup scan 4 pages (07 §7.2), and gives a save's checks 45 seconds (Q-82 a)", () => {
     expect(POSTING_LOOKUP_MAX_PAGES).toBe(4);
+    expect(POSTING_CHECKS_BUDGET_MS).toBe(45_000);
   });
 });

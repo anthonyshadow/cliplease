@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   AlreadyLicensableElsewhereError,
   AlreadyOnYourVideoError,
+  CheckedRecentlyError,
   InvalidPostingsError,
   NotPublicError,
   PostingsLockedError,
@@ -19,6 +20,8 @@ describe("the postings refusals", () => {
         new PostingsLockedError(),
         new InvalidPostingsError("too_many"),
         new InvalidPostingsError("not_posted_library"),
+        new InvalidPostingsError("nothing_chosen"),
+        new CheckedRecentlyError(),
       ].map((e) => [e.name, e.message]),
     ).toEqual([
       ["AlreadyLicensableElsewhereError", "already_licensable_elsewhere"],
@@ -27,6 +30,8 @@ describe("the postings refusals", () => {
       ["PostingsLockedError", "postings_locked"],
       ["InvalidPostingsError", "too_many"],
       ["InvalidPostingsError", "not_posted_library"],
+      ["InvalidPostingsError", "nothing_chosen"],
+      ["CheckedRecentlyError", "checked_recently"],
     ]);
   });
 

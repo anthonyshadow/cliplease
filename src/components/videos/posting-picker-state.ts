@@ -22,6 +22,7 @@ import {
   type PostingResultContext,
   postingChips,
   postingLiveMessage,
+  SAME_VIDEO_COPY,
 } from "@/lib/postings/copy";
 import {
   canonicalPostingUrl,
@@ -389,16 +390,13 @@ export const shownSwitch = (row: PickerRow, saved: OwnerPostingDTO | null) =>
   row.switchOn ?? saved?.showLink ?? true;
 
 /**
- * The row's `postings.<i>.showLink` (07 D18, D68; OQ-17: an unlisted post's link is hidden unless the creator turns it
- * on), or undefined to post none, so the server keeps the saved value or applies its default: the creator's choice this
- * visit, else `false` while the link is the saved one (`saved`, matchingSaved's match) and its saved Switch is off. A
- * saved `true` is never posted back: on a row saved unverified it is the server's default, not a choice, and posting it
- * would show the link of an unlisted post that verifies on this save. setLink resets the choice when the link stops
- * being the same post.
+ * The row's `postings.<i>.showLink` (07 D18, D68; OQ-17; owner answer Q-86 a): the creator's choice this visit, else
+ * undefined to post none, and the server's save decides: a post it already holds keeps its saved value (a hidden link
+ * stays hidden), a new one gets the default (an unlisted post's link hidden). setLink resets the choice when the link
+ * stops being the same post.
  */
-export const showLinkValue = (row: PickerRow, saved: OwnerPostingDTO | null) =>
-  row.switchOn ??
-  (saved !== null && saved.url !== null && !saved.showLink ? false : undefined);
+export const showLinkValue = (row: Pick<PickerRow, "switchOn">) =>
+  row.switchOn ?? undefined;
 
 /** The errors a Continue's answer left, by row key (the form index at submit time mapped back), until edited. */
 export type PickerErrors = {
@@ -578,9 +576,29 @@ export const recheckOnReturn = (
       );
 
 /**
- * The same-video block (07 D69, moved from the File step; owner answers Q-75, Q-76 a): the verified posts in position
- * order (the source first), whether there are several (captions and warnings then name the platform), and one duration
- * warning per post whose length differs from the file's by more than 1 s. Null when nothing is verified.
+ * The post a duration warning names (SAME_VIDEO_COPY.warningPost): undefined for the one verified post (04's "the
+ * post"); with several, its platform, and its account too when another verified post shares the platform (owner
+ * answers Q-76, Q-85 a), or the platform alone for a row stored without a name.
+ */
+function warningPostName(
+  posting: OwnerPostingDTO,
+  verified: readonly OwnerPostingDTO[],
+): string | undefined {
+  if (verified.length === 1) return undefined;
+  const shared = verified.some(
+    (other) => other.id !== posting.id && other.platform === posting.platform,
+  );
+  return SAME_VIDEO_COPY.warningPost(
+    posting.label,
+    shared ? posting.verifiedUsername : null,
+  );
+}
+
+/**
+ * The same-video block (07 D69, moved from the File step; owner answers Q-75, Q-76, Q-85 a): the verified posts in
+ * position order (the source first), whether there are several (the captions then name the platform), and one duration
+ * warning per post whose length differs from the file's by more than 1 s, naming the post (warningPostName). Null when
+ * nothing is verified.
  */
 export function sameVideoView(
   postings: readonly OwnerPostingDTO[],
@@ -594,14 +612,13 @@ export function sameVideoView(
     .filter((posting) => posting.verification === "verified")
     .sort((a, b) => a.position - b.position);
   if (verified.length === 0) return null;
-  const several = verified.length > 1;
   const warnings = verified.flatMap((posting) => {
     const text = durationMismatchMessage(
       fileDurationMs,
       posting.durationSec,
-      several ? posting.label : undefined,
+      warningPostName(posting, verified),
     );
     return text === null ? [] : [{ id: posting.id, text }];
   });
-  return { verified, several, warnings };
+  return { verified, several: verified.length > 1, warnings };
 }

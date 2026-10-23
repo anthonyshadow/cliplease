@@ -18,6 +18,7 @@ import {
   accessTokenAad,
   getFreshAccessToken,
   markNeedsReconnect,
+  NoTimeToRefreshError,
   refreshTokenAad,
   storeTokens,
   withAccessToken,
@@ -147,6 +148,24 @@ describe("the refresh deadline (07 D12, ADR-13)", () => {
     expect(
       decryptSecret(row.refreshTokenEnc as string, refreshTokenAad(id)),
     ).not.toBe(old.refreshToken);
+  });
+
+  it("withAccessToken starts no refresh that couldn't end by the caller's refreshBy: NoTimeToRefreshError, no call, the row as it was", async () => {
+    const { id } = await expiredDemoAccount();
+    const before = await accountRow(id);
+    const refresh = vi.spyOn(mockProvider, "refreshToken");
+    const call = vi.fn(async () => "used");
+
+    await expect(
+      withAccessToken(id, call, { refreshBy: Date.now() + 1_000 }),
+    ).rejects.toBeInstanceOf(NoTimeToRefreshError);
+    expect(refresh).not.toHaveBeenCalled();
+    expect(call).not.toHaveBeenCalled();
+    expect(await accountRow(id)).toEqual(before);
+    // With time left, the refresh runs and the call goes through.
+    await expect(
+      withAccessToken(id, call, { refreshBy: Date.now() + 60_000 }),
+    ).resolves.toBe("used");
   });
 
   it("gives up with SocialUpstreamError when the deadline aborts the call, and keeps the row as it was", async () => {

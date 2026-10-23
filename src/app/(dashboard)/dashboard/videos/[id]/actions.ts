@@ -34,12 +34,14 @@ import {
 } from "@/lib/result";
 import { DROPZONE_COPY } from "@/lib/upload/messages";
 import { isUuid } from "@/lib/validation/uuid";
-import { videoStepFacts, videoStepHref } from "@/lib/videos/steps";
+import { videoHref, videoStepFacts, videoStepHref } from "@/lib/videos/steps";
 import type { Actor } from "@/server/auth/actor";
 import { requireCreator, toActor } from "@/server/auth/session";
 import {
   AlreadyLicensableElsewhereError,
   AlreadyOnYourVideoError,
+  CheckedRecentlyError,
+  type InvalidPostingsCode,
   InvalidPostingsError,
   NotPublicError,
   PostingsLockedError,
@@ -54,7 +56,7 @@ import {
   saveVideoPostingsInput,
 } from "@/server/postings/save";
 import { mockEnabled } from "@/server/social/registry";
-import { confirmSameVideo } from "@/server/videos/edit";
+import { confirmSameVideo, withdrawSameVideo } from "@/server/videos/edit";
 import {
   confirmSameVideoErrorCode,
   VideoNotFoundError,
@@ -65,20 +67,24 @@ import {
 } from "@/server/videos/queries";
 
 // The Where posted step's Server Actions (02 §6.1; 07 D69): Continue (saveVideoPostings, which also stores the same-video
-// tick: no separate confirmSameVideo action, P11c Task 3) and Check again (recheckPosting). Thin: the form read
-// (postingsFromFormData), the session gate, 02 §6.1's Zod (saveVideoPostingsInput), the domain, and its refusals in 04
-// §11.10's words. Error shapes the step reads:
+// tick or takes it back: no separate confirmSameVideo action, P11c Task 3; owner answer Q-83 a) and Check again
+// (recheckPosting). Thin: the form read (postingsFromFormData), the session gate, 02 §6.1's Zod (saveVideoPostingsInput),
+// the domain, and its refusals in 04 §11.10's words. Error shapes the step reads:
 //   - a field error (§9.6 style under that field, focus on the first) under `error.fields[key]`, its first message also
 //     `error.message`: `postings.<i>.link` (a link that doesn't parse, too long, private, or one of the two
 //     cross-creator refusals, owner answer Q-78 a), `postings.<i>.otherLabel` ("Add the name of the site."),
-//     PLATFORMS_FIELD ("Say where it was posted", 05 §6.5 States). <i> is the row's form index (`indices`);
-//   - a form-level error (`error.fields` absent: an error Banner above the cards, focus on it): the Locked copy, the
-//     12-place limit, a cross-creator refusal that names no row, "Choose the original file to continue." and the generic
-//     error;
+//     PLATFORMS_FIELD ("Say where it was posted", 05 §6.5 States: the action's own check, and the domain's). <i> is the
+//     row's form index (`indices`);
+//   - a form-level error (`error.fields` absent: an error Banner above the cards, focus on it): the Locked copy (also a
+//     video turned on before the tick was stored or taken back), the 12-place limit, a cross-creator refusal that names
+//     no row, "Choose the original file to continue." and the generic error;
 //   - a staying Continue: `{ ok: true, data: { sameVideoMissing } }` after refresh(); `sameVideoMissing` true is the
-//     same-video tick's field error, SAME_VIDEO_COPY.missingTick under the tick with focus on the box (Q-75 a).
-// Moving on is redirect() to ?step=rights. redirect() and notFound() throw, so they stay outside every try that maps a
-// refusal. Nothing here fetches a pasted link (07 D67): the domain parses it and matches it by id.
+//     same-video tick's field error, SAME_VIDEO_COPY.missingTick under the tick with focus on the box (Q-75 a);
+//   - Check again pressed within 30 s of the posting's last check (the server's POSTING_CHECK_COOLDOWN_MS), with no
+//     account on its platform linked or synced since: `checked_recently` with POSTINGS_COPY.checkedRecently, which the row shows as a helper, not an error (Q-84 a).
+// Moving on is redirect(): a draft to ?step=rights, an unpublished video to its page (videoHref). redirect() and
+// notFound() throw, so they stay outside every try that maps a refusal. Nothing here fetches a pasted link (07 D67): the
+// domain parses it and matches it by id.
 
 /**
  * The same-video tick's two fields (Zod at the boundary, AGENTS.md §8): ticked or not, and the verified posts the block
@@ -110,7 +116,7 @@ function fieldErrors(
   };
 }
 
-/** The video's step facts read now (uncached: the Continue reads them again after its writes); none → the 404. */
+/** The video's step facts read now (uncached); none → the 404. */
 async function stepFactsNow(
   actor: Actor,
   videoId: string,
@@ -187,8 +193,34 @@ function inputError(
   return fieldErrors("invalid_input", fields);
 }
 
-/** A postings refusal in words (07 D68, 01 J5.27, J5.30); `index` is the refused row's input index (Q-78 a). */
-type PostingRefusal = { code: string; message: string; index?: number };
+/**
+ * A postings refusal in words (07 D68, 01 J5.27, J5.30), and where a save shows it: under the refused row's link
+ * (`index`, its input index: Q-78 a), under the chips (`chips`), else above the cards.
+ */
+type PostingRefusal = {
+  code: string;
+  message: string;
+  index?: number;
+  chips?: true;
+};
+
+/**
+ * InvalidPostingsError's words: the 12-place limit above the cards, nothing chosen under the chips (05 §6.5 States; the
+ * domain refuses it too), and "I haven't posted it anywhere yet." on a Library video (only a crafted form) the generic
+ * error.
+ */
+const INVALID_POSTINGS: Record<InvalidPostingsCode, PostingRefusal> = {
+  too_many: { code: "too_many", message: POSTINGS_COPY.limit },
+  not_posted_library: {
+    code: "not_posted_library",
+    message: GENERIC_ERROR_MESSAGE,
+  },
+  nothing_chosen: {
+    code: "nothing_chosen",
+    message: POSTINGS_COPY.nothingChosen,
+    chips: true,
+  },
+};
 
 /** The postings domain's refusals (02 §5.12, 04 §11.10); null for anything else, which is rethrown. */
 function postingRefusal(error: unknown): PostingRefusal | null {
@@ -212,28 +244,31 @@ function postingRefusal(error: unknown): PostingRefusal | null {
   if (error instanceof PostingsLockedError) {
     return { code: "postings_locked", message: POSTINGS_COPY.locked };
   }
+  if (error instanceof CheckedRecentlyError) {
+    return { code: "checked_recently", message: POSTINGS_COPY.checkedRecently };
+  }
   if (error instanceof InvalidPostingsError) {
-    return {
-      code: error.code,
-      message:
-        error.code === "too_many" ? POSTINGS_COPY.limit : GENERIC_ERROR_MESSAGE,
-    };
+    return INVALID_POSTINGS[error.code];
   }
   return null;
 }
 
+/** What a save wrote: the postings as saved (the source row included) and the step facts after it. */
+type SavedPostings = { postings: OwnerPostingDTO[]; facts: VideoStepState };
+
 /**
- * The domain save (02 §5.12) of `input`, the form as 02 §6.1's Zod read it: the postings as saved (the source row
- * included), or its refusal with nothing saved: each link it couldn't take under its field (the parse's error, or
- * `private`), a cross-creator refusal under the refused link (Q-78 a; above the cards when it names no row), anything
- * else above the cards. The domain's row indices are `input.postings`', the form's rows in the same order (`indices`).
+ * The domain save (02 §5.12) of `input`, the form as 02 §6.1's Zod read it: what it wrote (the facts as its last write
+ * returned them, so nothing is read again), or its refusal with nothing saved: each link it couldn't take under its
+ * field (the parse's error, or `private`), a cross-creator refusal under the refused link (Q-78 a; above the cards when
+ * it names no row), nothing chosen under the chips, anything else above the cards. The domain's row indices are
+ * `input.postings`', the form's rows in the same order (`indices`).
  */
 async function savePostings(
   actor: Actor,
   input: SaveVideoPostingsInput,
   form: PostingsFormData,
   allowMock: boolean,
-): Promise<ActionResult<OwnerPostingDTO[]>> {
+): Promise<ActionResult<SavedPostings>> {
   let result: SaveVideoPostingsResult;
   try {
     result = await saveVideoPostingsFor(actor, input);
@@ -241,13 +276,21 @@ async function savePostings(
     if (error instanceof VideoNotFoundError) notFound();
     const refused = postingRefusal(error);
     if (refused === null) throw error;
+    if (refused.chips) {
+      return fieldError(refused.code, PLATFORMS_FIELD, refused.message);
+    }
     const i =
       refused.index === undefined ? undefined : form.indices[refused.index];
     return i === undefined
       ? formError(refused.code, refused.message)
       : fieldError(refused.code, postingFieldKey(i, "link"), refused.message);
   }
-  if (result.ok) return { ok: true, data: result.postings };
+  if (result.ok) {
+    return {
+      ok: true,
+      data: { postings: result.postings, facts: result.facts },
+    };
+  }
   const { fields } = result;
   return fieldErrors(
     "invalid_link",
@@ -266,22 +309,33 @@ async function savePostings(
 }
 
 /**
- * "These posts show this same video" stored (07 D69; the first time is kept): `data` says whether the tick is stored
- * now. The verified posts changing meanwhile (no_verified_posting) stores nothing and refuses nothing (`data` false):
- * the refreshed block shows the new set unticked. An original replaced since the page loaded asks for it again.
+ * "These posts show this same video" set to the box the block showed (07 D69): ticked stores it (confirmSameVideo; the
+ * first time is kept), unticked takes a stored one back (withdrawSameVideo; owner answer Q-83 a). `data` is the step
+ * facts after it: `current` with the tick as written, with no read. The verified posts changing meanwhile
+ * (no_verified_posting) stores nothing and refuses nothing: the facts are read again, and the refreshed block shows the
+ * new set unticked. A video turned on meanwhile is the Locked copy; an original replaced since the page loaded asks for
+ * it again.
  */
-async function confirmTick(
+async function setTick(
   actor: Actor,
   videoId: string,
-): Promise<ActionResult<boolean>> {
+  ticked: boolean,
+  current: VideoStepState,
+): Promise<ActionResult<VideoStepState>> {
   try {
-    await confirmSameVideo(actor, videoId);
-    return { ok: true, data: true };
+    if (ticked) await confirmSameVideo(actor, videoId);
+    else await withdrawSameVideo(actor, videoId);
+    return { ok: true, data: { ...current, sameVideoConfirmed: ticked } };
   } catch (error) {
     const code = confirmSameVideoErrorCode(error);
     if (code === null) throw error;
     if (code === "not_found") notFound();
-    if (code === "no_verified_posting") return { ok: true, data: false };
+    if (code === "no_verified_posting") {
+      return { ok: true, data: await stepFactsNow(actor, videoId) };
+    }
+    if (code === "postings_locked") {
+      return formError(code, POSTINGS_COPY.locked);
+    }
     return formError(code, DROPZONE_COPY.continueHelper);
   }
 }
@@ -291,10 +345,13 @@ async function confirmTick(
  * States; 07 D69). In order: the session (back to ?step=postings; a bad id → the videos list), the creator's own video
  * (else the 404), `draft`/`unpublished` (else "Turn off to edit where it was posted."), 02 §6.1's Zod, an upload with
  * nothing chosen ("Say where it was posted" under the chips, nothing saved). The domain save runs when the postings
- * changed (postingsInputChanged) or were never saved. Then the tick: stored when ticked and the verified posts the
- * block showed (`verifiedKey`) are the ones saved now. Then postingsStepOutcome: complete (videoStepFacts), unless this
- * Continue changed the postings and a link came back not_found, no_account or check_failed (the save checks every
- * non-source link again), → ?step=rights; otherwise refresh() and stay, so a second Continue with nothing changed moves on.
+ * changed (postingsInputChanged) or were never saved, and hands back the step facts it wrote. Then the tick, when the
+ * verified posts the block showed (`verifiedKey`) are the ones saved now: stored when ticked, taken back when unticked
+ * and stored (Q-83 a: the step then stays with "Confirm these posts show this same video"). Then postingsStepOutcome:
+ * complete (videoStepFacts), unless this Continue changed the postings and a link came back not_found, no_account or
+ * check_failed (the save checks every non-source link again, keeping a result checked in the last 30 s: Q-84 a), →
+ * ?step=rights for a draft, the video's page once it is past the draft; otherwise refresh() and stay, so a second
+ * Continue with nothing changed moves on.
  */
 export async function saveVideoPostings(
   _previous: SavePostingsState,
@@ -342,23 +399,20 @@ export async function saveVideoPostings(
   if (changed || facts.postingsConfirmedAt === null) {
     const saved = await savePostings(actor, input, form, allowMock);
     if (!saved.ok) return saved;
-    after = saved.data;
-    current = await stepFactsNow(actor, videoId);
+    after = saved.data.postings;
+    current = saved.data.facts;
   }
 
-  // The tick confirms exactly the posts the block showed: a stale or tampered key stores nothing (07 D69).
+  // The tick answers for exactly the posts the block showed: a stale, tampered or missing key changes nothing (07 D69).
   const key = verifiedPostingsKey(after);
   const sawThesePosts = key !== "" && tick.data.verifiedKey === key;
-  if (tick.data.sameVideo && sawThesePosts && !current.sameVideoConfirmed) {
-    const confirmed = await confirmTick(actor, videoId);
-    if (!confirmed.ok) {
+  if (sawThesePosts && tick.data.sameVideo !== current.sameVideoConfirmed) {
+    const set = await setTick(actor, videoId, tick.data.sameVideo, current);
+    if (!set.ok) {
       refresh();
-      return confirmed;
+      return set;
     }
-    // Stored: the one fact the tick changes, without a read. Not stored, the verified posts changed meanwhile: read.
-    current = confirmed.data
-      ? { ...current, sameVideoConfirmed: true }
-      : await stepFactsNow(actor, videoId);
+    current = set.data;
   }
 
   const outcome = postingsStepOutcome({
@@ -366,7 +420,13 @@ export async function saveVideoPostings(
     changed,
     needsAttention: after.some(needsAttention),
   });
-  if (outcome === "next") redirect(videoStepHref(videoId, "rights"));
+  if (outcome === "next") {
+    redirect(
+      current.status === "draft"
+        ? videoStepHref(videoId, "rights")
+        : videoHref(videoId),
+    );
+  }
   refresh();
   return {
     ok: true,
@@ -382,9 +442,10 @@ const recheckInput = z.object({ postingId: z.uuid() });
 /**
  * **Check again** on one saved posting (02 §6.1 recheckPosting; 07 D66): the posting as checked now, then refresh().
  * Signed out → sign-in, back to the page it was pressed on (requireCreator's default). Its refusals in words: a private
- * post, a locked video, a post another creator or the creator's other video verified meanwhile (01 J5.27, A.4). A
- * posting that is gone (a save replaced the rows: their ids change on every save) or isn't the creator's is the generic
- * error; the refresh brings the current rows.
+ * post, a locked video, a post another creator or the creator's other video verified meanwhile (01 J5.27, A.4), and a
+ * posting checked in the last 30 s (`checked_recently`: its last result stands, owner answer Q-84 a). A posting that is
+ * gone (a save replaced the rows: their ids change on every save) or isn't the creator's is the generic error; the
+ * refresh brings the current rows.
  */
 export async function recheckPosting(input: {
   postingId: string;

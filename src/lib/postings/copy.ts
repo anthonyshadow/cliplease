@@ -1,5 +1,5 @@
 // "Where was it posted?"'s words (04 §9.33, §11.10 "Where was it posted?", which win over older drafts, 07 D69; 07 D18,
-// D68, D72; owner answers Q-75, Q-76 a). Pure and client-safe: the picker, the step and the save action read every
+// D68, D72; owner answers Q-75, Q-76, Q-84, Q-85 a). Pure and client-safe: the picker, the step and the save action read every
 // string from here, so no component hard-codes one. {Platform} is postingPlatformLabel's name (for Other, the creator's
 // name for the site), {APP_NAME} the product name.
 import {
@@ -40,6 +40,11 @@ export const POSTINGS_COPY = {
   unlistedNote:
     "This video is unlisted. Buyers won't see the link unless you turn it on.",
   checking: "Checking the link…",
+  /**
+   * Check again within 30 s of the posting's last check (owner answer Q-84 a, proposed copy): the server keeps the last
+   * result instead of asking the platform again, and the row shows this as a helper note, not an error.
+   */
+  checkedRecently: "Checked a moment ago. Try again in a few seconds.",
   move: "Move",
   /** The read-only Notice on a published video, and PostingsLockedError's words (01 J5.30). */
   locked: "Turn off to edit where it was posted.",
@@ -316,8 +321,9 @@ export function postingResultCopy(
 }
 
 /**
- * The same-video block (07 D69, moved from the File step; owner answer Q-75 a, proposed copy): the tick, its field
- * error when Continue is pressed without it, and the captions under the cover and each verified post's picture.
+ * The same-video block (07 D69, moved from the File step; owner answers Q-75, Q-85 a, proposed copy): the tick, its
+ * field error when Continue is pressed without it, the captions under the cover and each verified post's picture, and
+ * the post a duration warning names when several are verified.
  */
 export const SAME_VIDEO_COPY = {
   tick: "These posts show this same video",
@@ -326,4 +332,13 @@ export const SAME_VIDEO_COPY = {
   /** "Post" when one post is verified; "{Platform} post" ("Demo post") when there are several. */
   postCaption: (platformLabel: string, several: boolean) =>
     several ? `${platformLabel} post` : "Post",
+  /**
+   * durationMismatchMessage's `postName` when several posts are verified: "{Platform} post" (Q-76 a), or "{Platform} post
+   * on {verified_username}" (the name as stored, 07 D43) when another verified post shares the platform (Q-85 a). With
+   * one verified post the warning keeps 04's "the post".
+   */
+  warningPost: (platformLabel: string, account: string | null) =>
+    account === null
+      ? `${platformLabel} post`
+      : `${platformLabel} post on ${account}`,
 } as const;

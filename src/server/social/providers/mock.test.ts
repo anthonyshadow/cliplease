@@ -222,6 +222,27 @@ describe("posts", () => {
       await mockProvider.getPosts(a.accessToken, [id, id, "nope"]),
     ).toHaveLength(1);
   });
+
+  it("fails a lookup whose deadline has passed, and answers one still in time (owner answer Q-82 a)", async () => {
+    const { accessToken } = await connect("user-a");
+    const account = mockAccountIdFor("user-a");
+    const id = postIdOf("user-a", "05");
+    const passed = { signal: AbortSignal.abort() };
+    await expect(
+      mockProvider.getPost(accessToken, id, account, passed),
+    ).rejects.toBeInstanceOf(SocialUpstreamError);
+    await expect(
+      mockProvider.findPostByLinkKey(accessToken, id, account, passed),
+    ).rejects.toBeInstanceOf(SocialUpstreamError);
+    for (const lookup of [
+      mockProvider.getPost,
+      mockProvider.findPostByLinkKey,
+    ]) {
+      expect(
+        (await lookup(accessToken, id, account, IN_TIME))?.externalId,
+      ).toBe(id);
+    }
+  });
 });
 
 describe("scenarios (07 D36)", () => {

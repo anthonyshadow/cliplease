@@ -38,16 +38,18 @@ describe("durationMismatchMessage (01 J5.10, 04 §11.10)", () => {
     expect(durationMismatchMessage(14_033, 14)).toBeNull();
     expect(durationMismatchMessage(null, 38)).toBeNull();
     expect(durationMismatchMessage(14_000, null)).toBeNull();
-    expect(durationMismatchMessage(14_033, 14, "Demo")).toBeNull();
-    expect(durationMismatchMessage(null, 38, "Demo")).toBeNull();
+    expect(durationMismatchMessage(14_033, 14, "Demo post")).toBeNull();
+    expect(durationMismatchMessage(null, 38, "Demo post")).toBeNull();
   });
 
-  it("names the post's platform when given one (several verified posts; owner answer Q-76 a)", () => {
-    expect(durationMismatchMessage(14_000, 38, "Demo")).toBe(
+  it("names the post as given, whole (several verified posts; owner answers Q-76, Q-85 a)", () => {
+    expect(durationMismatchMessage(14_000, 38, "Demo post")).toBe(
       "This file is 0:14 but the Demo post is 0:38. Make sure it's the same video.",
     );
-    expect(durationMismatchMessage(14_000, 38, "YouTube")).toBe(
-      "This file is 0:14 but the YouTube post is 0:38. Make sure it's the same video.",
+    expect(
+      durationMismatchMessage(14_000, 38, "TikTok post on @maya.films"),
+    ).toBe(
+      "This file is 0:14 but the TikTok post on @maya.films is 0:38. Make sure it's the same video.",
     );
     expect(durationMismatchMessage(14_000, 38, undefined)).toBe(
       "This file is 0:14 but the post is 0:38. Make sure it's the same video.",

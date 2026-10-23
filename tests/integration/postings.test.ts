@@ -24,6 +24,7 @@ import type { Actor } from "../../src/server/auth/actor";
 import {
   AlreadyLicensableElsewhereError,
   AlreadyOnYourVideoError,
+  CheckedRecentlyError,
   InvalidPostingsError,
   NotPublicError,
   PostingsLockedError,
@@ -37,12 +38,16 @@ import {
   listVideoPostings,
 } from "../../src/server/postings/queries";
 import {
+  POSTING_CHECK_COOLDOWN_MS,
   type PostingInput,
   recheckPosting,
   type SaveVideoPostingsInput,
   saveVideoPostings,
 } from "../../src/server/postings/save";
-import { verifyPostingLink } from "../../src/server/postings/verify";
+import {
+  POSTING_CHECKS_BUDGET_MS,
+  verifyPostingLink,
+} from "../../src/server/postings/verify";
 import { disconnectSocialAccount } from "../../src/server/social/disconnect";
 import {
   SocialAuthError,
@@ -54,12 +59,16 @@ import {
   setMockScenarioForTests,
 } from "../../src/server/social/providers/mock";
 import { createVideoFromPost } from "../../src/server/videos/create";
-import { confirmSameVideo } from "../../src/server/videos/edit";
+import {
+  confirmSameVideo,
+  withdrawSameVideo,
+} from "../../src/server/videos/edit";
 import {
   NoVerifiedPostingError,
   OriginalNotReadyError,
   VideoNotFoundError,
 } from "../../src/server/videos/errors";
+import { getVideoStepFacts } from "../../src/server/videos/queries";
 import { bareCreator, mockNextHeaders } from "../helpers/auth";
 import {
   accountRow,
@@ -105,9 +114,11 @@ import {
 } from "../helpers/postings";
 
 // "Where was it posted?" on the server (P11b; 02 §5.12, 03 §7.4, I27, I28; 06 §5b; 07 D65–D70, D72, D73; owner answers
-// Q-69 a and Q-70 a) against the test database and the mock provider. Live checks are counted on the raw adapter
-// (mockProvider), as in P11's suite: the registry's wrapper calls its getPost and findPostByLinkKey at each call, and
-// the mock's lookup is its getPost. Every test leaves 03 I28 true (afterEach), and fetch is refused for the whole file.
+// Q-69 a, Q-70 a and Q-82 a–Q-86 a) against the test database and the mock provider. Live checks are counted on the raw
+// adapter (mockProvider), as in P11's suite: the registry's wrapper calls its getPost and findPostByLinkKey at each call,
+// and the mock's lookup is its getPost. A check stands for 30 seconds (Q-84 a), so a test that wants a link asked again
+// moves its checked_at back first (backdateCheckedAt). Every test leaves 03 I28 true (afterEach), and fetch is refused
+// for the whole file.
 vi.mock("next/headers", () => import("../helpers/next-headers"));
 
 const fetches = fetchGuard();
@@ -277,6 +288,50 @@ const removePost = (postId: string) =>
     })
     .where(eq(socialPost.id, postId));
 
+/** A save that must succeed: its whole result. */
+async function savedResult(...args: Parameters<typeof save>) {
+  const result = await save(...args);
+  if (!result.ok) {
+    throw new Error(`the save was refused: ${JSON.stringify(result.fields)}`);
+  }
+  return result;
+}
+
+/**
+ * The save's own deadline (Q-82 a), in the test's hands: the next AbortSignal.timeout gives `deadline`'s signal, and
+ * getPost aborts it once it has answered, so the first live check is the last one in time.
+ */
+function deadlineAfterFirstGetPost() {
+  const deadline = new AbortController();
+  const timeout = vi
+    .spyOn(AbortSignal, "timeout")
+    .mockReturnValueOnce(deadline.signal);
+  const realGet = mockProvider.getPost.bind(mockProvider);
+  const getPost = spyGetPost().mockImplementation(async (...args) => {
+    const live = await realGet(...args);
+    deadline.abort();
+    return live;
+  });
+  return { timeout, getPost };
+}
+
+/** Moves the account's connect and last sync an hour back: only a check's age then decides the cooldown (Q-84 a). */
+const linkedLongAgo = (accountId: string) =>
+  db
+    .update(socialAccount)
+    .set({
+      connectedAt: new Date(Date.now() - HOUR_MS),
+      lastSyncedAt: new Date(Date.now() - HOUR_MS),
+    })
+    .where(eq(socialAccount.id, accountId));
+
+/** The columns a carried-over row keeps (Q-84 a): its verification, checked_at and Switch. */
+const lastResult = (p: VideoPosting) => ({
+  ...verifiedFields(p),
+  checkedAt: p.checkedAt,
+  showLink: p.showLink,
+});
+
 describe("saveVideoPostings: Verified only by the post's id on a linked account (07 D68)", () => {
   it("verifies a synced post by a DB match: one live getPost, no lookup; ownership follows the postings", async () => {
     const { d, upload, post } = await syncedUpload();
@@ -292,6 +347,7 @@ describe("saveVideoPostings: Verified only by the post's id on a linked account 
       expect.any(String),
       post.providerPostId,
       d.account.providerAccountId,
+      { signal: expect.any(AbortSignal) },
     );
     expect(find).not.toHaveBeenCalled();
     const [row, ...others] = await postingsOf(upload.id);
@@ -331,9 +387,13 @@ describe("saveVideoPostings: Verified only by the post's id on a linked account 
     expect(saved.ownership).toBe("verified_owner");
     expect(saved.postingsConfirmedAt).toBeInstanceOf(Date);
 
-    // A re-save without the link drops the row, and ownership follows it back.
-    expect(await saveOk(d.actor, upload.id, [])).toEqual([]);
-    expect(await postingsOf(upload.id)).toEqual([]);
+    // A re-save without the link drops its row, and ownership follows it back.
+    expect(await saveOk(d.actor, upload.id, [FACEBOOK])).toMatchObject([
+      { platform: "facebook", verification: "unverified", position: 1 },
+    ]);
+    expect((await postingsOf(upload.id)).map((p) => p.platform)).toEqual([
+      "facebook",
+    ]);
     expect((await videoRow(upload.id)).ownership).toBe("self_attested");
   });
 
@@ -372,6 +432,7 @@ describe("saveVideoPostings: Verified only by the post's id on a linked account 
       expect.any(String),
       id24,
       d.account.providerAccountId,
+      { signal: expect.any(AbortSignal) },
     );
     const added = (await postsOf(d.account.id)).find(
       (p) => p.providerPostId === id24,
@@ -430,6 +491,7 @@ describe("saveVideoPostings: Verified only by the post's id on a linked account 
       expect.any(String),
       mockPostId(other.account, "03"),
       d.account.providerAccountId,
+      { signal: expect.any(AbortSignal) },
     );
     expect(await postingAt(upload.id, 1)).toMatchObject({
       verification: "unverified",
@@ -664,7 +726,10 @@ describe("saveVideoPostings: Verified only by the post's id on a linked account 
       demoPaste(second.permalink, { showLink: true }),
     ]);
 
-    // The step posts no unchanged Switch; another row added re-checks both links, still unlisted.
+    // The step posts no unchanged Switch; past the cooldown (Q-84 a) the re-save checks both links again, still unlisted.
+    for (const row of await postingsOf(upload.id)) {
+      await backdateCheckedAt(row.id);
+    }
     await saveOk(d.actor, upload.id, [
       demoPaste(first.permalink),
       demoPaste(second.permalink),
@@ -842,6 +907,8 @@ describe("saveVideoPostings: a saved Verified link survives a failed re-check (Q
     await saveOk(d.actor, upload.id, [demoPaste(post.permalink)]);
     const after = await postingAt(upload.id, 1);
     expect(verifiedFields(after)).toEqual(verifiedFields(before));
+    // The save's failed check just moved checked_at: past the cooldown (Q-84 a), Check again asks again.
+    await backdateCheckedAt(after.id);
     expect(
       await recheckPosting(d.actor, { postingId: after.id }),
     ).toMatchObject({ verification: "verified" });
@@ -855,7 +922,8 @@ describe("saveVideoPostings: a saved Verified link survives a failed re-check (Q
   });
 
   it("still downgrades a verified link the platform no longer has (not_found), and clears the same-video tick", async () => {
-    const { d, upload, post } = await pastedOnUpload("05");
+    const { d, upload, post, row } = await pastedOnUpload("05");
+    await backdateCheckedAt(row.id);
     await setSameVideoConfirmed(upload.id);
     setMockScenarioForTests("post_removed");
 
@@ -1069,8 +1137,13 @@ describe("saveVideoPostings: one verified posting per platform post (07 D66, D68
     await saveOk(d.actor, upload.id, [demoPaste(post.permalink)]);
     const first = await postingAt(upload.id, 1);
     expect(await auditsOf(first.id, "video_posting.conflict")).toHaveLength(1);
+    // Past the cooldown (Q-84 a): the re-save checks the link again, and it verifies again.
+    await backdateCheckedAt(first.id);
+    const getPost = spyGetPost();
 
     await saveOk(d.actor, upload.id, [demoPaste(post.permalink)]);
+
+    expect(getPost).toHaveBeenCalledTimes(1);
 
     const again = await postingAt(upload.id, 1);
     expect(again.verification).toBe("verified");
@@ -1190,7 +1263,8 @@ describe("saveVideoPostings: the rules of the step (07 D69)", () => {
     await markOriginalReady({ id: videoId, creatorId: d.account.creatorId });
     await confirmSameVideo(d.actor, videoId);
     const tick = await confirmedAt(videoId);
-    // Q-69 a: the re-save's check of post 02 fails, so that row is kept verified as it was.
+    // Q-69 a: past the cooldown (Q-84 a), the re-save's check of post 02 fails, so that row is kept verified as it was.
+    await backdateCheckedAt(kept.id);
     const getPost = spyGetPost().mockRejectedValue(
       new SocialRateLimitError(900),
     );
@@ -1380,6 +1454,372 @@ describe("saveVideoPostings: the rules of the step (07 D69)", () => {
       expect(json).not.toContain(hidden);
     }
   });
+
+  it("refuses nothing chosen on an upload (InvalidPostingsError nothing_chosen) before any call or write", async () => {
+    const { d, upload, post } = await syncedUpload();
+    const getPost = spyGetPost();
+
+    const error = await save(d.actor, upload.id, []).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(InvalidPostingsError);
+    expect(error).toMatchObject({ code: "nothing_chosen" });
+    expect((await videoRow(upload.id)).postingsConfirmedAt).toBeNull();
+    expect(await auditsOf(upload.id, "video.postings_saved")).toEqual([]);
+
+    // Saved postings stay when a later save sends none.
+    await saveOk(d.actor, upload.id, [demoPaste(post.permalink), FACEBOOK]);
+    const saved = await postingsOf(upload.id);
+    getPost.mockClear();
+    await expect(save(d.actor, upload.id, [])).rejects.toMatchObject({
+      code: "nothing_chosen",
+    });
+    expect(getPost).not.toHaveBeenCalled();
+    expect(await postingsOf(upload.id)).toEqual(saved);
+  });
+
+  it("returns the step facts its write left, as getVideoStepFacts reads them right after", async () => {
+    const { d, upload, post } = await syncedUpload();
+    await markOriginalReady(upload);
+
+    const first = await savedResult(d.actor, upload.id, [
+      demoPaste(post.permalink),
+    ]);
+    expect(first.facts).toStrictEqual(
+      await getVideoStepFacts(d.actor, upload.id),
+    );
+    expect(first.facts).toMatchObject({
+      status: "draft",
+      originalStatus: "ready",
+      source: "upload",
+      postingsConfirmedAt: expect.any(String),
+      sameVideoConfirmed: false,
+      hasVerifiedPosting: true,
+    });
+
+    // The verified post dropped: ownership and the tick go in the same write.
+    await confirmSameVideo(d.actor, upload.id);
+    const second = await savedResult(d.actor, upload.id, [FACEBOOK]);
+    expect(second.facts).toStrictEqual(
+      await getVideoStepFacts(d.actor, upload.id),
+    );
+    expect(second.facts).toMatchObject({
+      sameVideoConfirmed: false,
+      hasVerifiedPosting: false,
+    });
+  });
+});
+
+describe("saveVideoPostings: one deadline for a save's checks (owner answer Q-82 a)", () => {
+  it("checks rows until the budget runs out; the rest save as check_failed with no call, and the save succeeds", async () => {
+    const { d, upload, post } = await syncedUpload();
+    const post02 = await postNumber(d.account.id, "02");
+    const elsewhere = await demoAccount();
+    const { timeout, getPost } = deadlineAfterFirstGetPost();
+    const find = spyFind();
+
+    const postings = await saveOk(d.actor, upload.id, [
+      demoPaste(post.permalink),
+      demoPaste(post02.permalink),
+      FACEBOOK,
+      demoPaste(mockLink(elsewhere.account, "03")),
+    ]);
+
+    expect(timeout).toHaveBeenCalledWith(POSTING_CHECKS_BUDGET_MS);
+    expect(getPost).toHaveBeenCalledTimes(1);
+    expect(find).not.toHaveBeenCalled();
+    // Not reached, so not checked: no checked_at, and the next Continue or Check again asks at once.
+    expect(
+      (await postingsOf(upload.id)).map((p) => [
+        p.platform,
+        p.verification,
+        p.unverifiedReason,
+        p.checkedAt === null,
+      ]),
+    ).toEqual([
+      ["mock", "verified", null, false],
+      ["mock", "unverified", "check_failed", true],
+      ["facebook", "unverified", "unverifiable", true],
+      ["mock", "unverified", "check_failed", true],
+    ]);
+    expect(postings).toHaveLength(4);
+    const saved = await videoRow(upload.id);
+    expect(saved.ownership).toBe("verified_owner");
+    expect(saved.postingsConfirmedAt).toBeInstanceOf(Date);
+  });
+
+  it("keeps a verified link verified when the budget runs out before its turn (Q-69 a), its checked_at unmoved", async () => {
+    const { d, upload, post, row: before } = await pastedOnUpload();
+    const checkedBefore = await backdateCheckedAt(before.id);
+    const post02 = await postNumber(d.account.id, "02");
+    const { getPost } = deadlineAfterFirstGetPost();
+
+    await saveOk(d.actor, upload.id, [
+      demoPaste(post02.permalink),
+      demoPaste(post.permalink),
+    ]);
+
+    expect(getPost).toHaveBeenCalledTimes(1);
+    expect(await postingAt(upload.id, 1)).toMatchObject({
+      verification: "verified",
+      socialPostId: post02.id,
+    });
+    const kept = await postingAt(upload.id, 2);
+    expect(verifiedFields(kept)).toEqual(verifiedFields(before));
+    expect(kept.checkedAt).toEqual(checkedBefore);
+  });
+
+  it("asks nothing when the budget is spent before the first check: every row that needs a call is check_failed", async () => {
+    const { d, upload, post } = await syncedUpload();
+    const elsewhere = await demoAccount();
+    vi.spyOn(AbortSignal, "timeout").mockReturnValueOnce(AbortSignal.abort());
+    const getPost = spyGetPost();
+    const find = spyFind();
+
+    await saveOk(d.actor, upload.id, [
+      demoPaste(post.permalink),
+      demoPaste(mockLink(elsewhere.account, "03")),
+      { platform: "instagram", link: IG_LINK },
+      X_POST,
+    ]);
+
+    expect(getPost).not.toHaveBeenCalled();
+    expect(find).not.toHaveBeenCalled();
+    // Answers that need no call still come: no Instagram account, an X link.
+    expect(
+      (await postingsOf(upload.id)).map((p) => [
+        p.platform,
+        p.unverifiedReason,
+      ]),
+    ).toEqual([
+      ["mock", "check_failed"],
+      ["mock", "check_failed"],
+      ["instagram", "no_account"],
+      ["x", "unverifiable"],
+    ]);
+  });
+
+  it("gives Check again its own budget: a deadline that cuts its call is check_failed, checked now", async () => {
+    const { d, row } = await pastedOnUpload("01", {
+      failWith: new SocialUpstreamError(),
+    });
+    const checkedBefore = await backdateCheckedAt(row.id);
+    const timeout = vi
+      .spyOn(AbortSignal, "timeout")
+      .mockReturnValueOnce(AbortSignal.abort());
+    const getPost = spyGetPost();
+
+    expect(await recheckPosting(d.actor, { postingId: row.id })).toMatchObject({
+      verification: "unverified",
+      unverifiedReason: "check_failed",
+    });
+
+    expect(timeout).toHaveBeenCalledWith(POSTING_CHECKS_BUDGET_MS);
+    expect(getPost).not.toHaveBeenCalled();
+    expect((await postingRow(row.id)).checkedAt?.getTime()).toBeGreaterThan(
+      checkedBefore.getTime(),
+    );
+  });
+});
+
+describe("saveVideoPostings and Check again: a check in the last 30 seconds stands (owner answer Q-84 a)", () => {
+  it("re-saves unchanged links with no platform call: each keeps its last result, whatever it was", async () => {
+    const { d, upload, post } = await syncedUpload();
+    const elsewhere = await demoAccount();
+    const links = [
+      demoPaste(post.permalink),
+      demoPaste(mockLink(elsewhere.account, "03")),
+      FACEBOOK,
+    ];
+    await saveOk(d.actor, upload.id, links);
+    const before = await postingsOf(upload.id);
+    expect(before.map((p) => p.unverifiedReason)).toEqual([
+      null,
+      "not_found",
+      "unverifiable",
+    ]);
+    const getPost = spyGetPost();
+    const find = spyFind();
+
+    await saveOk(d.actor, upload.id, [...links, X_POST]);
+
+    expect(getPost).not.toHaveBeenCalled();
+    expect(find).not.toHaveBeenCalled();
+    const after = await postingsOf(upload.id);
+    expect(after.slice(0, 3).map(lastResult)).toEqual(before.map(lastResult));
+    expect((await videoRow(upload.id)).ownership).toBe("verified_owner");
+  });
+
+  it("asks the platform again once the last check is over 30 seconds old, for a save and for Check again", async () => {
+    const { d, upload, post, row } = await pastedOnUpload();
+    await linkedLongAgo(d.account.id);
+    const getPost = spyGetPost();
+    const age = (ms: number) => async () =>
+      backdateCheckedAt((await postingAt(upload.id, 1)).id, ms);
+    const within = age(POSTING_CHECK_COOLDOWN_MS - 5_000);
+    const past = age(POSTING_CHECK_COOLDOWN_MS + 5_000);
+
+    await within();
+    await saveOk(d.actor, upload.id, [demoPaste(post.permalink)]);
+    expect(getPost).not.toHaveBeenCalled();
+    await past();
+    await saveOk(d.actor, upload.id, [demoPaste(post.permalink)]);
+    expect(getPost).toHaveBeenCalledTimes(1);
+
+    const saved = await postingAt(upload.id, 1);
+    expect(saved.id).not.toBe(row.id);
+    await within();
+    const before = await postingRow(saved.id);
+    await expect(
+      recheckPosting(d.actor, { postingId: saved.id }),
+    ).rejects.toBeInstanceOf(CheckedRecentlyError);
+    expect(getPost).toHaveBeenCalledTimes(1);
+    expect(await postingRow(saved.id)).toEqual(before);
+    await past();
+    expect(
+      await recheckPosting(d.actor, { postingId: saved.id }),
+    ).toMatchObject({ verification: "verified" });
+    expect(getPost).toHaveBeenCalledTimes(2);
+  });
+
+  it("refuses Check again right after a save's check with CheckedRecentlyError, asking nothing and writing nothing", async () => {
+    const { d, row } = await pastedOnUpload("01", {
+      failWith: new SocialUpstreamError(),
+    });
+    const getPost = spyGetPost();
+
+    await expect(
+      recheckPosting(d.actor, { postingId: row.id }),
+    ).rejects.toBeInstanceOf(CheckedRecentlyError);
+
+    expect(getPost).not.toHaveBeenCalled();
+    expect(await postingRow(row.id)).toEqual(row);
+  });
+
+  it("asks again once an account on the platform was linked since the check (Q-74 a), and that new check stands", async () => {
+    const { creator, actor } = await bareCreator();
+    const upload = await insertUploadVideo(creator);
+    const elsewhere = await demoAccount();
+    const link = demoPaste(mockLink(elsewhere.account, "02"));
+    await saveOk(actor, upload.id, [link]);
+    const row = await postingAt(upload.id, 1);
+    expect(row.unverifiedReason).toBe("no_account");
+    await extraDemoAccount(creator, new Date());
+    const find = spyFind();
+
+    await saveOk(actor, upload.id, [link]);
+
+    expect(find).toHaveBeenCalledTimes(1);
+    const checked = await postingAt(upload.id, 1);
+    expect(checked.unverifiedReason).toBe("not_found");
+    await expect(
+      recheckPosting(actor, { postingId: checked.id }),
+    ).rejects.toBeInstanceOf(CheckedRecentlyError);
+    expect(find).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks again once an account on the platform synced since the check (Sync and check again)", async () => {
+    const { d, upload, post } = await syncedUpload("05");
+    setMockScenarioForTests("post_removed");
+    await saveOk(d.actor, upload.id, [demoPaste(post.permalink)]);
+    const row = await postingAt(upload.id, 1);
+    expect(row.unverifiedReason).toBe("not_found");
+    setMockScenarioForTests(null);
+    await expect(
+      recheckPosting(d.actor, { postingId: row.id }),
+    ).rejects.toBeInstanceOf(CheckedRecentlyError);
+    // As a finished sync stamps it.
+    await db
+      .update(socialAccount)
+      .set({ lastSyncedAt: new Date() })
+      .where(eq(socialAccount.id, d.account.id));
+    const getPost = spyGetPost();
+
+    expect(await recheckPosting(d.actor, { postingId: row.id })).toMatchObject({
+      verification: "verified",
+    });
+    expect(getPost).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('saveVideoPostings: "Show buyers this link" follows the post (owner answer Q-86 a)', () => {
+  const X2_LINK = "https://x.com/mayafilms/status/1790000000000000002";
+
+  it("keeps a link saved hidden hidden when a re-save sends no Switch, verified or not", async () => {
+    const { d, upload, post } = await syncedUpload();
+    await saveOk(d.actor, upload.id, [
+      vimeo(1, { showLink: false }),
+      { ...FACEBOOK, showLink: false },
+      demoPaste(post.permalink, { showLink: false }),
+    ]);
+    // The verified one is checked again too.
+    await backdateCheckedAt((await postingAt(upload.id, 3)).id);
+    const getPost = spyGetPost();
+
+    await saveOk(d.actor, upload.id, [
+      vimeo(1),
+      FACEBOOK,
+      demoPaste(post.permalink),
+      X_POST,
+    ]);
+
+    expect(getPost).toHaveBeenCalledTimes(1);
+    expect(
+      (await postingsOf(upload.id)).map((p) => [
+        p.platform,
+        p.verification,
+        p.showLink,
+      ]),
+    ).toEqual([
+      ["other", "unverified", false],
+      ["facebook", "unverified", false],
+      ["mock", "verified", false],
+      ["x", "unverified", true],
+    ]);
+  });
+
+  it("hides a link saved shown but unverified once a re-save verifies it as an unlisted post, with no Switch sent (07 D18)", async () => {
+    const { d, upload, post, row } = await pastedOnUpload("01", {
+      failWith: new SocialUpstreamError(),
+    });
+    expect(row).toMatchObject({ verification: "unverified", showLink: true });
+    await backdateCheckedAt(row.id);
+    liveGetPost({ visibility: "unlisted" });
+
+    await saveOk(d.actor, upload.id, [demoPaste(post.permalink)]);
+
+    expect(await postingAt(upload.id, 1)).toMatchObject({
+      verification: "verified",
+      showLink: false,
+    });
+  });
+
+  it("keeps each choice with its post when two links swap fields", async () => {
+    const { creator, actor } = await bareCreator();
+    const upload = await insertUploadVideo(creator);
+    fetches.remember("x", X2_LINK);
+    await saveOk(actor, upload.id, [
+      { ...X_POST, showLink: false },
+      { platform: "x", link: X2_LINK },
+      vimeo(1, { showLink: false }),
+      vimeo(2),
+    ]);
+
+    await saveOk(actor, upload.id, [
+      { platform: "x", link: X2_LINK },
+      X_POST,
+      vimeo(2),
+      vimeo(1),
+    ]);
+
+    expect(
+      (await postingsOf(upload.id)).map((p) => [p.url, p.showLink]),
+    ).toEqual([
+      ["https://x.com/i/status/1790000000000000002", true],
+      [X_URL, false],
+      ["https://vimeo.com/2", true],
+      ["https://vimeo.com/1", false],
+    ]);
+  });
 });
 
 describe("verifyPostingLink (07 D68)", () => {
@@ -1524,6 +1964,81 @@ describe("verifyPostingLink (07 D68)", () => {
     ).rejects.toBeInstanceOf(NotPublicError);
     expect(await postsOf(d.account.id)).toEqual([]);
   });
+
+  it("asks nothing once its signal has aborted: a DB match or a lookup is check_failed and not reached, never not_found (Q-82 a)", async () => {
+    const d = await syncedDemo();
+    const post = await postNumber(d.account.id, "01");
+    const elsewhere = await demoAccount();
+    const getPost = spyGetPost();
+    const find = spyFind();
+    const opts = { signal: AbortSignal.abort() };
+
+    for (const link of [
+      { platform: "mock" as const, linkKey: post.linkKey, url: post.permalink },
+      demoLink(elsewhere.account, "03"),
+    ]) {
+      expect(await verifyPostingLink(d.account.creatorId, link, opts)).toEqual({
+        ...notVerified("check_failed"),
+        notReached: true,
+      });
+    }
+    expect(getPost).not.toHaveBeenCalled();
+    expect(find).not.toHaveBeenCalled();
+  });
+
+  it("starts no token refresh that couldn't end before the deadline: not reached, nothing asked, the account still connected (Q-82 a)", async () => {
+    const d = await syncedDemo();
+    const post = await postNumber(d.account.id, "01");
+    await db
+      .update(socialAccount)
+      .set({ accessTokenExpiresAt: new Date(Date.now() - HOUR_MS) })
+      .where(eq(socialAccount.id, d.account.id));
+    const getPost = spyGetPost();
+    const refresh = vi.spyOn(mockProvider, "refreshToken");
+    const link = {
+      platform: "mock" as const,
+      linkKey: post.linkKey,
+      url: post.permalink,
+    };
+
+    expect(
+      await verifyPostingLink(d.account.creatorId, link, {
+        refreshBy: Date.now() + 1_000,
+      }),
+    ).toEqual({ ...notVerified("check_failed"), notReached: true });
+    expect(refresh).not.toHaveBeenCalled();
+    expect(getPost).not.toHaveBeenCalled();
+    expect((await accountRow(d.account.id)).status).toBe("connected");
+
+    // With time left, the refresh runs and the link verifies.
+    expect(
+      await verifyPostingLink(d.account.creatorId, link, {
+        refreshBy: Date.now() + 60_000,
+      }),
+    ).toMatchObject({ verification: "verified" });
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops a lookup at the deadline: no call on the next account (Q-82 a)", async () => {
+    const { creator } = await bareCreator();
+    await extraDemoAccount(creator, new Date(Date.now() - HOUR_MS));
+    await extraDemoAccount(creator, new Date());
+    const elsewhere = await demoAccount();
+    const deadline = new AbortController();
+    const realFind = mockProvider.findPostByLinkKey.bind(mockProvider);
+    const find = spyFind().mockImplementation(async (...args) => {
+      const found = await realFind(...args);
+      deadline.abort();
+      return found;
+    });
+
+    expect(
+      await verifyPostingLink(creator.id, demoLink(elsewhere.account, "09"), {
+        signal: deadline.signal,
+      }),
+    ).toEqual(notVerified("check_failed"));
+    expect(find).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("recheckPosting (Check again)", () => {
@@ -1573,6 +2088,7 @@ describe("recheckPosting (Check again)", () => {
       failWith: new SocialUpstreamError(),
     });
     expect(row).toMatchObject({ verification: "unverified", showLink: true });
+    await backdateCheckedAt(row.id);
     liveGetPost({ visibility: "unlisted" });
 
     await recheckPosting(d.actor, { postingId: row.id });
@@ -1595,6 +2111,7 @@ describe("recheckPosting (Check again)", () => {
     const theirs = await postingAt(bUpload.id, 1);
     // Neither unverified paste is audited.
     expect(await conflictAuditsNaming([mine.id, theirs.id])).toEqual([]);
+    await backdateCheckedAt(mine.id);
 
     await recheckPosting(d.actor, { postingId: mine.id });
 
@@ -1624,6 +2141,7 @@ describe("recheckPosting (Check again)", () => {
     await releasePosting(source);
     await releasePosting(extra);
     expect((await videoRow(videoId)).ownership).toBe("self_attested");
+    for (const row of [source, extra]) await backdateCheckedAt(row.id);
 
     for (const row of [source, extra]) {
       await setSameVideoConfirmed(videoId);
@@ -1653,6 +2171,7 @@ describe("recheckPosting (Check again)", () => {
   it("keeps a released row's audit ids when Check again doesn't verify it (post_removed)", async () => {
     const { d, upload, post, row } = await pastedOnUpload("05");
     await releasePosting(row);
+    await backdateCheckedAt(row.id);
     setMockScenarioForTests("post_removed");
 
     expect(await recheckPosting(d.actor, { postingId: row.id })).toMatchObject({
@@ -1909,6 +2428,67 @@ describe("confirmSameVideo: the tick on Where posted (02 §5.6; 07 D69)", () => 
     }
     expect(await confirmedAt(upload.id)).toBeNull();
   });
+
+  it("refuses a video that isn't draft or unpublished (PostingsLockedError) first, confirming or withdrawing", async () => {
+    const { d, upload } = await pastedOnUpload();
+    await markOriginalReady(upload);
+    await confirmSameVideo(d.actor, upload.id);
+    const tick = await confirmedAt(upload.id);
+    await publishVideo(upload);
+    // No verified posting either: the locked status still answers first.
+    const bare = await publishVideo(
+      await insertUploadVideo({ id: d.account.creatorId }),
+    );
+
+    for (const id of [upload.id, bare.id]) {
+      await expect(confirmSameVideo(d.actor, id)).rejects.toBeInstanceOf(
+        PostingsLockedError,
+      );
+      await expect(withdrawSameVideo(d.actor, id)).rejects.toBeInstanceOf(
+        PostingsLockedError,
+      );
+    }
+    expect(await confirmedAt(upload.id)).toEqual(tick);
+    expect(await confirmedAt(bare.id)).toBeNull();
+  });
+
+  it("takes the tick back with withdrawSameVideo (owner answer Q-83 a); on a clear tick it writes nothing", async () => {
+    const { d, upload } = await pastedOnUpload();
+    await markOriginalReady(upload);
+    await confirmSameVideo(d.actor, upload.id);
+    expect(await confirmedAt(upload.id)).toBeInstanceOf(Date);
+
+    await withdrawSameVideo(d.actor, upload.id);
+    expect(await confirmedAt(upload.id)).toBeNull();
+    const cleared = await videoRow(upload.id);
+    await withdrawSameVideo(d.actor, upload.id);
+    expect(await videoRow(upload.id)).toEqual(cleared);
+
+    const unpublished = await insertUploadVideo(
+      { id: d.account.creatorId },
+      { status: "unpublished" },
+    );
+    await setSameVideoConfirmed(unpublished.id);
+    await withdrawSameVideo(d.actor, unpublished.id);
+    expect(await confirmedAt(unpublished.id)).toBeNull();
+  });
+
+  it("withdrawSameVideo answers another creator's video, an unknown id and a non-uuid as not found", async () => {
+    const { d, upload } = await pastedOnUpload();
+    const tick = await setSameVideoConfirmed(upload.id);
+    const other = await bareCreator();
+
+    for (const [actor, id] of [
+      [other.actor, upload.id],
+      [d.actor, randomUUID()],
+      [d.actor, "not-a-uuid"],
+    ] as const) {
+      await expect(withdrawSameVideo(actor, id)).rejects.toBeInstanceOf(
+        VideoNotFoundError,
+      );
+    }
+    expect(await confirmedAt(upload.id)).toEqual(tick);
+  });
 });
 
 describe("listVideoPostings (the owner's DTOs)", () => {
@@ -2018,6 +2598,7 @@ describe("listVideoPostings (the owner's DTOs)", () => {
     ]);
     const [verified] = dtos;
     if (!verified) throw new Error("no verified posting");
+    await backdateCheckedAt(verified.id);
     expect(
       await recheckPosting(d.actor, { postingId: verified.id }),
     ).toMatchObject({ verification: "verified", visibility: "unlisted" });

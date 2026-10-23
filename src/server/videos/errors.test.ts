@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   AlreadyLicensableElsewhereError,
   NotPublicError,
+  PostingsLockedError,
 } from "../postings/errors";
 import {
   AlreadyLinkedError,
@@ -50,6 +51,7 @@ describe("makeLicensableErrorCode", () => {
 describe("confirmSameVideoErrorCode", () => {
   it.each([
     [new VideoNotFoundError(), "not_found"],
+    [new PostingsLockedError(), "postings_locked"],
     [new NoVerifiedPostingError(), "no_verified_posting"],
     [new OriginalNotReadyError(), "original_not_ready"],
   ])("maps %o to %s", (error, code) => {

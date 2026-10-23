@@ -31,7 +31,7 @@ import {
   syncFailureLine,
   toggleChip,
 } from "./posting-picker-state";
-import { DEMO_01, SOURCE_POSTING, savedPosting } from "./postings-fixtures";
+import { SOURCE_POSTING, savedPosting } from "./postings-fixtures";
 
 const opts = { allowMock: true };
 const REEL = "https://www.instagram.com/reel/C0dEaBcDeF1/";
@@ -308,12 +308,17 @@ describe("links: errors, Move and the Switch", () => {
     );
   });
 
-  it("posts showLink only for a toggled Switch or an unchanged link saved off (07 D18: never a default)", () => {
-    const off = savedPosting({ id: "o", showLink: false });
-    let state = pickerState([off], false);
-    expect(showLinkValue(state.rows[0], off)).toBe(false);
-    const on = savedPosting({ id: "p", showLink: true });
-    expect(showLinkValue(pickerState([on], false).rows[0], on)).toBeUndefined();
+  it("posts showLink only once the creator turns the Switch, never a saved value (07 D18; owner answer Q-86 a)", () => {
+    // Saved off or on, the row posts nothing until turned: the server keeps a saved hidden link hidden.
+    for (const showLink of [false, true]) {
+      const saved = savedPosting({ id: "s", showLink });
+      const state = pickerState([saved], false);
+      expect(showLinkValue(state.rows[0])).toBeUndefined();
+      expect(shownSwitch(state.rows[0], saved)).toBe(showLink);
+      expect(showLinkValue(setSwitch(state, "s", !showLink).rows[0])).toBe(
+        !showLink,
+      );
+    }
     let fresh = toggleChip(empty(), "youtube", false);
     fresh = setLink(
       fresh,
@@ -321,20 +326,12 @@ describe("links: errors, Move and the Switch", () => {
       "https://www.youtube.com/shorts/abcdefghijk",
       opts,
     );
-    expect(showLinkValue(fresh.rows[0], null)).toBeUndefined();
-    expect(showLinkValue(setSwitch(fresh, "new-0", false).rows[0], null)).toBe(
-      false,
-    );
-    expect(showLinkValue(setSwitch(fresh, "new-0", true).rows[0], null)).toBe(
-      true,
-    );
-    // A toggled Switch starts over when the link becomes another post.
-    state = setSwitch(state, "o", true);
-    state = setLink(state, "o", DEMO_01, opts);
-    expect(state.rows[0].switchOn).toBeNull();
+    expect(showLinkValue(fresh.rows[0])).toBeUndefined();
+    expect(showLinkValue(setSwitch(fresh, "new-0", false).rows[0])).toBe(false);
+    expect(showLinkValue(setSwitch(fresh, "new-0", true).rows[0])).toBe(true);
   });
 
-  it("posts a saved off back for the same post only, as the picker pairs a row with its saved posting (07 D18)", () => {
+  it("starts a turned Switch over when the link becomes another post (or none), and keeps it for the same post", () => {
     const off = savedPosting({
       id: "r",
       platform: "instagram",
@@ -342,35 +339,21 @@ describe("links: errors, Move and the Switch", () => {
       url: REEL_URL,
       showLink: false,
     });
-    const posted = (state: ReturnType<typeof pickerState>) =>
-      showLinkValue(state.rows[0], matchingSaved(state.rows[0], off, opts));
-    let state = pickerState([off], false);
-    expect(posted(state)).toBe(false);
-    // A tracking-param paste of the same reel is still the saved post.
-    state = setLink(state, "r", `${REEL}?igsh=abc123`, opts);
-    expect(posted(state)).toBe(false);
-    // Another post, an empty field or a link that doesn't parse: no saved post, nothing posted.
+    const turned = setSwitch(pickerState([off], false), "r", true);
+    // A tracking-param paste of the same reel is still the same post.
+    expect(
+      showLinkValue(setLink(turned, "r", `${REEL}?igsh=abc123`, opts).rows[0]),
+    ).toBe(true);
+    // Another post, an empty field or a link that doesn't parse: nothing posted.
     for (const link of [
       "https://www.instagram.com/reel/ZZZZZZZZZZZ/",
       "",
       "not a link",
     ]) {
-      expect(posted(setLink(state, "r", link, opts))).toBeUndefined();
+      const row = setLink(turned, "r", link, opts).rows[0];
+      expect(row.switchOn).toBeNull();
+      expect(showLinkValue(row)).toBeUndefined();
     }
-    const noLink = savedPosting({
-      id: "n",
-      platform: "facebook",
-      label: "Facebook",
-      url: null,
-      showLink: false,
-    });
-    const linkless = pickerState([noLink], false);
-    expect(
-      showLinkValue(
-        linkless.rows[0],
-        matchingSaved(linkless.rows[0], noLink, opts),
-      ),
-    ).toBeUndefined();
   });
 });
 
@@ -552,7 +535,7 @@ describe("sameVideoView", () => {
     ).toBeNull();
   });
 
-  it("lists the verified posts in position order and warns per post more than 1 s off, naming it when there are several", () => {
+  it("lists the verified posts in position order and warns per post more than 1 s off; one post is “the post”", () => {
     const one = sameVideoView([savedPosting({ id: "v2" })], 14_000);
     expect(one?.several).toBe(false);
     expect(one?.warnings).toEqual([
@@ -565,13 +548,60 @@ describe("sameVideoView", () => {
       [savedPosting({ id: "v2" }), SOURCE_POSTING],
       14_000,
     );
+    expect(two?.several).toBe(true);
     expect(two?.verified.map((p) => p.id)).toEqual([SOURCE_POSTING.id, "v2"]);
-    expect(two?.warnings).toEqual([
+    expect(sameVideoView([savedPosting({})], null)?.warnings).toEqual([]);
+  });
+
+  it("names the platform when several are on different platforms (Q-76 a)", () => {
+    const tiktok = savedPosting({
+      id: "t",
+      platform: "tiktok",
+      label: "TikTok",
+      verifiedUsername: "@maya.films",
+    });
+    const view = sameVideoView([SOURCE_POSTING, tiktok], 14_000);
+    expect(view?.warnings).toEqual([
       {
-        id: "v2",
-        text: "This file is 0:14 but the Demo post is 0:38. Make sure it's the same video.",
+        id: "t",
+        text: "This file is 0:14 but the TikTok post is 0:38. Make sure it's the same video.",
       },
     ]);
-    expect(sameVideoView([savedPosting({})], null)?.warnings).toEqual([]);
+  });
+
+  it("names the account when another verified post shares the platform (Q-85 a); the platform alone without a name", () => {
+    const tiktok = (id: string, verifiedUsername: string | null) =>
+      savedPosting({
+        id,
+        platform: "tiktok",
+        label: "TikTok",
+        verifiedUsername,
+        position: id === "t1" ? 1 : 2,
+      });
+    const youtube = savedPosting({
+      id: "y",
+      platform: "youtube",
+      label: "YouTube",
+      verifiedUsername: "Maya Films",
+      position: 3,
+    });
+    const view = sameVideoView(
+      [tiktok("t1", "@maya.films"), tiktok("t2", null), youtube],
+      14_000,
+    );
+    expect(view?.warnings.map((w) => [w.id, w.text])).toEqual([
+      [
+        "t1",
+        "This file is 0:14 but the TikTok post on @maya.films is 0:38. Make sure it's the same video.",
+      ],
+      [
+        "t2",
+        "This file is 0:14 but the TikTok post is 0:38. Make sure it's the same video.",
+      ],
+      [
+        "y",
+        "This file is 0:14 but the YouTube post is 0:38. Make sure it's the same video.",
+      ],
+    ]);
   });
 });

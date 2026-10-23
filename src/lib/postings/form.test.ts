@@ -129,7 +129,7 @@ describe("postingsFromFormData (02 §6.1)", () => {
     });
   });
 
-  it("reads an absent showLink, sourceShowLink, tick and key as absent (the server default applies)", () => {
+  it("reads an absent showLink, sourceShowLink, tick and key as absent (the server's save decides, owner answer Q-86 a)", () => {
     const read = postingsFromFormData(
       form([
         ["videoId", VIDEO_ID],
