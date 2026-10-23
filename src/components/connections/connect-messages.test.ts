@@ -8,14 +8,17 @@ import {
   cardState,
   connectErrorBanner,
   connectErrorCode,
+  connectedProvider,
   connectedToastMessage,
   connectStartHref,
+  couldntReach,
   disconnectedToast,
   disconnectTitle,
   liveVideosSentence,
   platformLine,
   rateLimitMessage,
   reconnectMessage,
+  retryMinutes,
   syncLine,
 } from "./connect-messages";
 
@@ -55,6 +58,14 @@ describe("connect messages (05 §6.2, 07 D37)", () => {
     );
     for (const raw of ["nope", "", undefined, "__proto__"]) {
       expect(connectedToastMessage(raw)).toBeNull();
+    }
+  });
+
+  it("reads ?connected= as a provider only, the first of a repeated one", () => {
+    expect(connectedProvider("mock")).toBe("mock");
+    expect(connectedProvider(["youtube", "mock"])).toBe("youtube");
+    for (const raw of ["nope", "", undefined, "__proto__", ["x", "mock"]]) {
+      expect(connectedProvider(raw)).toBeNull();
     }
   });
 
@@ -137,6 +148,16 @@ describe("the account card (04 §9.18, §11.7, §11.8; 07 D43)", () => {
     expect(rateLimitMessage("Demo", 15)).toBe(
       "Demo asked us to slow down. Try again in 15 min.",
     );
+    expect(couldntReach("Demo")).toBe(
+      "Couldn't reach Demo. Your saved posts are still here.",
+    );
+  });
+
+  it("rounds a retry-after up to whole minutes, at least 1, and 1 when none was given", () => {
+    expect(retryMinutes(840)).toBe(14);
+    expect(retryMinutes(841)).toBe(15);
+    expect(retryMinutes(0)).toBe(1);
+    expect(retryMinutes(undefined)).toBe(1);
   });
 
   it("says how many live videos came from the account, in the singular for one (owner answer Q-20 a)", () => {

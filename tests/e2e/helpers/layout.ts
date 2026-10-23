@@ -84,6 +84,13 @@ export async function expectAbove(upper: Locator, lower: Locator) {
   expect(a.bottom).toBeLessThanOrEqual(b.top);
 }
 
+/** `inner` lies within `outer` from left to right, within 1 px (a part inside its column). */
+export async function expectInside(inner: Locator, outer: Locator) {
+  const [a, b] = await Promise.all([boxOf(inner), boxOf(outer)]);
+  expect(a.left).toBeGreaterThanOrEqual(b.left - 1);
+  expect(a.right).toBeLessThanOrEqual(b.right + 1);
+}
+
 /** A control keeps a 44 × 44 px target at every tier (07 D152): its own box, or the hit-44 ::after around a smaller one. */
 export async function expectTouchTarget(control: Locator) {
   const { width, height } = await control.evaluate((el) => {

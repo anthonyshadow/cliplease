@@ -66,19 +66,23 @@ export async function refreshVideoOwnership(
   return row.ownership;
 }
 
-/** A pasted link's platform post as the cross-creator rule checks it for one creator's video (07 D68). */
+/**
+ * A pasted link's platform post as the cross-creator rule checks it for one creator's video (07 D68). `index` is the
+ * row's index in a save's input, carried by the refusal (owner answer Q-78 a); Check again's target has none.
+ */
 export type PostingTarget = {
   creatorId: string;
   videoId: string;
   platform: PostingPlatform;
   linkKey: string;
+  index?: number;
 };
 
 /**
  * The cross-creator rule for a pasted link (03 §7.4 "verified elsewhere", video_posting_verified_uidx; 07 D68), run
  * for every posting with a link key whether or not it would verify: verified on another creator's video →
  * AlreadyLicensableElsewhereError; on this creator's other video → AlreadyOnYourVideoError with that video's title.
- * Held by this video, or by nobody: returns.
+ * Either carries the target's `index`. Held by this video, or by nobody: returns.
  */
 export function assertPostingAvailable(
   exec: Pick<typeof db, "select">,
@@ -125,10 +129,10 @@ export async function assertPostingsAvailable(
     );
     if (!holder) continue;
     if (holder.creatorId !== target.creatorId) {
-      throw new AlreadyLicensableElsewhereError();
+      throw new AlreadyLicensableElsewhereError(target.index);
     }
     if (holder.videoId !== target.videoId) {
-      throw new AlreadyOnYourVideoError(holder.title);
+      throw new AlreadyOnYourVideoError(holder.title, target.index);
     }
   }
 }
@@ -225,8 +229,9 @@ export function isVerifiedPostingConflict(error: unknown): boolean {
 /**
  * What a failed posting write throws (07 D66): anything but a lost video_posting_verified_uidx is `error` as it is. A
  * lost index names no row, so the cross-creator rule runs again for `targets`: it throws AlreadyOnYourVideoError when
- * the creator's own other video won the race, or AlreadyLicensableElsewhereError; when it passes, the result is
- * AlreadyLicensableElsewhereError. `catch (e) { throw await verifiedPostingConflictError(db, e, targets); }`.
+ * the creator's own other video won the race, or AlreadyLicensableElsewhereError, each with the refused target's
+ * `index`; when it passes, the result is AlreadyLicensableElsewhereError with no index.
+ * `catch (e) { throw await verifiedPostingConflictError(db, e, targets); }`.
  */
 export async function verifiedPostingConflictError(
   exec: Pick<typeof db, "select">,

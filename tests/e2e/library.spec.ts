@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { expect, type Request, type Response, test } from "@playwright/test";
+import { expect, type Response, test } from "@playwright/test";
 import { encodeLibraryCursor } from "../../src/lib/library/filter";
 import { CONNECTIONS, SYNC_LINE } from "./helpers/connections";
 import { collectConsoleErrors, type ExpectedFailure } from "./helpers/console";
@@ -15,7 +15,8 @@ import {
   tiles,
   waitForGridHydrated,
 } from "./helpers/library";
-import { isServerAction, pressAndSettle, pressLink } from "./helpers/press";
+import { trackExternalRequests, trackServerActions } from "./helpers/network";
+import { pressAndSettle, pressLink } from "./helpers/press";
 
 // S12 behavior (05 §6.1, J3) on chromium-desktop and webkit-iphone: the empty state, a Demo connect's 24 tiles, the
 // platform chip, caption search, a second account with Show more and the account strip, Sync all's summary, a failed
@@ -28,7 +29,6 @@ test.use({ reducedMotion: "reduce" });
 const FIRST_CAPTION = /^He saw snow for the first time/;
 const FIRST_META = "Demo · 1 Oct 2026 · 0:14 · 14.8M views";
 const THUMBNAIL_PATH = /^\/api\/library\/thumbnails\/([0-9a-f-]{36})$/;
-const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 test("J3: the empty Library, then a Demo connect shows 24 tiles with loaded thumbnails, and opening it syncs nothing", async ({
   page,
@@ -36,13 +36,7 @@ test("J3: the empty Library, then a Demo connect shows 24 tiles with loaded thum
   test.setTimeout(90_000);
   const errors = collectConsoleErrors(page);
   // 07 D42: images come through our proxy; the page never asks another host for anything.
-  const external: string[] = [];
-  page.on("request", (request) => {
-    const url = new URL(request.url());
-    if (url.protocol.startsWith("http") && !LOCAL_HOSTS.has(url.hostname)) {
-      external.push(request.url());
-    }
-  });
+  const external = trackExternalRequests(page);
   await signUpCreator(page);
 
   // No account yet: the no-accounts EmptyState (04 §11.9), with no strip, chips, search or grid.
@@ -67,10 +61,7 @@ test("J3: the empty Library, then a Demo connect shows 24 tiles with loaded thum
   await connectDemo(page);
 
   // Open the Library: every Server Action from here on would be a sync on open (07 D13).
-  const actions: string[] = [];
-  page.on("request", (request: Request) => {
-    if (isServerAction(request)) actions.push(request.url());
-  });
+  const actions = trackServerActions(page);
   const thumbnails = new Map<string, { status: number; type?: string }>();
   page.on("response", (response: Response) => {
     const { pathname } = new URL(response.url());

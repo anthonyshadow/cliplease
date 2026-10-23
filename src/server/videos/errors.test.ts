@@ -13,8 +13,8 @@ import {
   confirmSameVideoErrorCode,
   makeLicensableErrorCode,
   NeedsReconnectError,
-  NotFromLibraryError,
   NotOnAccountError,
+  NoVerifiedPostingError,
   OriginalNotReadyError,
   PostNotFoundError,
   VideoNotFoundError,
@@ -50,7 +50,7 @@ describe("makeLicensableErrorCode", () => {
 describe("confirmSameVideoErrorCode", () => {
   it.each([
     [new VideoNotFoundError(), "not_found"],
-    [new NotFromLibraryError(), "not_from_library"],
+    [new NoVerifiedPostingError(), "no_verified_posting"],
     [new OriginalNotReadyError(), "original_not_ready"],
   ])("maps %o to %s", (error, code) => {
     expect(confirmSameVideoErrorCode(error)).toBe(code);
@@ -76,7 +76,7 @@ describe("the refusals' messages", () => {
         new NotPublicError(),
         new AlreadyLicensableElsewhereError(),
         new VideoNotFoundError(),
-        new NotFromLibraryError(),
+        new NoVerifiedPostingError(),
         new OriginalNotReadyError(),
       ].map((e) => [e.name, e.message]),
     ).toEqual([
@@ -86,7 +86,7 @@ describe("the refusals' messages", () => {
       ["NotPublicError", "not_public"],
       ["AlreadyLicensableElsewhereError", "already_licensable_elsewhere"],
       ["VideoNotFoundError", "video_not_found"],
-      ["NotFromLibraryError", "not_from_library"],
+      ["NoVerifiedPostingError", "no_verified_posting"],
       ["OriginalNotReadyError", "original_not_ready"],
     ]);
   });

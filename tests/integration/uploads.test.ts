@@ -1548,6 +1548,60 @@ describe("presignUpload (original): a new start", () => {
   });
 });
 
+describe("the same-video tick and a new original (owner answer Q-77 a)", () => {
+  it("clears the tick when a replacement completes ready, and keeps it while the replacement is only started or resumed", async () => {
+    const c = await newCreator(disk);
+    const v = await newVideo(c.creatorId);
+    expect(
+      (await uploadOriginal(c.actor, v.id, bytesOf(SMALL))).result,
+    ).toEqual({ ok: true });
+    const tick = new Date(Date.now() - HOUR_MS);
+    await db
+      .update(video)
+      .set({ sameVideoConfirmedAt: tick })
+      .where(eq(video.id, v.id));
+
+    const bytes = bytesOf(TWO_PARTS);
+    const second = await startOriginal(c.actor, v.id, TWO_PARTS);
+    await sendParts(c.actor, {
+      videoId: v.id,
+      uploadId: second.uploadId,
+      bytes,
+      partNumbers: [1],
+    });
+    expect(
+      await presignUpload(
+        c.actor,
+        originalStart(v.id, TWO_PARTS, { resume: true }),
+      ),
+    ).toMatchObject({ ok: true, upload: { doneParts: [1] } });
+    expect(await videoRow(v.id)).toMatchObject({
+      originalStatus: "uploading",
+      sameVideoConfirmedAt: tick,
+    });
+
+    await sendParts(c.actor, {
+      videoId: v.id,
+      uploadId: second.uploadId,
+      bytes,
+      partNumbers: [2],
+    });
+    expect(
+      await completeUpload(c.actor, {
+        kind: "original",
+        videoId: v.id,
+        uploadId: second.uploadId,
+      }),
+    ).toEqual({ ok: true });
+    // The tick confirmed the file this one replaced: it comes back unticked.
+    expect(await videoRow(v.id)).toMatchObject({
+      originalStatus: "ready",
+      originalObjectKey: second.key,
+      sameVideoConfirmedAt: null,
+    });
+  });
+});
+
 describe("presignUpload (original): a start whose transaction throws", () => {
   it("aborts the new multipart upload and leaves the row as it was", async () => {
     const c = await newCreator(disk);

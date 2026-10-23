@@ -39,6 +39,7 @@ import {
 import {
   type PostingInput,
   recheckPosting,
+  type SaveVideoPostingsInput,
   saveVideoPostings,
 } from "../../src/server/postings/save";
 import { verifyPostingLink } from "../../src/server/postings/verify";
@@ -54,7 +55,11 @@ import {
 } from "../../src/server/social/providers/mock";
 import { createVideoFromPost } from "../../src/server/videos/create";
 import { confirmSameVideo } from "../../src/server/videos/edit";
-import { VideoNotFoundError } from "../../src/server/videos/errors";
+import {
+  NoVerifiedPostingError,
+  OriginalNotReadyError,
+  VideoNotFoundError,
+} from "../../src/server/videos/errors";
 import { bareCreator, mockNextHeaders } from "../helpers/auth";
 import {
   accountRow,
@@ -206,10 +211,15 @@ function save(
   postings: PostingInput[],
   notPosted = false,
 ) {
-  for (const p of postings) {
+  return saveWith(actor, { videoId, notPosted, postings });
+}
+
+/** save with the whole input, the source row's Switch included (owner answer Q-73 a). */
+function saveWith(actor: Actor, input: SaveVideoPostingsInput) {
+  for (const p of input.postings) {
     if (p.link) fetches.remember(p.platform, p.link);
   }
-  return saveVideoPostings(actor, { videoId, notPosted, postings });
+  return saveVideoPostings(actor, input);
 }
 
 /** A save that must succeed: the owner DTOs it returns. */
@@ -645,6 +655,35 @@ describe("saveVideoPostings: Verified only by the post's id on a linked account 
     ]);
   });
 
+  it("keeps a verified unlisted link the creator showed shown when a later save sends no Switch for it (07 D18)", async () => {
+    const { d, upload, post: first } = await syncedUpload();
+    const second = await postNumber(d.account.id, "02");
+    liveGetPost({ visibility: "unlisted" });
+    await saveOk(d.actor, upload.id, [
+      demoPaste(first.permalink),
+      demoPaste(second.permalink, { showLink: true }),
+    ]);
+
+    // The step posts no unchanged Switch; another row added re-checks both links, still unlisted.
+    await saveOk(d.actor, upload.id, [
+      demoPaste(first.permalink),
+      demoPaste(second.permalink),
+      FACEBOOK,
+    ]);
+
+    expect(
+      (await postingsOf(upload.id)).map((p) => [
+        p.platform,
+        p.verification,
+        p.showLink,
+      ]),
+    ).toEqual([
+      ["mock", "verified", false],
+      ["mock", "verified", true],
+      ["facebook", "unverified", true],
+    ]);
+  });
+
   it("returns each refused link by its index in the input, with no platform call and nothing written", async () => {
     const { d, upload, post } = await syncedUpload();
     const getPost = spyGetPost();
@@ -940,12 +979,50 @@ describe("saveVideoPostings: one verified posting per platform post (07 D66, D68
       throw new SocialUpstreamError();
     });
 
-    await expect(
-      save(d.actor, upload.id, [demoPaste(post.permalink)]),
-    ).rejects.toBeInstanceOf(AlreadyLicensableElsewhereError);
+    const error = await save(d.actor, upload.id, [
+      FACEBOOK,
+      demoPaste(post.permalink),
+    ]).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(AlreadyLicensableElsewhereError);
+    // The re-check names the refused row too (Q-78 a).
+    expect(error).toMatchObject({ index: 1 });
 
     expect(getPost).toHaveBeenCalledTimes(1);
     expect(elsewhere).toHaveLength(1);
+    expect(await postingsOf(upload.id)).toEqual([]);
+    expect((await videoRow(upload.id)).postingsConfirmedAt).toBeNull();
+  });
+
+  it("names the refused row by its input index (owner answer Q-78 a), whichever refusal, and saves nothing", async () => {
+    const { d, post } = await libraryVideo("01");
+    const upload = await insertUploadVideo({ id: d.account.creatorId });
+    const post03 = await postNumber(d.account.id, "03");
+    const elsewhere = "mock_post_0badc0de_02";
+    await insertVerifiedElsewhere(elsewhere);
+    const getPost = spyGetPost();
+    const refusal = (postings: PostingInput[]) =>
+      save(d.actor, upload.id, postings).catch((e: unknown) => e);
+
+    // A copy dropped before the check (index 2) keeps the input's numbering.
+    const mine = await refusal([
+      FACEBOOK,
+      demoPaste(post03.permalink),
+      demoPaste(`${post03.permalink}/?utm_source=copy`),
+      demoPaste(post.permalink),
+    ]);
+    expect(mine).toBeInstanceOf(AlreadyOnYourVideoError);
+    expect(mine).toMatchObject({ videoTitle: SNOW_TITLE, index: 3 });
+
+    const theirs = await refusal([
+      vimeo(1),
+      { platform: "tiktok" },
+      demoPaste(`https://example.com/mock/${elsewhere}`),
+      demoPaste(post.permalink),
+    ]);
+    expect(theirs).toBeInstanceOf(AlreadyLicensableElsewhereError);
+    expect(theirs).toMatchObject({ index: 2 });
+
+    expect(getPost).not.toHaveBeenCalled();
     expect(await postingsOf(upload.id)).toEqual([]);
     expect((await videoRow(upload.id)).postingsConfirmedAt).toBeNull();
   });
@@ -1099,6 +1176,84 @@ describe("saveVideoPostings: the rules of the step (07 D69)", () => {
       [1, "facebook", false],
     ]);
     expect((await videoRow(videoId)).ownership).toBe("verified_owner");
+  });
+
+  it("sets only the source row's show_link from sourceShowLink (Q-73 a): a kept row, the tick and an upload are unaffected", async () => {
+    const { d, videoId } = await libraryVideo();
+    const post02 = await postNumber(d.account.id, "02");
+    await saveOk(d.actor, videoId, [demoPaste(post02.permalink)]);
+    const [source, kept] = (await postingsOf(videoId)) as [
+      VideoPosting,
+      VideoPosting,
+    ];
+    expect([source.showLink, kept.showLink]).toEqual([true, true]);
+    await markOriginalReady({ id: videoId, creatorId: d.account.creatorId });
+    await confirmSameVideo(d.actor, videoId);
+    const tick = await confirmedAt(videoId);
+    // Q-69 a: the re-save's check of post 02 fails, so that row is kept verified as it was.
+    const getPost = spyGetPost().mockRejectedValue(
+      new SocialRateLimitError(900),
+    );
+
+    expect(
+      await saveWith(d.actor, {
+        videoId,
+        notPosted: false,
+        sourceShowLink: false,
+        postings: [demoPaste(post02.permalink)],
+      }),
+    ).toMatchObject({ ok: true });
+
+    expect(getPost).toHaveBeenCalledTimes(1);
+    const [sourceAfter, keptAfter] = (await postingsOf(videoId)) as [
+      VideoPosting,
+      VideoPosting,
+    ];
+    const { showLink: _was, updatedAt: _then, ...unchanged } = source;
+    const { showLink, updatedAt: _now, ...rest } = sourceAfter;
+    expect(showLink).toBe(false);
+    expect(rest).toEqual(unchanged);
+    expect(verifiedFields(keptAfter)).toEqual(verifiedFields(kept));
+    expect(keptAfter.showLink).toBe(true);
+    const saved = await videoRow(videoId);
+    expect(saved.ownership).toBe("verified_owner");
+    expect(saved.sameVideoConfirmedAt).toEqual(tick);
+    getPost.mockRestore();
+
+    // On again; a save without it leaves the source's Switch as it is.
+    expect(
+      await saveWith(d.actor, {
+        videoId,
+        notPosted: false,
+        sourceShowLink: true,
+        postings: [],
+      }),
+    ).toMatchObject({ ok: true });
+    expect((await postingRow(source.id)).showLink).toBe(true);
+    expect(
+      await saveWith(d.actor, {
+        videoId,
+        notPosted: false,
+        sourceShowLink: false,
+        postings: [],
+      }),
+    ).toMatchObject({ ok: true });
+    await saveOk(d.actor, videoId, [FACEBOOK]);
+    expect((await postingRow(source.id)).showLink).toBe(false);
+
+    // An upload has no source row: the field is ignored.
+    const upload = await insertUploadVideo({ id: d.account.creatorId });
+    expect(
+      await saveWith(d.actor, {
+        videoId: upload.id,
+        notPosted: false,
+        sourceShowLink: false,
+        postings: [FACEBOOK],
+      }),
+    ).toMatchObject({ ok: true });
+    expect(await postingsOf(upload.id)).toMatchObject([
+      { platform: "facebook", isSource: false, showLink: true },
+    ]);
   });
 
   it("refuses notPosted on a Library video (InvalidPostingsError not_posted_library)", async () => {
@@ -1523,9 +1678,12 @@ describe("recheckPosting (Check again)", () => {
     await insertVerifiedElsewhere(post.linkKey);
     const getPost = spyGetPost();
 
-    await expect(
-      recheckPosting(d.actor, { postingId: row.id }),
-    ).rejects.toBeInstanceOf(AlreadyLicensableElsewhereError);
+    const error = await recheckPosting(d.actor, { postingId: row.id }).catch(
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(AlreadyLicensableElsewhereError);
+    // Check again names no input row (Q-78 a is the save's).
+    expect(error).toMatchObject({ index: undefined });
 
     expect(getPost).not.toHaveBeenCalled();
     expect(await postingRow(row.id)).toEqual(released);
@@ -1687,6 +1845,72 @@ describe("recheckPosting (Check again)", () => {
   });
 });
 
+describe("confirmSameVideo: the tick on Where posted (02 §5.6; 07 D69)", () => {
+  it("lets an upload with a verified link confirm once its original is ready; confirming again keeps the first time", async () => {
+    const { d, upload } = await pastedOnUpload();
+    expect((await videoRow(upload.id)).ownership).toBe("verified_owner");
+    await markOriginalReady(upload);
+
+    await confirmSameVideo(d.actor, upload.id);
+    const first = await confirmedAt(upload.id);
+    expect(first).toBeInstanceOf(Date);
+
+    await confirmSameVideo(d.actor, upload.id);
+    expect(await confirmedAt(upload.id)).toEqual(first);
+  });
+
+  it("refuses a video with no verified posting (NoVerifiedPostingError), any source, and stores nothing", async () => {
+    const { creator, actor } = await bareCreator();
+    const bare = await insertUploadVideo(creator);
+    const unverified = await insertUploadVideo(creator);
+    await saveOk(actor, unverified.id, [FACEBOOK, vimeo(31)]);
+    // A Library video whose source posting an admin Disable released (07 D66).
+    const { d, videoId } = await libraryVideo();
+    const [source] = await postingsOf(videoId);
+    if (!source) throw new Error("no source posting");
+    await releasePosting(source);
+    const library = await videoRow(videoId);
+    for (const v of [bare, unverified, library]) await markOriginalReady(v);
+
+    for (const [who, id] of [
+      [actor, bare.id],
+      [actor, unverified.id],
+      [d.actor, library.id],
+    ] as const) {
+      await expect(confirmSameVideo(who, id)).rejects.toBeInstanceOf(
+        NoVerifiedPostingError,
+      );
+      expect(await confirmedAt(id)).toBeNull();
+    }
+  });
+
+  it("refuses before the original is ready (OriginalNotReadyError) and stores nothing", async () => {
+    const { d, upload } = await pastedOnUpload();
+
+    await expect(confirmSameVideo(d.actor, upload.id)).rejects.toBeInstanceOf(
+      OriginalNotReadyError,
+    );
+    expect(await confirmedAt(upload.id)).toBeNull();
+  });
+
+  it("answers another creator's video, an unknown id and a non-uuid as not found", async () => {
+    const { d, upload } = await pastedOnUpload();
+    await markOriginalReady(upload);
+    const other = await bareCreator();
+
+    for (const [actor, id] of [
+      [other.actor, upload.id],
+      [d.actor, randomUUID()],
+      [d.actor, "not-a-uuid"],
+    ] as const) {
+      await expect(confirmSameVideo(actor, id)).rejects.toBeInstanceOf(
+        VideoNotFoundError,
+      );
+    }
+    expect(await confirmedAt(upload.id)).toBeNull();
+  });
+});
+
 describe("listVideoPostings (the owner's DTOs)", () => {
   it("lists every posting by position with labels, account status, and thumbnails on verified rows only; admins too", async () => {
     const { d, post, videoId } = await libraryVideo("01");
@@ -1724,6 +1948,7 @@ describe("listVideoPostings (the owner's DTOs)", () => {
       accountStatus: "connected",
       thumbnailSrc: thumbnail(p),
       durationSec: p.durationSec,
+      visibility: "public",
       showLink: true,
       checkedAt: row.checkedAt?.toISOString() ?? null,
       position: row.position,
@@ -1743,6 +1968,7 @@ describe("listVideoPostings (the owner's DTOs)", () => {
       accountStatus: null,
       thumbnailSrc: null,
       durationSec: null,
+      visibility: null,
       showLink: true,
       checkedAt: null,
       position: row.position,
@@ -1767,6 +1993,34 @@ describe("listVideoPostings (the owner's DTOs)", () => {
     expect(await listVideoPostings(adminActor(), videoId)).toStrictEqual(
       expected,
     );
+  });
+
+  it("gives a verified row its post's visibility (an unlisted post's D18 note) and an unverified row none; Check again too", async () => {
+    const { d, upload, post } = await syncedUpload();
+    liveGetPost({ visibility: "unlisted" });
+
+    await saveOk(d.actor, upload.id, [demoPaste(post.permalink), FACEBOOK]);
+
+    const dtos = await listVideoPostings(d.actor, upload.id);
+    expect(dtos).toMatchObject([
+      {
+        platform: "mock",
+        verification: "verified",
+        visibility: "unlisted",
+        showLink: false,
+      },
+      {
+        platform: "facebook",
+        verification: "unverified",
+        visibility: null,
+        showLink: true,
+      },
+    ]);
+    const [verified] = dtos;
+    if (!verified) throw new Error("no verified posting");
+    expect(
+      await recheckPosting(d.actor, { postingId: verified.id }),
+    ).toMatchObject({ verification: "verified", visibility: "unlisted" });
   });
 
   it("answers another creator and an unknown video as not found (VideoNotFoundError)", async () => {

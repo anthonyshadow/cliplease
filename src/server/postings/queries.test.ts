@@ -27,10 +27,11 @@ const VERIFIED_ROW: OwnerPostingRow = {
   thumbnailUrl: "mock://thumb/01",
   thumbnailFetchedAt: FETCHED_AT,
   durationSec: 14,
+  visibility: "unlisted",
 };
 
 describe("toOwnerPosting", () => {
-  it("gives a verified posting its label, handle, thumbnail (with P11's ?v=) and duration", () => {
+  it("gives a verified posting its label, handle, thumbnail (with P11's ?v=), duration and visibility", () => {
     expect(toOwnerPosting(VERIFIED_ROW)).toEqual({
       id: "posting-1",
       platform: "mock",
@@ -43,13 +44,14 @@ describe("toOwnerPosting", () => {
       accountStatus: "connected",
       thumbnailSrc: `/api/library/thumbnails/post-1?v=${encodeURIComponent(FETCHED_AT.toISOString())}`,
       durationSec: 14,
+      visibility: "unlisted",
       showLink: true,
       checkedAt: CHECKED_AT.toISOString(),
       position: 0,
     });
   });
 
-  it("gives a released posting no handle, thumbnail or duration, though it keeps its post", () => {
+  it("gives a released posting no handle, thumbnail, duration or visibility, though it keeps its post", () => {
     expect(
       toOwnerPosting({
         ...VERIFIED_ROW,
@@ -63,6 +65,7 @@ describe("toOwnerPosting", () => {
       accountStatus: "connected",
       thumbnailSrc: null,
       durationSec: null,
+      visibility: null,
     });
   });
 
@@ -89,6 +92,7 @@ describe("toOwnerPosting", () => {
       thumbnailUrl: null,
       thumbnailFetchedAt: null,
       durationSec: null,
+      visibility: null,
     };
     expect(toOwnerPosting(other)).toMatchObject({
       label: "Vimeo",

@@ -4,7 +4,9 @@ import type { syncAllAccounts } from "@/app/(dashboard)/dashboard/_actions/socia
 import {
   accountName,
   capNote,
+  couldntReach,
   rateLimitMessage,
+  retryMinutes,
   syncLine,
   tryAgainIn,
 } from "@/components/connections/connect-messages";
@@ -85,8 +87,7 @@ export function syncAllSummary(
       ];
     }
     if (result.reason === "rate_limited") {
-      const minutes = Math.max(1, Math.ceil((result.retryAfterSec ?? 60) / 60));
-      return [rateLimitMessage(label, minutes)];
+      return [rateLimitMessage(label, retryMinutes(result.retryAfterSec))];
     }
     return [];
   });
@@ -309,7 +310,7 @@ export function syncBanners(
         kind: "problem",
         key: a.id,
         target: { socialAccountId: a.id },
-        message: `Couldn't reach ${label}. Your saved posts are still here.`,
+        message: couldntReach(label),
       });
     }
   }

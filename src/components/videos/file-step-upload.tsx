@@ -9,14 +9,13 @@ import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
 import { PRIMARY_WIDTH } from "@/components/ui/primary-width";
 import { useClientValue } from "@/components/ui/use-client-value";
-import { formatDuration } from "@/lib/format";
 import { signInPath } from "@/lib/sign-in";
 import { isIosDevice } from "@/lib/upload/device";
 import { deriveFileStep } from "@/lib/upload/file-step-state";
 import {
-  attachedLine,
   checkOriginalFile,
   DROPZONE_COPY,
+  hintsLine,
   milestoneAnnouncement,
   PAUSE_COPY,
   pausedPercent,
@@ -42,13 +41,8 @@ import {
   useUploads,
 } from "@/lib/upload/upload-store";
 import { cn } from "@/lib/utils";
-import { durationMismatchMessage } from "@/lib/videos/duration";
-import type {
-  CreatorSourcePostDTO,
-  CreatorVideoDTO,
-} from "@/server/videos/queries";
+import type { CreatorVideoDTO } from "@/server/videos/queries";
 import { PostSummary } from "./file-step-post-summary";
-import { SameVideoForm } from "./file-step-same-video";
 import { PosterPicker } from "./poster-picker";
 import { type DropzoneView, UploadDropzone } from "./upload-dropzone";
 
@@ -68,29 +62,15 @@ export type FileStepVideo = Pick<
 >;
 
 /**
- * A Library video's File step (P11; 07 D39): its source post, whether the same-video tick is stored, and the post's
- * fixed lines, worded once by the server FileStep so the island's progress renders don't rebuild them.
+ * A Library video's File step (P11; 07 D39): its source post's fixed lines, worded once by the server FileStep so the
+ * island's progress renders don't rebuild them. The post's picture and the same-video tick are Where posted's (07 D69).
  */
 export type FileStepLibrary = {
-  post: CreatorSourcePostDTO;
-  sameVideoConfirmed: boolean;
   /** provenanceLine: "From Demo · @demo.creator · posted 1 Oct 2026 · Verified". */
   provenance: string;
   /** sourceNotice: 01 J5.5's Notice. */
   notice: string;
 };
-
-function hintsLine(h: {
-  durationMs: number | null;
-  width: number | null;
-  height: number | null;
-}) {
-  return attachedLine({
-    duration: h.durationMs ? formatDuration(h.durationMs / 1000) : null,
-    width: h.width,
-    height: h.height,
-  });
-}
 
 /**
  * A Banner's two buttons, a secondary and a tertiary. Focus goes to the main one when the box appears, or to the other
@@ -152,9 +132,9 @@ function PausedBox({
  * tab it shows what the server stored and this device remembers (P10c): none, paused after a reload (choose the same
  * file to resume), didn't finish, expired, failed or ready. Another tab uploading the same video locks it here (Q-49).
  *
- * A plain upload's Continue is a link once the original is ready. A Library video (`library`, P11) renders as the two
- * children of the page's TWO_COLUMN grid (owner answer Q-66 a): the post summary, then the step (01 J5.5's Notice, the
- * upload, the cover picker and, once attached, the duration warning, the same-video tick and Continue's form post).
+ * Continue is a link to Where posted once the original is ready, for both sources (07 D69). A Library video (`library`,
+ * P11) renders as the two children of the page's TWO_COLUMN grid (owner answer Q-66 a): the provenance line, then the
+ * step (01 J5.5's Notice, the upload, the cover picker and Continue).
  */
 export function FileStepUpload({
   video,
@@ -163,12 +143,13 @@ export function FileStepUpload({
   progress = null,
 }: {
   video: FileStepVideo;
+  /** Where Continue goes once the original is ready: `?step=postings`. */
+  nextHref: string;
+  /** A Library video's lines: the page's two columns. Left out for a plain upload's one column. */
+  library?: FileStepLibrary;
   /** The server's resume state when the row is 'uploading' (the upload id and bytes only). */
   progress?: OriginalUploadProgress;
-} & (
-  | { nextHref: string; library?: undefined }
-  | { library: FileStepLibrary; nextHref?: undefined }
-)) {
+}) {
   const router = useRouter();
   const pathname = usePathname();
   const { originals, covers } = useUploads();
@@ -469,43 +450,27 @@ export function FileStepUpload({
 
   const width = entry?.hints?.width ?? video.width;
   const height = entry?.hints?.height ?? video.height;
-  let next: ReactNode;
-  if (!ready) {
-    // Until the original is ready: Continue disabled, with the helper unless an upload is on its way.
-    next = (
-      <div className="flex flex-col gap-2">
-        <Button
-          disabled
-          aria-describedby={running || elsewhere ? undefined : helperId}
-          className={PRIMARY_WIDTH}
-        >
-          Continue
-        </Button>
-        {running || elsewhere ? null : (
-          <p id={helperId} className="text-footnote text-ink-2">
-            {DROPZONE_COPY.continueHelper}
-          </p>
-        )}
-      </div>
-    );
-  } else if (library) {
-    next = (
-      <SameVideoForm
-        videoId={video.id}
-        confirmed={library.sameVideoConfirmed}
-        warning={durationMismatchMessage(
-          (entry?.hints ?? video).durationMs,
-          library.post.durationSec,
-        )}
-      />
-    );
-  } else {
-    next = (
-      <Button asChild className={PRIMARY_WIDTH}>
-        <Link href={nextHref}>Continue</Link>
+  // Until the original is ready: Continue disabled, with the helper unless an upload is on its way.
+  const next = ready ? (
+    <Button asChild className={PRIMARY_WIDTH}>
+      <Link href={nextHref}>Continue</Link>
+    </Button>
+  ) : (
+    <div className="flex flex-col gap-2">
+      <Button
+        disabled
+        aria-describedby={running || elsewhere ? undefined : helperId}
+        className={PRIMARY_WIDTH}
+      >
+        Continue
       </Button>
-    );
-  }
+      {running || elsewhere ? null : (
+        <p id={helperId} className="text-footnote text-ink-2">
+          {DROPZONE_COPY.continueHelper}
+        </p>
+      )}
+    </div>
+  );
   const step = (
     <>
       {elsewhere ? (
@@ -550,21 +515,9 @@ export function FileStepUpload({
     </>
   );
   if (!library) return step;
-
-  // The cover beside the post: the picker's own preview or the stored poster, or the fill block while a frame is read.
-  const coverSrc = cover?.preview ?? video.posterSrc;
-  const summaryCover =
-    coverSrc !== null || cover?.phase === "capturing"
-      ? { src: coverSrc, width, height }
-      : null;
   return (
     <>
-      <PostSummary
-        post={library.post}
-        provenance={library.provenance}
-        attached={ready}
-        cover={summaryCover}
-      />
+      <PostSummary provenance={library.provenance} />
       <div
         data-file-step-body
         className={cn(TWO_COLUMN.main, "flex flex-col gap-6")}

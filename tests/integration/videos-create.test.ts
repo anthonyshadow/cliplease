@@ -6,16 +6,20 @@ import { createVideoFromUpload as createVideoAction } from "../../src/app/(dashb
 import { db } from "../../src/db/client";
 import { auditEvent, video } from "../../src/db/schema";
 import { videoStepHref } from "../../src/lib/videos/steps";
+import type { Actor } from "../../src/server/auth/actor";
 import {
   createVideoFromUpload,
   VideoInputError,
 } from "../../src/server/videos/create";
-import { getVideoForCreator } from "../../src/server/videos/queries";
+import {
+  getVideoForCreator,
+  getVideoStepFacts,
+} from "../../src/server/videos/queries";
 import { formOf, redirectTo } from "../helpers/actions";
 import { mockNextHeaders, signedInCreator } from "../helpers/auth";
 import { resetDb } from "../helpers/db";
 import { insertLicenseRequest, videoRow } from "../helpers/factories";
-import { videosOf } from "../helpers/library-videos";
+import { libraryDraft, videosOf } from "../helpers/library-videos";
 import {
   fixture,
   newCreator,
@@ -217,6 +221,7 @@ describe("the title page's action (S18's Continue)", () => {
 describe("getVideoForCreator", () => {
   const DTO_KEYS = [
     "durationMs",
+    "hasVerifiedPosting",
     "height",
     "id",
     "originalError",
@@ -225,6 +230,7 @@ describe("getVideoForCreator", () => {
     "originalStatus",
     "posterOrigin",
     "posterSrc",
+    "postingsConfirmedAt",
     "rightsAnswered",
     "sameVideoConfirmed",
     "source",
@@ -253,7 +259,9 @@ describe("getVideoForCreator", () => {
       originalLocked: false,
       rightsAnswered: false,
       source: "upload",
+      postingsConfirmedAt: null,
       sameVideoConfirmed: false,
+      hasVerifiedPosting: false,
       sourcePost: null,
     });
   });
@@ -327,6 +335,79 @@ describe("getVideoForCreator", () => {
     expect(await getVideoForCreator(c.actor, id)).toMatchObject({
       rightsAnswered: true,
     });
+  });
+});
+
+describe("getVideoStepFacts (P11c: the composed Continue's uncached read)", () => {
+  /** getVideoForCreator's DTO cut down to the step facts. */
+  async function factsOfDto(actor: Actor, id: string) {
+    const dto = await getVideoForCreator(actor, id);
+    if (!dto) throw new Error("no video");
+    return {
+      status: dto.status,
+      originalStatus: dto.originalStatus,
+      source: dto.source,
+      postingsConfirmedAt: dto.postingsConfirmedAt,
+      sameVideoConfirmed: dto.sameVideoConfirmed,
+      hasVerifiedPosting: dto.hasVerifiedPosting,
+      rightsAnswered: dto.rightsAnswered,
+    };
+  }
+
+  it("gives a fresh upload draft's facts, as the DTO gives them", async () => {
+    const c = await newCreator(disk);
+    const id = await newDraft(disk, c);
+
+    const facts = await getVideoStepFacts(c.actor, id);
+    expect(facts).toStrictEqual({
+      status: "draft",
+      originalStatus: "none",
+      source: "upload",
+      postingsConfirmedAt: null,
+      sameVideoConfirmed: false,
+      hasVerifiedPosting: false,
+      rightsAnswered: false,
+    });
+    expect(facts).toStrictEqual(await factsOfDto(c.actor, id));
+  });
+
+  it("reads a Library draft's verified posting, confirmed postings, tick and rights as stored now", async () => {
+    const c = await newCreator(disk);
+    const draft = await libraryDraft(c);
+    const at = new Date("2026-10-21T12:00:00.000Z");
+    await db
+      .update(video)
+      .set({
+        postingsConfirmedAt: at,
+        sameVideoConfirmedAt: at,
+        rightsAttestedAt: at,
+        attestationVersion: "v1",
+      })
+      .where(eq(video.id, draft.id));
+
+    const facts = await getVideoStepFacts(c.actor, draft.id);
+    expect(facts).toStrictEqual({
+      status: "draft",
+      originalStatus: "ready",
+      source: "library",
+      postingsConfirmedAt: at.toISOString(),
+      sameVideoConfirmed: true,
+      hasVerifiedPosting: true,
+      rightsAnswered: true,
+    });
+    expect(facts).toStrictEqual(await factsOfDto(c.actor, draft.id));
+  });
+
+  it("is null for another creator, a missing id and an id that isn't a uuid", async () => {
+    const c = await newCreator(disk);
+    const id = await newDraft(disk, c);
+    const other = await newCreator(disk);
+
+    expect(await getVideoStepFacts(other.actor, id)).toBeNull();
+    expect(await getVideoStepFacts(c.actor, randomUUID())).toBeNull();
+    for (const bad of ["not-a-uuid", "", `${id}x`]) {
+      expect(await getVideoStepFacts(c.actor, bad)).toBeNull();
+    }
   });
 });
 

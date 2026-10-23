@@ -245,9 +245,10 @@ type OpenUpload = {
 /**
  * Ends the open upload with one write fenced on it (status uploading, its upload id and key): ready when the file at the
  * key checks out and the video isn't disabled (owner answer Q-38 a), failed with the reason otherwise; `expired` skips
- * the check (07 D80's 24 h, or parts gone without a file). A failure takes the parts and any file at the key with it.
- * When the fence misses, another call (a parallel complete, a new start, an abort, a disable) ended it first: that
- * outcome stands, and a file no row points at goes.
+ * the check (07 D80's 24 h, or parts gone without a file). Ready also clears the same-video tick, which confirmed the
+ * file this one replaces (owner answer Q-77 a; a first upload has none to clear). A failure takes the parts and any file
+ * at the key with it. When the fence misses, another call (a parallel complete, a new start, an abort, a disable) ended
+ * it first: that outcome stands, and a file no row points at goes.
  */
 async function settle(
   u: OpenUpload,
@@ -274,6 +275,7 @@ async function settle(
             durationMs: u.meta?.durationMs ?? null,
             width: u.meta?.width ?? null,
             height: u.meta?.height ?? null,
+            sameVideoConfirmedAt: null,
           }
         : {
             ...NO_UPLOAD,

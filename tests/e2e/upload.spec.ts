@@ -16,6 +16,7 @@ import {
   cancelAndWaitForAbort,
   chooseOriginal,
   cleanCreatedVideos,
+  continueToPostings,
   coverImage,
   coverInput,
   createDraft,
@@ -36,11 +37,12 @@ import {
   waitForAttached,
 } from "./helpers/videos";
 
-// J5's plain upload start (05 §6.5, §6.6; 07 D39, D80) on chromium-desktop and webkit-iphone: the title page, the File
-// step's multipart upload of sample.mp4 through P10a's routes, the cover image (the captured frame where the browser
-// decodes H.264, else poster.jpg through "Choose an image"), Cancel ending the upload on the server (P10c), the file
-// checks, the leave guard, the floating card that follows an upload to other pages (owner answer Q-42), and Replace
-// keeping a cover the creator chose (owner answer Q-41 a). Each test signs up its own creator.
+// J5's plain upload start (05 §6.5, §6.6; 07 D39, D69, D80) on chromium-desktop and webkit-iphone: the title page, the
+// File step's multipart upload of sample.mp4 through P10a's routes and its Continue to Where posted (the upload note
+// lives there now, never on the File step), the cover image (the captured frame where the browser decodes H.264, else
+// poster.jpg through "Choose an image"), Cancel ending the upload on the server (P10c), the file checks, the leave guard,
+// the floating card that follows an upload to other pages (owner answer Q-42), and Replace keeping a cover the creator
+// chose (owner answer Q-41 a). Each test signs up its own creator.
 test.use({ reducedMotion: "reduce" });
 test.afterEach(cleanCreatedVideos);
 
@@ -50,6 +52,9 @@ const BAD_FILE =
   "We couldn't read this file as a video. Export it again as MP4 and retry.";
 const ZERO_PERCENT = /^0% · 0(\.0)? of 0\.2 MB$/;
 const INTERRUPTED = "Upload didn't finish. Choose the file again.";
+/** 01 J5.6's upload-only note: on Where posted since 07 D69, never on the File step. */
+const UPLOAD_NOTE =
+  "Is this video on Instagram, TikTok or YouTube? Connect the account to get a Verified label.";
 
 /**
  * On the open File step: chooses sample.mp4 with its part URLs held, then goes to the Library, where the floating card
@@ -97,7 +102,7 @@ test("J5: a title makes a draft, sample.mp4 uploads in parts, the cover is store
   const videoId = await createDraft(page);
   const fileStep = `/dashboard/videos/${videoId}?step=file`;
 
-  // Continue waits for the original; Rights can't be reached before it.
+  // Continue waits for the original; Where posted and Rights can't be reached before it.
   const continueButton = page.getByRole("button", {
     name: "Continue",
     exact: true,
@@ -111,6 +116,15 @@ test("J5: a title makes a draft, sample.mp4 uploads in parts, the cover is store
   ).toBeVisible();
   await page.goto(`/dashboard/videos/${videoId}?step=rights`);
   await expect(page).toHaveURL(fileStep);
+  await page.goto(`/dashboard/videos/${videoId}?step=postings`);
+  await expect(page).toHaveURL(fileStep);
+  // The upload-only note moved to Where posted (07 D69).
+  await expect(page.getByText(UPLOAD_NOTE, { exact: true })).toHaveCount(0);
+  await expect(
+    page
+      .locator("main")
+      .getByRole("link", { name: "Connect an account", exact: true }),
+  ).toHaveCount(0);
 
   // The multipart flow: start says multipart, part 1 goes to the dev storage route, complete sends no ETags.
   const started = page.waitForResponse((r) => isOriginalStart(r.request()));
@@ -183,8 +197,9 @@ test("J5: a title makes a draft, sample.mp4 uploads in parts, the cover is store
   const next = page.getByRole("link", { name: "Continue", exact: true });
   await expect(next).toHaveAttribute(
     "href",
-    `/dashboard/videos/${videoId}?step=rights`,
+    `/dashboard/videos/${videoId}?step=postings`,
   );
+  await expect(page.getByText(UPLOAD_NOTE, { exact: true })).toHaveCount(0);
 
   // A reload shows what the server stored: the original (with the hints the browser read, when it decoded the video)
   // and the cover through the poster route.
@@ -204,11 +219,9 @@ test("J5: a title makes a draft, sample.mp4 uploads in parts, the cover is store
       coverImage(page).evaluate((img: HTMLImageElement) => img.naturalWidth),
     )
     .toBeGreaterThan(0);
-  await pressLink(page, "Continue");
-  await page.waitForURL(`/dashboard/videos/${videoId}?step=rights`);
-  await expect(
-    page.getByRole("heading", { level: 1, name: "Rights" }),
-  ).toBeVisible();
+  // Continue goes to Where posted (07 D69), where the upload note now sits.
+  await continueToPostings(page, videoId);
+  await expect(page.getByText(UPLOAD_NOTE, { exact: true })).toBeVisible();
   expect(errors).toEqual([]);
 });
 

@@ -7,13 +7,9 @@ import {
   video,
   videoPosting,
 } from "../../db/schema";
-import type {
-  PostingPlatform,
-  PostingUnverifiedReason,
-  PostingVerification,
-  SocialAccountStatus,
-} from "../../lib/domain/values";
+import type { PostingPlatform } from "../../lib/domain/values";
 import { postingPlatformLabel } from "../../lib/postings/labels";
+import type { OwnerPostingDTO } from "../../lib/postings/types";
 import { isUuid } from "../../lib/validation/uuid";
 import type { Actor, CreatorActor } from "../auth/actor";
 import { postThumbnail } from "../library/queries";
@@ -21,31 +17,6 @@ import { VideoNotFoundError } from "../videos/errors";
 
 // A video's postings as plain DTOs (02 §5.12; 03 §7.4 "Where-posted step"; 07 D70), never rows. The owner sees every
 // posting with its stored canonical url; buyers see published videos only, never a social id, a thumbnail or a raw paste.
-
-/** One posting on the owner's "Where was it posted?" step (02 §5.12). */
-export type OwnerPostingDTO = {
-  id: string;
-  platform: PostingPlatform;
-  /** postingPlatformLabel: the platform's name, or the creator's name for an Other posting. */
-  label: string;
-  /** The stored canonical url (the owner always sees their own link); null for a posting with no link. */
-  url: string | null;
-  isSource: boolean;
-  verification: PostingVerification;
-  unverifiedReason: PostingUnverifiedReason | null;
-  /** Verified rows only: 07 D43's display form, printed as stored. */
-  verifiedUsername: string | null;
-  /** The posting's account, when it has one: a verified row whose account is `disconnected` is "no longer linked". */
-  accountStatus: SocialAccountStatus | null;
-  /** Verified rows only: the post's image through the creator-only proxy (P11's postThumbnail, with its `?v=`). */
-  thumbnailSrc: string | null;
-  /** Verified rows only: the post's length where the platform gives one (07 D39's duration warning). */
-  durationSec: number | null;
-  showLink: boolean;
-  /** The last check, as ISO; null for a posting never checked (unverifiable, no link). */
-  checkedAt: string | null;
-  position: number;
-};
 
 /** One posting as buyers see it (02 §5.12, 07 D70): a handle only when verified, never an id or an image. */
 export type PublicPostingDTO = {
@@ -75,7 +46,7 @@ export type PublicPostings = {
 
 /**
  * The owner's read of postings matching `where` (over video_posting and its video), in position order: each with its
- * account's status and its post's image and length. listVideoPostings and getOwnerPosting share it.
+ * account's status and its post's image, length and visibility. listVideoPostings and getOwnerPosting share it.
  */
 async function ownerPostingRows(where: SQL | undefined) {
   return db
@@ -96,6 +67,7 @@ async function ownerPostingRows(where: SQL | undefined) {
       thumbnailUrl: socialPost.thumbnailUrl,
       thumbnailFetchedAt: socialPost.thumbnailFetchedAt,
       durationSec: socialPost.durationSec,
+      visibility: socialPost.visibility,
     })
     .from(videoPosting)
     .innerJoin(video, eq(video.id, videoPosting.videoId))
@@ -154,7 +126,7 @@ export async function getOwnerPosting(
   return toOwnerPosting(row);
 }
 
-/** The owner's DTO: the handle, the thumbnail and the duration only on a verified posting. */
+/** The owner's DTO: the handle, the thumbnail, the duration and the visibility only on a verified posting. */
 export function toOwnerPosting(row: OwnerPostingRow): OwnerPostingDTO {
   const verified = row.verification === "verified";
   return {
@@ -176,6 +148,7 @@ export function toOwnerPosting(row: OwnerPostingRow): OwnerPostingDTO {
           }).thumbnailSrc
         : null,
     durationSec: verified ? row.durationSec : null,
+    visibility: verified ? row.visibility : null,
     showLink: row.showLink,
     checkedAt: row.checkedAt?.toISOString() ?? null,
     position: row.position,

@@ -1,34 +1,45 @@
-// The Make licensable steps, their routing and the hrefs around them (07 D39, D69). Pure. Staged: P11c inserts
-// 'postings' after 'file'.
-import type { OriginalFileStatus, VideoSource } from "../domain/values";
+// The Make licensable steps, their routing and the hrefs around them (07 D69): File → Where posted → Rights → Review,
+// for a Library video and a plain upload alike. Pure.
+import type { OriginalFileStatus } from "../domain/values";
 
-export const VIDEO_STEPS = ["file", "rights", "review"] as const;
+export const VIDEO_STEPS = ["file", "postings", "rights", "review"] as const;
 export type VideoStep = (typeof VIDEO_STEPS)[number];
 
-/** The Stepper's labels, in step order (04 §9.28). */
-export const VIDEO_STEP_LABELS = ["File", "Rights", "Review"] as const;
+/** The Stepper's labels, in step order (04 §9.28, 07 D69): "Step 2 of 4 · Where posted" below md. */
+export const VIDEO_STEP_LABELS = [
+  "File",
+  "Where posted",
+  "Rights",
+  "Review",
+] as const;
 
 /**
- * What makes each step complete. File: the original is ready and the same-video tick is done (07 D39; P11c moves the
- * tick to Where posted, D69); Rights: answered (P13).
+ * What makes each step complete (07 D69). File: the original is ready. Where posted: saved (also as "I haven't posted
+ * it anywhere yet.") and, once a posting is verified, "These posts show this same video" ticked. Rights: answered (P13).
  */
 export type VideoStepFacts = {
   originalReady: boolean;
-  /** "This file is the same video as the post" is ticked, or the video needs no tick: only a Library video asks. */
-  sameVideoDone: boolean;
+  postingsDone: boolean;
   rightsAnswered: boolean;
 };
 
-/** The facts of a creator's video as getVideoForCreator gives it (P11: only Library videos need the tick). */
+/**
+ * The facts of a creator's video as getVideoForCreator / getVideoStepFacts give them. `hasVerifiedPosting` is the stored
+ * `ownership = 'verified_owner'` summary (07 D66); the tick is required whatever the source (D69), and is not asked
+ * while nothing is verified.
+ */
 export function videoStepFacts(video: {
   originalStatus: OriginalFileStatus;
-  source: VideoSource;
+  postingsConfirmedAt: string | null;
+  hasVerifiedPosting: boolean;
   sameVideoConfirmed: boolean;
   rightsAnswered: boolean;
 }): VideoStepFacts {
   return {
     originalReady: video.originalStatus === "ready",
-    sameVideoDone: video.source !== "library" || video.sameVideoConfirmed,
+    postingsDone:
+      video.postingsConfirmedAt !== null &&
+      (!video.hasVerifiedPosting || video.sameVideoConfirmed),
     rightsAnswered: video.rightsAnswered,
   };
 }
@@ -55,7 +66,8 @@ export const videoStepHref = (videoId: string, step: VideoStep) =>
   `${videoHref(videoId)}?step=${step}`;
 
 const COMPLETE: Record<VideoStep, (f: VideoStepFacts) => boolean> = {
-  file: (f) => f.originalReady && f.sameVideoDone,
+  file: (f) => f.originalReady,
+  postings: (f) => f.postingsDone,
   rights: (f) => f.rightsAnswered,
   review: () => false,
 };

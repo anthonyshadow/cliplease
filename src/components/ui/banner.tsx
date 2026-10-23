@@ -52,8 +52,9 @@ export function Banner({
         strokeWidth={2}
         className={cn("mt-0.5 shrink-0", iconClass)}
       />
-      <div className="flex flex-1 flex-wrap items-baseline gap-x-3">
-        <div>{children}</div>
+      <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-3">
+        {/* A long unbroken word (a video title in a refusal) wraps instead of widening the page (07 D153). */}
+        <div className="min-w-0 wrap-anywhere">{children}</div>
         {action}
       </div>
     </div>

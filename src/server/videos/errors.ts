@@ -42,11 +42,11 @@ export class VideoNotFoundError extends Error {
   }
 }
 
-/** The same-video tick is for Library videos only until P11c widens it to any video with a verified posting (07 D69). */
-export class NotFromLibraryError extends Error {
+/** The same-video tick confirms the verified posts, so the video needs at least one verified posting (07 D69). */
+export class NoVerifiedPostingError extends Error {
   constructor() {
-    super("not_from_library");
-    this.name = "NotFromLibraryError";
+    super("no_verified_posting");
+    this.name = "NoVerifiedPostingError";
   }
 }
 
@@ -93,7 +93,7 @@ export function makeLicensableErrorCode(
 /** confirmSameVideo's refusals as ActionResult codes. */
 export type ConfirmSameVideoErrorCode =
   | "not_found"
-  | "not_from_library"
+  | "no_verified_posting"
   | "original_not_ready";
 
 /** The code for an error confirmSameVideo threw, or null for anything else (the action rethrows it). */
@@ -101,7 +101,7 @@ export function confirmSameVideoErrorCode(
   error: unknown,
 ): ConfirmSameVideoErrorCode | null {
   if (error instanceof VideoNotFoundError) return "not_found";
-  if (error instanceof NotFromLibraryError) return "not_from_library";
+  if (error instanceof NoVerifiedPostingError) return "no_verified_posting";
   if (error instanceof OriginalNotReadyError) return "original_not_ready";
   return null;
 }

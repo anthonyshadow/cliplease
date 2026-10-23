@@ -193,7 +193,7 @@ export async function backdateCheckedAt(postingId: string): Promise<Date> {
   return at;
 }
 
-/** Sets the video's same-video tick an hour back (an upload can't confirmSameVideo yet). Returns the value. */
+/** Sets the video's same-video tick an hour back, without confirmSameVideo's guards (07 D69). Returns the value. */
 export async function setSameVideoConfirmed(videoId: string): Promise<Date> {
   const at = new Date(Date.now() - HOUR_MS);
   await db

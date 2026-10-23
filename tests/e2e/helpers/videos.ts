@@ -7,12 +7,25 @@ import {
   type Request,
   type Route,
 } from "@playwright/test";
+import type { PostingPlatform } from "../../../src/lib/domain/values";
 import { resumeHintKey } from "../../../src/lib/upload/resume";
-import { sourcePageHref } from "../../../src/lib/videos/steps";
-import { pressButton, requestEnded } from "./press";
+import {
+  sourcePageHref,
+  VIDEO_STEP_LABELS,
+  videoStepHref,
+} from "../../../src/lib/videos/steps";
+import {
+  boxOf,
+  expectAbove,
+  expectInsideColumn,
+  expectLeftOf,
+  expectReadingColumn,
+  TIERS,
+} from "./layout";
+import { pressButton, pressLink, requestEnded } from "./press";
 
-// The plain upload as a creator does it (P10b), and Make licensable from a Library post (P11), for the upload specs and
-// M3's later ones (P11, P11c, P13).
+// The plain upload as a creator does it (P10b), Make licensable from a Library post (P11) and the Where posted step
+// (P11c), for the upload specs and M3's later ones (P11, P11c, P13).
 
 export const NEW_VIDEO = "/dashboard/videos/new";
 export const SAMPLE_MP4 = "tests/fixtures/sample.mp4";
@@ -126,6 +139,153 @@ export async function makeLicensable(
   if (!id) throw new Error("no video id in the File step's URL");
   created.add(id);
   return id;
+}
+
+/**
+ * The draft Stepper (04 §9.28; 07 D69, D149) at `width`: "Step n of 4 · {label}" over a 4-segment bar below md, the
+ * <ol> File · Where posted · Rights · Review with the current step from md.
+ */
+export async function expectVideoStepper(
+  page: Page,
+  width: number,
+  current: { step: number; label: string } = { step: 1, label: "File" },
+) {
+  const steps = VIDEO_STEP_LABELS.length;
+  const caption = page.getByText(
+    `Step ${current.step} of ${steps} · ${current.label}`,
+    { exact: true },
+  );
+  const bar = caption.locator("xpath=following-sibling::div[1]");
+  const list = page.locator("main ol").filter({ hasText: "Where posted" });
+  if (width < TIERS.tablet) {
+    await expect(caption).toBeVisible();
+    await expect(bar).toBeVisible();
+    await expect(bar.locator(":scope > span")).toHaveCount(steps);
+    await expect(list).toBeHidden();
+  } else {
+    await expect(caption).toBeHidden();
+    await expect(list).toBeVisible();
+    await expect(list.locator(":scope > li")).toHaveText([
+      ...VIDEO_STEP_LABELS,
+    ]);
+    await expect(list.locator('[aria-current="step"]')).toHaveText(
+      current.label,
+    );
+  }
+}
+
+/** Where posted's header (04 §11.10), the step's h2; it also names the chip group. */
+export const WHERE_POSTED = "Where was it posted?";
+
+/** Where posted's chips (FilterChips multiple mode, 04 §9.14): a group named by the step's header. */
+export const chipGroup = (page: Page) =>
+  page.getByRole("group", { name: WHERE_POSTED, exact: true });
+
+/** One chip by its label ("Instagram" … "Other", "Demo"): an aria-pressed toggle button. */
+export const platformChip = (page: Page, label: string) =>
+  chipGroup(page).getByRole("button", { name: label, exact: true });
+
+/** A platform's posting card (`data-posting-card`, Demo's is "mock"). */
+export const postingCard = (page: Page, platform: PostingPlatform) =>
+  page.locator(`[data-posting-card="${platform}"]`);
+
+/** The "Link to the post (optional)" fields inside `scope` (a card, or one row). */
+export const linkFields = (scope: Locator) =>
+  scope.getByLabel(/^Link to the post/);
+
+/** The locked Library source row (04 §9.33). */
+export const sourceRow = (page: Page) => page.locator("[data-posting-source]");
+
+/** "Show buyers this link" inside `scope` (a row or a card). */
+export const showLinkSwitch = (scope: Locator) =>
+  scope.getByRole("switch", { name: "Show buyers this link", exact: true });
+
+/** The same-video block (07 D69): the cover and each verified post's picture, the warnings and the tick. */
+export const sameVideoBlock = (page: Page) => page.locator("[data-same-video]");
+
+/** The same-video tick (07 D69). */
+export const sameVideoTick = (page: Page) =>
+  page.getByRole("checkbox", {
+    name: "These posts show this same video",
+    exact: true,
+  });
+
+/** Where posted's two parts (P11c's hooks): the video summary and the step column. */
+export const wherePostedParts = (page: Page): [Locator, Locator] => [
+  page.locator("[data-video-summary]"),
+  page.locator("[data-postings-step]"),
+];
+
+/**
+ * The chips wrap at every tier and never scroll (07 D146, D153; 04 §9.14 multiple mode): the group is a wrapping row,
+ * neither it nor any box between it and the step column scrolls or clips sideways, nothing overflows it, and every chip
+ * lies inside the step column.
+ */
+export async function expectChipsWrap(page: Page) {
+  const group = chipGroup(page);
+  await expect(group).toHaveCSS("flex-wrap", "wrap");
+  const facts = await group.evaluate((el) => {
+    const step = el.closest("[data-postings-step]");
+    if (!step) throw new Error("the chip group is outside the step column");
+    const clipping: string[] = [];
+    for (
+      let box: Element | null = el;
+      box && box !== step;
+      box = box.parentElement
+    ) {
+      const overflowX = getComputedStyle(box).overflowX;
+      if (overflowX !== "visible") clipping.push(overflowX);
+    }
+    const column = step.getBoundingClientRect();
+    const outside = [...el.querySelectorAll("button")].filter((chip) => {
+      const box = chip.getBoundingClientRect();
+      return box.left < column.left - 1 || box.right > column.right + 1;
+    }).length;
+    return { clipping, overflow: el.scrollWidth - el.clientWidth, outside };
+  });
+  expect(facts).toEqual({ clipping: [], overflow: 0, outside: 0 });
+}
+
+/**
+ * Where posted at `width` (05 §6.5 S17b and its Tablet, Desktop and XL frames; 05 §1.6; 07 D146, D156): below lg one
+ * centered ≤ 640 px column holding the step, with no video summary below md and the summary above the step on md; from
+ * lg the summary left of the step. The chips wrap (expectChipsWrap).
+ */
+export async function expectWherePostedLayout(page: Page, width: number) {
+  const [summary, step] = wherePostedParts(page);
+  await expect(step).toBeVisible();
+  if (width < TIERS.desktop) {
+    await expectReadingColumn(page);
+    await expectInsideColumn(step);
+  }
+  if (width < TIERS.tablet) {
+    await expect(summary).toBeHidden();
+  } else if (width < TIERS.desktop) {
+    await expect(summary).toBeVisible();
+    await expectInsideColumn(summary);
+    await expectAbove(summary, step);
+  } else {
+    await expect(summary).toBeVisible();
+    await expectLeftOf(summary, step);
+  }
+  await expectChipsWrap(page);
+}
+
+/** The boxes of `items` all start at the same height, within 1 px: one line (a wrapping row that didn't wrap). */
+export async function expectOneLine(items: Locator) {
+  const boxes = await Promise.all((await items.all()).map(boxOf));
+  expect(boxes.length).toBeGreaterThan(1);
+  const tops = boxes.map((box) => box.top);
+  expect(Math.max(...tops) - Math.min(...tops)).toBeLessThanOrEqual(1);
+}
+
+/** Presses the File step's Continue (a link once the original is ready) and waits for Where posted (07 D69). */
+export async function continueToPostings(page: Page, videoId: string) {
+  await pressLink(page, "Continue");
+  await page.waitForURL(videoStepHref(videoId, "postings"));
+  await expect(
+    page.getByRole("heading", { level: 2, name: WHERE_POSTED, exact: true }),
+  ).toBeVisible();
 }
 
 /**

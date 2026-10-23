@@ -11,14 +11,15 @@ import {
   type PostingPlatform,
   type PostingUnverifiedReason,
   VERIFIABLE_POSTING_PLATFORMS,
-  type VideoStatus,
 } from "../../lib/domain/values";
+import { POSTINGS_EDITABLE } from "../../lib/postings/form";
 import {
   POSTING_OTHER_LABEL_MAX,
   POSTING_URL_MAX,
   POSTINGS_MAX,
 } from "../../lib/postings/limits";
-import { parsePostingLink } from "../../lib/postings/parse";
+import { type PlannedPosting, planPostings } from "../../lib/postings/plan";
+import type { OwnerPostingDTO } from "../../lib/postings/types";
 import { tidiedText } from "../../lib/validation/tidied-text";
 import { isUuid } from "../../lib/validation/uuid";
 import { writeAudit } from "../audit";
@@ -44,23 +45,19 @@ import {
   verifiedKeys,
   verifiedPostingConflictError,
 } from "./ownership";
-import {
-  getOwnerPosting,
-  listVideoPostings,
-  type OwnerPostingDTO,
-} from "./queries";
+import { getOwnerPosting, listVideoPostings } from "./queries";
 import { type PostingCheckResult, verifyPostingLink } from "./verify";
 
 // "Where was it posted?" writes (02 §5.12, §6.1; 03 §5.2; 06 §5b; 07 D66, D68, D69): saveVideoPostings and Check again.
-// Every link is read again here (the browser's parse is never trusted) and checked by id outside any transaction; then
-// one transaction locks the video, checks it and the cross-creator rule again, writes the postings, audits conflicts
-// (auditNewlyVerified) and calls refreshVideoOwnership. A posting verified on this video keeps its verified fields when
-// a check of it fails (owner answer Q-69 a: only checked_at moves) or when the account it was verified through isn't
-// connected now (Q-70 a: no check runs, so checked_at stays too). The is_source posting is never deleted or replaced
-// here. Audits carry platforms and counts, never a link or a link key.
+// Every link is read again here (planPostings, the rule the Continue's postingsInputChanged compares with; the browser's
+// parse is never trusted) and checked by id outside any transaction; then one transaction locks the video, checks it
+// and the cross-creator rule again, writes the postings, audits conflicts (auditNewlyVerified) and calls
+// refreshVideoOwnership. A posting verified on this video keeps its verified fields when a check of it fails (owner
+// answer Q-69 a: only checked_at moves) or when the account it was verified through isn't connected now (Q-70 a: no
+// check runs, so checked_at stays too). The is_source posting is never deleted or replaced here. Postings change only
+// while the video is off (POSTINGS_EDITABLE: "Turn off to edit where it was posted."). Audits carry platforms and
+// counts, never a link or a link key.
 
-/** Postings change only while the video is off ("Turn off to edit where it was posted."). */
-const EDITABLE: readonly VideoStatus[] = ["draft", "unpublished"];
 /** Reasons that leave a posting verified on this video verified (Q-69 a, Q-70 a). A not_found is a real downgrade. */
 const KEEPS_VERIFIED: readonly PostingUnverifiedReason[] = [
   "check_failed",
@@ -153,11 +150,14 @@ export type SaveVideoPostingsResult =
  * 02 §6.1's saveVideoPostings input (P11c's action parses with it too), plus the rules one field can't check: Other needs
  * its name (tidied like every typed text buyers read, owner answer Q-43 a) and no other platform takes one; Demo only
  * while mock is enabled; "I haven't posted it anywhere yet." comes with no postings; at most POSTINGS_MAX rows.
+ * `sourceShowLink` is the locked Library row's own "Show buyers this link" (owner answer Q-73 a, additive to 02 §5.12 /
+ * §6.1): absent leaves the source's show_link as it is.
  */
 export const saveVideoPostingsInput = z
   .object({
     videoId: z.uuid(),
     notPosted: z.boolean(),
+    sourceShowLink: z.boolean().optional(),
     postings: z
       .array(
         z.object({
@@ -203,75 +203,6 @@ export type SaveVideoPostingsInput = z.input<typeof saveVideoPostingsInput>;
 /** One posting as the step sends it (02 §5.12): a platform, Other's name, an optional link and the Switch. */
 export type PostingInput = SaveVideoPostingsInput["postings"][number];
 
-type ParsedPostingInput = z.output<
-  typeof saveVideoPostingsInput
->["postings"][number];
-
-/** A posting the save writes: its canonical url and link key come from the server's own parse. */
-export type PlannedPosting = {
-  /** The row's index in the input, the key of its field error. */
-  index: number;
-  platform: PostingPlatform;
-  otherLabel: string | null;
-  url: string | null;
-  linkKey: string | null;
-  showLink: boolean | undefined;
-};
-
-/**
- * Steps 2 and 3: every non-empty link read again by parsePostingLink → the rows to write, or each failing row's error
- * by its input index. An empty or absent link is a row with no link. Rows naming the same platform post collapse to the
- * first, and a copy of the source posting is dropped: it is already there.
- */
-export function planPostings(
-  postings: readonly ParsedPostingInput[],
-  opts: {
-    allowMock: boolean;
-    source: { platform: PostingPlatform; linkKey: string | null } | null;
-  },
-):
-  | { ok: true; rows: PlannedPosting[] }
-  | { ok: false; fields: Record<number, PostingLinkError> } {
-  const fields: Record<number, PostingLinkError> = {};
-  const read: PlannedPosting[] = [];
-  postings.forEach((posting, index) => {
-    const row: PlannedPosting = {
-      index,
-      platform: posting.platform,
-      otherLabel: posting.otherLabel ?? null,
-      url: null,
-      linkKey: null,
-      showLink: posting.showLink,
-    };
-    const text = posting.link?.trim() ?? "";
-    if (text !== "") {
-      const parsed = parsePostingLink(posting.platform, text, {
-        allowMock: opts.allowMock,
-      });
-      if (!parsed.ok) {
-        fields[index] = parsed.error;
-        return;
-      }
-      row.url = parsed.link.url;
-      row.linkKey = parsed.link.linkKey;
-    }
-    read.push(row);
-  });
-  if (Object.keys(fields).length > 0) return { ok: false, fields };
-  const seen = new Set<string>();
-  if (opts.source?.linkKey) {
-    seen.add(postKey(opts.source.platform, opts.source.linkKey));
-  }
-  const rows = read.filter((row) => {
-    if (row.linkKey === null) return true;
-    const key = postKey(row.platform, row.linkKey);
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-  return { ok: true, rows };
-}
-
 /** The columns of a new non-source posting, before the video, creator and position. */
 export type PostingColumns = Omit<
   NewVideoPosting,
@@ -315,7 +246,8 @@ function verifiedColumns(
 
 /**
  * Step 6's row: the canonical url and link key, and what the check decided. Verified → verified now, the link shown
- * unless the post is unlisted (07 D18). A check_failed or no_account for a post verified on this video now (`kept`) →
+ * unless the post is unlisted (07 D18); a post this video already held verified (`kept`) keeps its show_link, the
+ * creator's choice or that first default (the step posts no unchanged Switch). A check_failed or no_account for a post verified on this video now (`kept`) →
  * that posting's verified fields as they were: checked now after Q-69 a's failed check, its checked_at kept when Q-70 a
  * ran no check. Otherwise unverified with its reason and no social ids, checked now unless no check ran (unverifiable,
  * no_link). The input's showLink wins when it has one.
@@ -336,7 +268,8 @@ export function newPostingColumns(
     return {
       ...link,
       ...verifiedColumns(check, now),
-      showLink: row.showLink ?? check.visibility !== "unlisted",
+      showLink:
+        row.showLink ?? kept?.showLink ?? check.visibility !== "unlisted",
     };
   }
   if (kept && keepsVerified(check)) {
@@ -408,7 +341,8 @@ async function lockEditableVideo(
     .where(and(eq(video.id, videoId), eq(video.creatorId, creatorId)))
     .for("update");
   if (!locked) throw new VideoNotFoundError();
-  if (!EDITABLE.includes(locked.status)) throw new PostingsLockedError();
+  if (!POSTINGS_EDITABLE.includes(locked.status))
+    throw new PostingsLockedError();
 }
 
 /**
@@ -418,7 +352,7 @@ async function lockEditableVideo(
  *    InvalidPostingsError('not_posted_library')), the source posting plus the rows ≤ POSTINGS_MAX (else 'too_many');
  * 2–3. planPostings: each link read again; any that doesn't read → `{ ok: false, fields }`, no call and no write;
  * 4. the cross-creator rule for every row with a link key, verified or not (AlreadyLicensableElsewhereError,
- *    AlreadyOnYourVideoError), before any platform call;
+ *    AlreadyOnYourVideoError, each with the refused row's input `index`: Q-78 a), before any platform call;
  * 5. checkPosting for each row, one at a time, outside any transaction (verifyPostingLink; a post verified here through
  *    an account that isn't connected now is not checked and keeps its checked_at: Q-70 a): a private post →
  *    `fields[index] = 'private'`, and nothing is written;
@@ -428,7 +362,8 @@ async function lockEditableVideo(
  *    now (also with no rows), the same-video tick cleared only when the set of verified posts changed, and audit
  *    `video.postings_saved { platforms, verified }` (platforms in position order, the source's included). A lost
  *    video_posting_verified_uidx → AlreadyOnYourVideoError when the creator's own other video won, else
- *    AlreadyLicensableElsewhereError (verifiedPostingConflictError);
+ *    AlreadyLicensableElsewhereError (verifiedPostingConflictError). `sourceShowLink`, when given, sets the source row's
+ *    show_link in the same transaction (Q-73 a);
  * 7. the postings as the owner's DTOs.
  */
 export async function saveVideoPostings(
@@ -454,7 +389,8 @@ export async function saveVideoPostings(
       and(eq(video.id, input.videoId), eq(video.creatorId, actor.creatorId)),
     );
   if (!current) throw new VideoNotFoundError();
-  if (!EDITABLE.includes(current.status)) throw new PostingsLockedError();
+  if (!POSTINGS_EDITABLE.includes(current.status))
+    throw new PostingsLockedError();
   if (input.notPosted && current.source === "library") {
     throw new InvalidPostingsError("not_posted_library");
   }
@@ -473,7 +409,7 @@ export async function saveVideoPostings(
   });
   if (!plan.ok) return plan;
 
-  // 4.
+  // 4. Each target carries its row's input index, so a refusal names the field it belongs to (Q-78 a).
   const targets: PostingTarget[] = plan.rows.flatMap((row) =>
     row.linkKey === null
       ? []
@@ -483,6 +419,7 @@ export async function saveVideoPostings(
             videoId: input.videoId,
             platform: row.platform,
             linkKey: row.linkKey,
+            index: row.index,
           },
         ],
   );
@@ -510,7 +447,10 @@ export async function saveVideoPostings(
     await db.transaction(async (tx) => {
       await lockEditableVideo(tx, actor.creatorId, input.videoId);
       await assertPostingsAvailable(tx, targets);
-      await replacePostings(tx, actor, input.videoId, checked);
+      await replacePostings(tx, actor, input.videoId, {
+        checked,
+        sourceShowLink: input.sourceShowLink,
+      });
     });
   } catch (error) {
     throw await verifiedPostingConflictError(db, error, targets);
@@ -522,13 +462,21 @@ export async function saveVideoPostings(
 
 /**
  * saveVideoPostings' write, inside its transaction with the video locked: the non-source rows replaced at positions
- * 1…n, auditNewlyVerified, refreshVideoOwnership, postings_confirmed_at, the same-video tick and `video.postings_saved`.
+ * 1…n, the source row's show_link when `sourceShowLink` is given (Q-73 a: nothing else on it changes; an upload has no
+ * source row), auditNewlyVerified, refreshVideoOwnership, postings_confirmed_at, the same-video tick and
+ * `video.postings_saved`.
  */
 async function replacePostings(
   tx: Pick<typeof db, "select" | "insert" | "update" | "delete">,
   actor: CreatorActor,
   videoId: string,
-  checked: readonly { row: PlannedPosting; check: PostingCheckResult }[],
+  {
+    checked,
+    sourceShowLink,
+  }: {
+    checked: readonly { row: PlannedPosting; check: PostingCheckResult }[];
+    sourceShowLink: boolean | undefined;
+  },
 ): Promise<void> {
   const now = new Date();
   const before = await tx
@@ -578,6 +526,14 @@ async function replacePostings(
     position: n + 1,
   }));
   if (rows.length > 0) await tx.insert(videoPosting).values(rows);
+  if (sourceShowLink !== undefined && before.some((p) => p.isSource)) {
+    await tx
+      .update(videoPosting)
+      .set({ showLink: sourceShowLink })
+      .where(
+        and(eq(videoPosting.videoId, videoId), eq(videoPosting.isSource, true)),
+      );
+  }
   // 07 D68: an audit when a posting becomes verified; one this video already had verified (kept or re-saved) isn't new.
   const changed = await auditNewlyVerified(
     tx,
@@ -593,6 +549,7 @@ async function replacePostings(
       ...(changed ? { sameVideoConfirmedAt: null } : {}),
     })
     .where(eq(video.id, videoId));
+  // The audit reads platforms and verification only, so the source row's show_link as read before is fine here.
   const after = [...before.filter((posting) => posting.isSource), ...rows];
   await writeAudit(tx, actor, {
     action: "video.postings_saved",
@@ -647,7 +604,8 @@ export async function recheckPosting(
       ),
     );
   if (!posting) throw new VideoNotFoundError();
-  if (!EDITABLE.includes(posting.status)) throw new PostingsLockedError();
+  if (!POSTINGS_EDITABLE.includes(posting.status))
+    throw new PostingsLockedError();
   const { linkKey, platform } = posting;
   if (linkKey !== null && isOneOf(VERIFIABLE_POSTING_PLATFORMS, platform)) {
     await checkAgain(actor, { ...posting, linkKey });

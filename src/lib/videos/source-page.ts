@@ -18,7 +18,6 @@ import {
   postStats,
 } from "../library/post";
 import { GENERIC_ERROR_MESSAGE } from "../result";
-import { COVER_COPY } from "../upload/messages";
 import {
   type VerifiedBadgeInput,
   verifiedAs,
@@ -40,17 +39,6 @@ export const SOURCE_PAGE_COPY = {
   uploadFile: "Upload a file",
   openLibrary: "Open Library",
   elsewhere: `This post is already licensable from another ${APP_NAME} account.`,
-} as const;
-
-/** The Library File step's same-video tick and the pictures' captions (P11c moves them to Where posted, 07 D69). */
-export const SAME_VIDEO_COPY = {
-  /** 07 D39's tick; P11c words it "These posts show this same video" on Where posted (D69). */
-  tick: "This file is the same video as the post",
-  /** Owner answer Q-64 a (proposed copy): under the disabled Continue, and the action's answer without the tick. */
-  tickToContinue: "Tick the box to continue.",
-  /** Owner answer Q-65 a (proposed copy): the captions under the post's picture and the cover beside it. */
-  postCaption: "Post",
-  coverCaption: COVER_COPY.label,
 } as const;
 
 /**

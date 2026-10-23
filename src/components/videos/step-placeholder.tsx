@@ -8,13 +8,16 @@ import {
 } from "@/lib/videos/steps";
 import { BackLink } from "./back-link";
 
-/** Rights and Review until P13 builds them: the Stepper and the step's name, in the File step's column. */
+/**
+ * Rights and Review until P13 builds them: the Stepper and the step's name, in the File step's column. Back is the step
+ * before, so Rights goes back to Where posted (07 D69).
+ */
 export function StepPlaceholder({
   videoId,
   step,
 }: {
   videoId: string;
-  step: Exclude<VideoStep, "file">;
+  step: Extract<VideoStep, "rights" | "review">;
 }) {
   const index = VIDEO_STEPS.indexOf(step);
   return (

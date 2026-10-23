@@ -40,6 +40,7 @@ import { formatLicenseDate, formatMoney } from "@/lib/format";
 import { CURRENCY_DISPLAY } from "@/lib/money/currency";
 import { DAY_MS, HOUR_MS, MINUTE_MS } from "@/lib/time";
 import { cn } from "@/lib/utils";
+import { VIDEO_STEP_LABELS } from "@/lib/videos/steps";
 
 // Every label in the 04 §9.9 table, with its dot.
 const PILLS: readonly {
@@ -515,10 +516,9 @@ export function Gallery({ view }: { view: "waiting" | "history" }) {
             className="max-w-md"
           />
           <div className="flex flex-col gap-6">
-            <Stepper steps={["File", "Rights", "Review"]} current={step % 3} />
             <Stepper
-              steps={["File", "Where posted", "Rights", "Review"]}
-              current={step % 4}
+              steps={VIDEO_STEP_LABELS}
+              current={step % VIDEO_STEP_LABELS.length}
             />
             <Button
               variant="tertiary"

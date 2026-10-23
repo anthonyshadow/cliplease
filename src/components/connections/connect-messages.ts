@@ -51,13 +51,22 @@ export function connectErrorBanner(
   };
 }
 
+/** ?connected=<provider> after a connect (07 D37), when it names a provider; any other value is ignored. */
+export function connectedProvider(
+  raw: string | string[] | undefined,
+): SocialProviderId | null {
+  const value = first(raw);
+  return value !== undefined && isOneOf(SOCIAL_PROVIDERS, value) ? value : null;
+}
+
 /** The toast for ?connected=<provider>; nothing for any other value. */
 export function connectedToastMessage(
   raw: string | string[] | undefined,
 ): string | null {
-  const platform = first(raw);
-  if (!platform || !isOneOf(SOCIAL_PROVIDERS, platform)) return null;
-  return `${PLATFORM_LABELS[platform]} connected. Showing your latest videos.`;
+  const platform = connectedProvider(raw);
+  return platform === null
+    ? null
+    : `${PLATFORM_LABELS[platform]} connected. Showing your latest videos.`;
 }
 
 /** How the card names the account (04 §9.18, 07 D43): @username, else the display name or channel title, else the platform. */
@@ -117,6 +126,11 @@ export const tryAgainIn = (minutes: number) => `Try again in ${minutes} min.`;
 /** `label` is the platform word, or @username where two Library accounts share a platform. */
 export const rateLimitMessage = (label: string, minutes: number) =>
   `${label} asked us to slow down. ${tryAgainIn(minutes)}`;
+/** A rate-limited sync's retry-after in whole minutes for rateLimitMessage: at least 1, and 1 when none was given. */
+export const retryMinutes = (sec = 60) => Math.max(1, Math.ceil(sec / 60));
+/** A sync that couldn't reach the platform (04 §11.8); `label` as rateLimitMessage's. */
+export const couldntReach = (label: string) =>
+  `Couldn't reach ${label}. Your saved posts are still here.`;
 
 /**
  * The cap note under the sync line (04 §11.8, 01 J3.11) while older videos are left (callers check has_older): from the

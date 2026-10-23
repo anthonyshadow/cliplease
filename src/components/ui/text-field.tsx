@@ -13,7 +13,8 @@ const FIELD_READ_ONLY =
 export const FIELD_ERROR =
   "border-danger ring-1 ring-inset ring-danger hover:border-danger";
 
-function fieldIds(id: string) {
+/** The ids FieldMessages gives a field's helper and error, for an aria-describedby set outside TextField. */
+export function fieldIds(id: string) {
   return {
     helper: `${id}-helper`,
     error: `${id}-error`,
@@ -103,7 +104,7 @@ export function FieldMessages({
             strokeWidth={2}
             className="mt-px shrink-0"
           />
-          <span className="min-w-0">{error}</span>
+          <span className="min-w-0 wrap-anywhere">{error}</span>
         </p>
       ) : null}
       {helper ? (

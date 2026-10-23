@@ -9,7 +9,6 @@ import {
   type MakeLicensableCode,
   makeLicensableMessage,
   provenanceLine,
-  SAME_VIDEO_COPY,
   SOURCE_PAGE_COPY,
   type SourceActionsView,
   type SourcePageState,
@@ -441,16 +440,5 @@ describe("sourceNotice (01 J5.5)", () => {
     expect(sourceNotice("instagram")).toBe(
       "Instagram doesn't share original files with apps. Upload the original from your phone or camera, the version without the Instagram watermark.",
     );
-  });
-});
-
-describe("SAME_VIDEO_COPY (07 D39; owner answers Q-64 a, Q-65 a)", () => {
-  it("has the tick, its helper and the two captions", () => {
-    expect(SAME_VIDEO_COPY).toEqual({
-      tick: "This file is the same video as the post",
-      tickToContinue: "Tick the box to continue.",
-      postCaption: "Post",
-      coverCaption: "Cover image",
-    });
   });
 });

@@ -1,6 +1,4 @@
-import Link from "next/link";
 import { READING_COLUMN, TWO_COLUMN } from "@/components/layout/gutter";
-import { Button } from "@/components/ui/button";
 import { Stepper } from "@/components/ui/stepper";
 import { LIBRARY_PATH } from "@/lib/library/filter";
 import type { OriginalUploadProgress } from "@/lib/upload/resume";
@@ -33,10 +31,11 @@ function uploadVideo(video: CreatorVideoDTO): FileStepVideo {
 }
 
 /**
- * Step 1 · File (05 §6.5, §6.6; 07 D39, D80). A plain upload: one centered max-w-reading column at every tier (07 D145)
- * with the Stepper, "‹ Back" to Videos (owner answer Q-40 a), the upload island, and the upload-only note (01 J5.6,
- * staged here until P11c moves it to Where posted). A Library video: see LibraryFileStep. The page has no visible
- * heading; the title is its h1 for readers.
+ * Step 1 · File (05 §6.5, §6.6; 07 D39, D69, D80). A plain upload: one centered max-w-reading column at every tier
+ * (07 D145) with the Stepper, "‹ Back" to Videos (owner answer Q-40 a) and the upload island. A Library video: see
+ * LibraryFileStep. Either way Continue goes to Where posted once the original is ready (07 D69), which now holds the
+ * upload-only note (01 J5.6) and the same-video tick (owner answer Q-81 a). The page has no visible heading; the title
+ * is its h1 for readers.
  */
 export function FileStep({
   video,
@@ -46,8 +45,11 @@ export function FileStep({
   /** The server's resume state of an 'uploading' original (P10c): the upload id and bytes, never a key. */
   progress?: OriginalUploadProgress;
 }) {
+  const nextHref = videoStepHref(video.id, "postings");
   if (video.source === "library") {
-    return <LibraryFileStep video={video} progress={progress} />;
+    return (
+      <LibraryFileStep video={video} nextHref={nextHref} progress={progress} />
+    );
   }
   return (
     <div className={READING_COLUMN}>
@@ -59,34 +61,27 @@ export function FileStep({
       />
       <FileStepUpload
         video={uploadVideo(video)}
-        nextHref={videoStepHref(video.id, "rights")}
+        nextHref={nextHref}
         progress={progress}
       />
-      <div className="flex flex-col items-start gap-1">
-        <p className="text-callout text-ink-2">
-          Is this video on Instagram, TikTok or YouTube? Connect the account to
-          get a Verified label.
-        </p>
-        <Button asChild variant="link">
-          <Link href="/dashboard/connections">Connect an account</Link>
-        </Button>
-      </div>
     </div>
   );
 }
 
 /**
  * A Library video's File step (P11; 05 §6.5 Step 1, callouts 9–12; 07 D39, D146): "‹ Back" to the Library at every
- * tier with no visible heading (owner answer Q-63 b), the Stepper, then the post summary and the step. Below lg one
- * centered max-w-reading column with the summary above the step; from lg the summary on the left and the whole upload
- * island on the right (Q-66 a), in max-w-app (TWO_COLUMN). No upload-only note: the video is already verified. The
- * post's lines are worded here, once, rather than on each of the island's progress renders.
+ * tier with no visible heading (owner answer Q-63 b), the Stepper, then the provenance line and the step. Below lg one
+ * centered max-w-reading column with the line above the step; from lg the line on the left and the whole upload island
+ * on the right (Q-66 a), in max-w-app (TWO_COLUMN). The post's picture, the duration warning and the tick live on
+ * Where posted (07 D69); the post's lines are worded here, once, rather than on each of the island's progress renders.
  */
 function LibraryFileStep({
   video,
+  nextHref,
   progress,
 }: {
   video: CreatorVideoDTO;
+  nextHref: string;
   progress: OriginalUploadProgress;
 }) {
   const post = video.sourcePost;
@@ -104,9 +99,8 @@ function LibraryFileStep({
       </div>
       <FileStepUpload
         video={uploadVideo(video)}
+        nextHref={nextHref}
         library={{
-          post,
-          sameVideoConfirmed: video.sameVideoConfirmed,
           provenance: provenanceLine({ ...post, name: post.verifiedUsername }),
           notice: sourceNotice(post.platform),
         }}

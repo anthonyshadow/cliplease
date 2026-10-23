@@ -39,8 +39,9 @@ import {
 } from "../social/sync";
 
 // Library reads (02 §5.4). P06 started the account summaries the connect step and Connections show, P07 added the sync
-// fields and P08 completes the DTO; P09 adds the posts. The filter, cursor and post DTO live in src/lib/library (the
-// client islands use them too) and are re-exported here, where 02 §5.4 lists them.
+// fields and P08 completes the DTO; P09 adds the posts, P11c the Where posted step's slim account states. The filter,
+// cursor and post DTO live in src/lib/library (the client islands use them too) and are re-exported here, where 02 §5.4
+// lists them.
 
 export {
   decodeLibraryCursor,
@@ -140,6 +141,33 @@ export async function listAccountSummaries(
       stale: state.stale,
     };
   });
+}
+
+/**
+ * The Where posted step's account facts (postingAccounts, P11c): listAccountSummaries' rows (the creator's linked
+ * accounts, not disconnected, in the same order, so "Sync and check again" syncs them in that order) with only the id,
+ * platform and status: no counts, sync state, avatars or tokens.
+ */
+export async function listPostingAccountStates(
+  a: Actor,
+): Promise<
+  { id: string; platform: SocialProviderId; status: SocialAccountStatus }[]
+> {
+  const { creatorId } = requireCreatorActor(a);
+  return db
+    .select({
+      id: socialAccount.id,
+      platform: socialAccount.provider,
+      status: socialAccount.status,
+    })
+    .from(socialAccount)
+    .where(
+      and(
+        eq(socialAccount.creatorId, creatorId),
+        ne(socialAccount.status, "disconnected"),
+      ),
+    )
+    .orderBy(...CONNECTIONS_ORDER);
 }
 
 /** The tile columns of a post row, with its verified posting's video (03 §7.2). */

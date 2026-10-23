@@ -1,79 +1,409 @@
 "use server";
 
+import { refresh } from "next/cache";
 import { notFound, redirect } from "next/navigation";
-import { z } from "zod";
+import { type ZodError, z } from "zod";
+import { isOneOf, POSTING_PLATFORMS } from "@/lib/domain/values";
+import {
+  POSTINGS_COPY,
+  type PostingFieldError,
+  postingLinkErrorCopy,
+  refusedOnYourVideo,
+} from "@/lib/postings/copy";
+import {
+  isNothingChosen,
+  needsAttention,
+  PLATFORMS_FIELD,
+  type PostingsFormData,
+  postingFieldKey,
+  postingsFromFormData,
+  postingsInputChanged,
+  postingsStepMode,
+  postingsStepOutcome,
+  type SavePostingsState,
+  verifiedPostingsKey,
+} from "@/lib/postings/form";
+import { POSTING_URL_MAX, POSTINGS_MAX } from "@/lib/postings/limits";
+import { parsePostingLink } from "@/lib/postings/parse";
+import type { OwnerPostingDTO } from "@/lib/postings/types";
 import {
   type ActionError,
+  type ActionResult,
   fieldError,
-  formText,
   GENERIC_ERROR_MESSAGE,
 } from "@/lib/result";
 import { DROPZONE_COPY } from "@/lib/upload/messages";
 import { isUuid } from "@/lib/validation/uuid";
-import { SAME_VIDEO_COPY } from "@/lib/videos/source-page";
-import { videoStepHref } from "@/lib/videos/steps";
+import { videoStepFacts, videoStepHref } from "@/lib/videos/steps";
+import type { Actor } from "@/server/auth/actor";
 import { requireCreator, toActor } from "@/server/auth/session";
-import { confirmSameVideo as confirmSameVideoFor } from "@/server/videos/edit";
 import {
-  type ConfirmSameVideoErrorCode,
+  AlreadyLicensableElsewhereError,
+  AlreadyOnYourVideoError,
+  InvalidPostingsError,
+  NotPublicError,
+  PostingsLockedError,
+} from "@/server/postings/errors";
+import { listVideoPostings } from "@/server/postings/queries";
+import {
+  type PostingInput,
+  recheckPosting as recheckPostingFor,
+  type SaveVideoPostingsInput,
+  type SaveVideoPostingsResult,
+  saveVideoPostings as saveVideoPostingsFor,
+  saveVideoPostingsInput,
+} from "@/server/postings/save";
+import { mockEnabled } from "@/server/social/registry";
+import { confirmSameVideo } from "@/server/videos/edit";
+import {
   confirmSameVideoErrorCode,
+  VideoNotFoundError,
 } from "@/server/videos/errors";
+import {
+  getVideoStepFacts,
+  type VideoStepState,
+} from "@/server/videos/queries";
 
-export type ConfirmSameVideoState = ActionError | null;
-
-// A refusal's words; not_found is the 404 instead. A file replaced since the page loaded asks for the original again;
-// an upload never shows the tick.
-const CONFIRM_SAME_VIDEO_MESSAGES = {
-  original_not_ready: DROPZONE_COPY.continueHelper,
-  not_from_library: GENERIC_ERROR_MESSAGE,
-} as const satisfies Record<
-  Exclude<ConfirmSameVideoErrorCode, "not_found">,
-  string
->;
-
-// The checkbox posts "on" only when ticked.
-const confirmSameVideoInput = z.strictObject({
-  videoId: z.uuid(),
-  sameVideo: z.literal("on"),
-});
+// The Where posted step's Server Actions (02 §6.1; 07 D69): Continue (saveVideoPostings, which also stores the same-video
+// tick: no separate confirmSameVideo action, P11c Task 3) and Check again (recheckPosting). Thin: the form read
+// (postingsFromFormData), the session gate, 02 §6.1's Zod (saveVideoPostingsInput), the domain, and its refusals in 04
+// §11.10's words. Error shapes the step reads:
+//   - a field error (§9.6 style under that field, focus on the first) under `error.fields[key]`, its first message also
+//     `error.message`: `postings.<i>.link` (a link that doesn't parse, too long, private, or one of the two
+//     cross-creator refusals, owner answer Q-78 a), `postings.<i>.otherLabel` ("Add the name of the site."),
+//     PLATFORMS_FIELD ("Say where it was posted", 05 §6.5 States). <i> is the row's form index (`indices`);
+//   - a form-level error (`error.fields` absent: an error Banner above the cards, focus on it): the Locked copy, the
+//     12-place limit, a cross-creator refusal that names no row, "Choose the original file to continue." and the generic
+//     error;
+//   - a staying Continue: `{ ok: true, data: { sameVideoMissing } }` after refresh(); `sameVideoMissing` true is the
+//     same-video tick's field error, SAME_VIDEO_COPY.missingTick under the tick with focus on the box (Q-75 a).
+// Moving on is redirect() to ?step=rights. redirect() and notFound() throw, so they stay outside every try that maps a
+// refusal. Nothing here fetches a pasted link (07 D67): the domain parses it and matches it by id.
 
 /**
- * The Library File step's Continue (07 D39; P11 stages the tick there, P11c moves it to Where posted, D69): "This file
- * is the same video as the post" sets `same_video_confirmed_at` once, then Rights. Without the tick it answers owner
- * answer Q-64 a's line on the box; an id that isn't the creator's video is the 404 the page gives it.
+ * The same-video tick's two fields (Zod at the boundary, AGENTS.md §8): ticked or not, and the verified posts the block
+ * showed (verifiedPostingsKey: at most POSTINGS_MAX "platform url" lines).
  */
-export async function confirmSameVideo(
-  _previous: ConfirmSameVideoState,
-  formData: FormData,
-): Promise<ConfirmSameVideoState> {
-  const videoId = formText(formData, "videoId");
-  const ctx = await requireCreator(
-    isUuid(videoId) ? videoStepHref(videoId, "file") : "/dashboard/videos",
-  );
-  const parsed = confirmSameVideoInput.safeParse({
-    videoId,
-    sameVideo: formText(formData, "sameVideo"),
+const sameVideoInput = z.object({
+  sameVideo: z.boolean(),
+  verifiedKey: z.string().max(POSTINGS_MAX * (POSTING_URL_MAX + 16)),
+});
+
+/** A refusal shown above the cards: no field to put it under. */
+const formError = (code: string, message: string): ActionError => ({
+  ok: false,
+  error: { code, message },
+});
+
+/** A refusal with one error per field; the first one is also the form's message. */
+function fieldErrors(
+  code: string,
+  fields: readonly (readonly [key: string, message: string])[],
+): ActionError {
+  return {
+    ok: false,
+    error: {
+      code,
+      message: fields[0]?.[1] ?? GENERIC_ERROR_MESSAGE,
+      fields: Object.fromEntries(fields.map(([key, msg]) => [key, [msg]])),
+    },
+  };
+}
+
+/** The video's step facts read now (uncached: the Continue reads them again after its writes); none → the 404. */
+async function stepFactsNow(
+  actor: Actor,
+  videoId: string,
+): Promise<VideoStepState> {
+  const facts = await getVideoStepFacts(actor, videoId);
+  if (!facts) notFound();
+  return facts;
+}
+
+/**
+ * A link field's error in 04 §11.10's words. wrong_platform names the platform the link belongs to, read again from the
+ * link here (the domain answers the code only, 02 §5.12), so the row offers **Move**.
+ */
+function linkErrorMessage(
+  row: PostingInput,
+  error: PostingFieldError,
+  allowMock: boolean,
+): string {
+  const parsed =
+    error === "wrong_platform"
+      ? parsePostingLink(row.platform, row.link?.trim() ?? "", { allowMock })
+      : null;
+  return postingLinkErrorCopy(error, {
+    platform: row.platform,
+    otherLabel: row.otherLabel ?? null,
+    detected: parsed?.ok === false ? parsed.detected : undefined,
   });
-  if (!parsed.success) {
-    if (parsed.error.issues.some((issue) => issue.path[0] === "videoId")) {
-      notFound();
+}
+
+/**
+ * 02 §6.1's Zod refusing the form: an Other row without its name and an over-long link get their field's words; any
+ * other issue (only a crafted form gets one: an unknown platform, Demo while mock is off, a name on a non-Other row,
+ * "I haven't posted it anywhere yet." with rows) is the generic error. A row on an unknown platform always has that
+ * issue too, so its over-long link answers the generic error at once.
+ */
+function inputError(
+  error: ZodError,
+  form: PostingsFormData,
+  allowMock: boolean,
+): ActionError {
+  const fields: [string, string][] = [];
+  for (const issue of error.issues) {
+    const [top, k, field] = issue.path;
+    const row = typeof k === "number" ? form.postings[k] : undefined;
+    const i = typeof k === "number" ? form.indices[k] : undefined;
+    if (top !== "postings" || row === undefined || i === undefined) {
+      return formError("invalid_input", GENERIC_ERROR_MESSAGE);
     }
-    return fieldError(
-      "invalid_input",
-      "sameVideo",
-      SAME_VIDEO_COPY.tickToContinue,
-    );
+    if (
+      field === "otherLabel" &&
+      (issue.code === "too_small" || issue.message === "other_label_required")
+    ) {
+      fields.push([
+        postingFieldKey(i, "otherLabel"),
+        POSTINGS_COPY.otherNameMissing,
+      ]);
+    } else if (
+      field === "link" &&
+      issue.code === "too_big" &&
+      isOneOf(POSTING_PLATFORMS, row.platform)
+    ) {
+      fields.push([
+        postingFieldKey(i, "link"),
+        linkErrorMessage(
+          { ...row, platform: row.platform },
+          "too_long",
+          allowMock,
+        ),
+      ]);
+    } else {
+      return formError("invalid_input", GENERIC_ERROR_MESSAGE);
+    }
   }
+  return fieldErrors("invalid_input", fields);
+}
+
+/** A postings refusal in words (07 D68, 01 J5.27, J5.30); `index` is the refused row's input index (Q-78 a). */
+type PostingRefusal = { code: string; message: string; index?: number };
+
+/** The postings domain's refusals (02 §5.12, 04 §11.10); null for anything else, which is rethrown. */
+function postingRefusal(error: unknown): PostingRefusal | null {
+  if (error instanceof AlreadyLicensableElsewhereError) {
+    return {
+      code: "already_licensable_elsewhere",
+      message: POSTINGS_COPY.refusedElsewhere,
+      index: error.index,
+    };
+  }
+  if (error instanceof AlreadyOnYourVideoError) {
+    return {
+      code: "already_on_your_video",
+      message: refusedOnYourVideo(error.videoTitle),
+      index: error.index,
+    };
+  }
+  if (error instanceof NotPublicError) {
+    return { code: "not_public", message: POSTINGS_COPY.refusedPrivate };
+  }
+  if (error instanceof PostingsLockedError) {
+    return { code: "postings_locked", message: POSTINGS_COPY.locked };
+  }
+  if (error instanceof InvalidPostingsError) {
+    return {
+      code: error.code,
+      message:
+        error.code === "too_many" ? POSTINGS_COPY.limit : GENERIC_ERROR_MESSAGE,
+    };
+  }
+  return null;
+}
+
+/**
+ * The domain save (02 §5.12) of `input`, the form as 02 §6.1's Zod read it: the postings as saved (the source row
+ * included), or its refusal with nothing saved: each link it couldn't take under its field (the parse's error, or
+ * `private`), a cross-creator refusal under the refused link (Q-78 a; above the cards when it names no row), anything
+ * else above the cards. The domain's row indices are `input.postings`', the form's rows in the same order (`indices`).
+ */
+async function savePostings(
+  actor: Actor,
+  input: SaveVideoPostingsInput,
+  form: PostingsFormData,
+  allowMock: boolean,
+): Promise<ActionResult<OwnerPostingDTO[]>> {
+  let result: SaveVideoPostingsResult;
   try {
-    await confirmSameVideoFor(toActor(ctx), parsed.data.videoId);
+    result = await saveVideoPostingsFor(actor, input);
+  } catch (error) {
+    if (error instanceof VideoNotFoundError) notFound();
+    const refused = postingRefusal(error);
+    if (refused === null) throw error;
+    const i =
+      refused.index === undefined ? undefined : form.indices[refused.index];
+    return i === undefined
+      ? formError(refused.code, refused.message)
+      : fieldError(refused.code, postingFieldKey(i, "link"), refused.message);
+  }
+  if (result.ok) return { ok: true, data: result.postings };
+  const { fields } = result;
+  return fieldErrors(
+    "invalid_link",
+    input.postings.flatMap((row, k) => {
+      const error = fields[k];
+      return error === undefined
+        ? []
+        : [
+            [
+              postingFieldKey(form.indices[k], "link"),
+              linkErrorMessage(row, error, allowMock),
+            ] as const,
+          ];
+    }),
+  );
+}
+
+/**
+ * "These posts show this same video" stored (07 D69; the first time is kept): `data` says whether the tick is stored
+ * now. The verified posts changing meanwhile (no_verified_posting) stores nothing and refuses nothing (`data` false):
+ * the refreshed block shows the new set unticked. An original replaced since the page loaded asks for it again.
+ */
+async function confirmTick(
+  actor: Actor,
+  videoId: string,
+): Promise<ActionResult<boolean>> {
+  try {
+    await confirmSameVideo(actor, videoId);
+    return { ok: true, data: true };
   } catch (error) {
     const code = confirmSameVideoErrorCode(error);
     if (code === null) throw error;
     if (code === "not_found") notFound();
-    return {
-      ok: false,
-      error: { code, message: CONFIRM_SAME_VIDEO_MESSAGES[code] },
-    };
+    if (code === "no_verified_posting") return { ok: true, data: false };
+    return formError(code, DROPZONE_COPY.continueHelper);
   }
-  redirect(videoStepHref(parsed.data.videoId, "rights"));
+}
+
+/**
+ * Where posted's **Continue** (02 §6.1 saveVideoPostings + confirmSameVideo as one Continue; 04 §9.33 Footer; 05 §6.5
+ * States; 07 D69). In order: the session (back to ?step=postings; a bad id → the videos list), the creator's own video
+ * (else the 404), `draft`/`unpublished` (else "Turn off to edit where it was posted."), 02 §6.1's Zod, an upload with
+ * nothing chosen ("Say where it was posted" under the chips, nothing saved). The domain save runs when the postings
+ * changed (postingsInputChanged) or were never saved. Then the tick: stored when ticked and the verified posts the
+ * block showed (`verifiedKey`) are the ones saved now. Then postingsStepOutcome: complete (videoStepFacts), unless this
+ * Continue changed the postings and a link came back not_found, no_account or check_failed (the save checks every
+ * non-source link again), → ?step=rights; otherwise refresh() and stay, so a second Continue with nothing changed moves on.
+ */
+export async function saveVideoPostings(
+  _previous: SavePostingsState,
+  formData: FormData,
+): Promise<SavePostingsState> {
+  const form = postingsFromFormData(formData);
+  const { videoId } = form;
+  const ctx = await requireCreator(
+    isUuid(videoId) ? videoStepHref(videoId, "postings") : "/dashboard/videos",
+  );
+  const actor = toActor(ctx);
+  const facts = await stepFactsNow(actor, videoId);
+  if (postingsStepMode(facts.status) !== "edit") {
+    return formError("postings_locked", POSTINGS_COPY.locked);
+  }
+  const allowMock = mockEnabled();
+  const parsed = saveVideoPostingsInput.safeParse({
+    videoId,
+    notPosted: form.notPosted,
+    postings: form.postings,
+    sourceShowLink: form.sourceShowLink,
+  });
+  if (!parsed.success) return inputError(parsed.error, form, allowMock);
+  const tick = sameVideoInput.safeParse(form);
+  if (!tick.success) return formError("invalid_input", GENERIC_ERROR_MESSAGE);
+  const input = parsed.data;
+  const before = await listVideoPostings(actor, videoId);
+  if (
+    isNothingChosen({
+      hasSource: before.some((posting) => posting.isSource),
+      rowCount: input.postings.length,
+      notPosted: input.notPosted,
+    })
+  ) {
+    return fieldError(
+      "nothing_chosen",
+      PLATFORMS_FIELD,
+      POSTINGS_COPY.nothingChosen,
+    );
+  }
+
+  const changed = postingsInputChanged(before, input, { allowMock });
+  let after = before;
+  let current = facts;
+  if (changed || facts.postingsConfirmedAt === null) {
+    const saved = await savePostings(actor, input, form, allowMock);
+    if (!saved.ok) return saved;
+    after = saved.data;
+    current = await stepFactsNow(actor, videoId);
+  }
+
+  // The tick confirms exactly the posts the block showed: a stale or tampered key stores nothing (07 D69).
+  const key = verifiedPostingsKey(after);
+  const sawThesePosts = key !== "" && tick.data.verifiedKey === key;
+  if (tick.data.sameVideo && sawThesePosts && !current.sameVideoConfirmed) {
+    const confirmed = await confirmTick(actor, videoId);
+    if (!confirmed.ok) {
+      refresh();
+      return confirmed;
+    }
+    // Stored: the one fact the tick changes, without a read. Not stored, the verified posts changed meanwhile: read.
+    current = confirmed.data
+      ? { ...current, sameVideoConfirmed: true }
+      : await stepFactsNow(actor, videoId);
+  }
+
+  const outcome = postingsStepOutcome({
+    complete: videoStepFacts(current).postingsDone,
+    changed,
+    needsAttention: after.some(needsAttention),
+  });
+  if (outcome === "next") redirect(videoStepHref(videoId, "rights"));
+  refresh();
+  return {
+    ok: true,
+    data: {
+      sameVideoMissing:
+        !tick.data.sameVideo && sawThesePosts && !current.sameVideoConfirmed,
+    },
+  };
+}
+
+const recheckInput = z.object({ postingId: z.uuid() });
+
+/**
+ * **Check again** on one saved posting (02 §6.1 recheckPosting; 07 D66): the posting as checked now, then refresh().
+ * Signed out → sign-in, back to the page it was pressed on (requireCreator's default). Its refusals in words: a private
+ * post, a locked video, a post another creator or the creator's other video verified meanwhile (01 J5.27, A.4). A
+ * posting that is gone (a save replaced the rows: their ids change on every save) or isn't the creator's is the generic
+ * error; the refresh brings the current rows.
+ */
+export async function recheckPosting(input: {
+  postingId: string;
+}): Promise<ActionResult<{ posting: OwnerPostingDTO }>> {
+  const ctx = await requireCreator();
+  const parsed = recheckInput.safeParse(input);
+  if (!parsed.success) return formError("invalid_input", GENERIC_ERROR_MESSAGE);
+  let result: ActionResult<{ posting: OwnerPostingDTO }>;
+  try {
+    const posting = await recheckPostingFor(toActor(ctx), parsed.data);
+    result = { ok: true, data: { posting } };
+  } catch (error) {
+    const refused =
+      error instanceof VideoNotFoundError
+        ? { code: "not_found", message: GENERIC_ERROR_MESSAGE }
+        : postingRefusal(error);
+    if (refused === null) throw error;
+    result = formError(refused.code, refused.message);
+  }
+  refresh();
+  return result;
 }

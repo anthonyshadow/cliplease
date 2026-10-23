@@ -27,33 +27,63 @@ const UPLOAD: CreatorVideoDTO = {
   originalLocked: false,
   rightsAnswered: false,
   source: "upload",
+  postingsConfirmedAt: null,
   sameVideoConfirmed: false,
+  hasVerifiedPosting: false,
   sourcePost: null,
 };
 const LIBRARY: CreatorVideoDTO = {
   ...UPLOAD,
   title: "He saw snow for the first time and lost it",
   source: "library",
+  hasVerifiedPosting: true,
   sourcePost: SOURCE_POST,
 };
+/** The original is attached: 14 s, while the source post below is 38 s (the old File-step warning's case). */
+const READY = {
+  originalStatus: "ready",
+  originalFilename: "sample.mp4",
+  durationMs: 14_000,
+  width: 720,
+  height: 1280,
+  posterSrc: `/api/media/posters/${UPLOAD.id}?v=abcd1234`,
+  posterOrigin: "frame_capture",
+} satisfies Partial<CreatorVideoDTO>;
 
 const back = () => screen.getByRole("link", { name: "Back" });
 const connectNote = () =>
   screen.queryByRole("link", { name: "Connect an account" });
 
+/**
+ * None of what moved to Where posted (07 D69; owner answer Q-81 a): the J5.6 upload note, the post's picture, the
+ * duration warning and the tick.
+ */
+function expectNothingMoved() {
+  expect(connectNote()).toBeNull();
+  expect(
+    screen.queryByText(/Connect the account to get a Verified label/),
+  ).toBeNull();
+  expect(
+    document.querySelector('img[src^="/api/library/thumbnails/"]'),
+  ).toBeNull();
+  expect(document.querySelector("figure")).toBeNull();
+  expect(screen.queryByText(/Make sure it's the same video/)).toBeNull();
+  expect(screen.queryByRole("checkbox")).toBeNull();
+  expect(screen.queryByText(/same video/)).toBeNull();
+}
+
 describe("FileStep", () => {
-  it("a plain upload stays P10b's one reading column: Back to Videos and the upload-only note", () => {
+  it("a plain upload stays P10b's one reading column with Back to Videos, and no upload-only note (it moved to Where posted)", () => {
     const { container } = render(<FileStep video={UPLOAD} />);
     expect(back().getAttribute("href")).toBe("/dashboard/videos");
-    expect(connectNote()).not.toBeNull();
     expect(container.firstElementChild?.className).toContain("max-w-reading");
     expect(container.querySelector("[data-post-summary]")).toBeNull();
+    expectNothingMoved();
   });
 
-  it("a Library video: Back to the Library (owner answer Q-63 b), the two-column grid, no upload-only note and no visible heading", () => {
+  it("a Library video: Back to the Library (owner answer Q-63 b), the two-column grid, and no visible heading", () => {
     const { container } = render(<FileStep video={LIBRARY} />);
     expect(back().getAttribute("href")).toBe("/dashboard/library");
-    expect(connectNote()).toBeNull();
     const page = container.firstElementChild;
     expect(page?.className).toContain("max-w-reading");
     expect(page?.className).toContain("lg:grid-cols-12");
@@ -80,6 +110,31 @@ describe("FileStep", () => {
       container.querySelector("[data-file-step-body]")?.textContent,
     ).toContain(NOTICE);
   });
+
+  it.each([
+    ["a plain upload", UPLOAD],
+    ["a Library video", LIBRARY],
+  ])(
+    "%s, once the original is ready: Continue goes to Where posted, and nothing that moved there shows (07 D69)",
+    (_, video) => {
+      render(
+        <FileStep
+          video={{
+            ...video,
+            ...READY,
+            sourcePost: video.sourcePost && {
+              ...video.sourcePost,
+              durationSec: 38,
+            },
+          }}
+        />,
+      );
+      expect(
+        screen.getByRole("link", { name: "Continue" }).getAttribute("href"),
+      ).toBe(`/dashboard/videos/${UPLOAD.id}?step=postings`);
+      expectNothingMoved();
+    },
+  );
 
   it("refuses a Library video without its source post (07 D66 keeps exactly one)", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});

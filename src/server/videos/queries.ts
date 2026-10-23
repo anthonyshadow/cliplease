@@ -4,6 +4,7 @@ import { and, eq } from "drizzle-orm";
 import { cache } from "react";
 import { db } from "../../db/client";
 import { socialPost, video, videoPosting } from "../../db/schema";
+import type { Video } from "../../db/schema/types";
 import type {
   OriginalFileStatus,
   PosterOrigin,
@@ -34,12 +35,30 @@ export type CreatorSourcePostDTO = Pick<
   verifiedUsername: string | null;
 };
 
-/** The creator's own video as the Make licensable pages show it: no object key, upload id or creator id (02 §5.10). */
-export type CreatorVideoDTO = {
-  id: string;
-  title: string;
+/**
+ * What the Make licensable steps turn on (07 D69): src/lib/videos/steps.ts' videoStepFacts derives resolveStep's
+ * VideoStepFacts from it. Part of CreatorVideoDTO, and read alone, uncached, by getVideoStepFacts. `hasVerifiedPosting`
+ * is `video.ownership = 'verified_owner'`, the summary refreshVideoOwnership keeps in step with the postings in every
+ * posting write (07 D66).
+ */
+export type VideoStepState = {
   status: VideoStatus;
   originalStatus: OriginalFileStatus;
+  /** 'library' videos arrive with their locked source posting (07 D65, D69). */
+  source: VideoSource;
+  /** postings_confirmed_at as ISO: Where posted was saved, also as "I haven't posted it anywhere yet." (07 D69). */
+  postingsConfirmedAt: string | null;
+  /** same_video_confirmed_at is set ("These posts show this same video", 07 D69). */
+  sameVideoConfirmed: boolean;
+  /** At least one posting is verified, so the same-video tick is required (07 D66, D69). */
+  hasVerifiedPosting: boolean;
+  rightsAnswered: boolean;
+};
+
+/** The creator's own video as the Make licensable pages show it: no object key, upload id or creator id (02 §5.10). */
+export type CreatorVideoDTO = VideoStepState & {
+  id: string;
+  title: string;
   originalError: string | null;
   originalFilename: string | null;
   durationMs: number | null;
@@ -50,11 +69,6 @@ export type CreatorVideoDTO = {
   posterOrigin: PosterOrigin | null;
   /** 07 D09: Replace is hidden while the original can't change. */
   originalLocked: boolean;
-  rightsAnswered: boolean;
-  /** P11: 'library' videos need the same-video tick on the File step (07 D39). */
-  source: VideoSource;
-  /** same_video_confirmed_at is set ("This file is the same video as the post"). */
-  sameVideoConfirmed: boolean;
   /** The source posting (`is_source`): a Library video's one, null for an upload. */
   sourcePost: CreatorSourcePostDTO | null;
 };
@@ -64,6 +78,31 @@ function ownerPosterSrc(id: string, posterObjectKey: string | null) {
   if (!posterObjectKey) return null;
   const v = createHash("sha256").update(posterObjectKey).digest("hex");
   return `/api/media/posters/${id}?v=${v.slice(0, 8)}`;
+}
+
+/** The step facts' columns, read by both readers below. */
+const stepFactColumns = {
+  status: video.status,
+  originalStatus: video.originalStatus,
+  source: video.source,
+  postingsConfirmedAt: video.postingsConfirmedAt,
+  sameVideoConfirmedAt: video.sameVideoConfirmedAt,
+  ownership: video.ownership,
+  rightsAttestedAt: video.rightsAttestedAt,
+};
+
+function stepFactsOf(
+  row: Pick<Video, keyof typeof stepFactColumns>,
+): VideoStepState {
+  return {
+    status: row.status,
+    originalStatus: row.originalStatus,
+    source: row.source,
+    postingsConfirmedAt: row.postingsConfirmedAt?.toISOString() ?? null,
+    sameVideoConfirmed: row.sameVideoConfirmedAt !== null,
+    hasVerifiedPosting: row.ownership === "verified_owner",
+    rightsAnswered: row.rightsAttestedAt !== null,
+  };
 }
 
 /** The DTO's source post from the joined columns; null without a source posting (an upload). */
@@ -105,10 +144,9 @@ const videoForCreator = cache(
     if (!isUuid(videoId)) return null;
     const [row] = await db
       .select({
+        ...stepFactColumns,
         id: video.id,
         title: video.title,
-        status: video.status,
-        originalStatus: video.originalStatus,
         originalError: video.originalError,
         originalFilename: video.originalFilename,
         durationMs: video.durationMs,
@@ -116,9 +154,6 @@ const videoForCreator = cache(
         height: video.height,
         posterObjectKey: video.posterObjectKey,
         posterOrigin: video.posterOrigin,
-        rightsAttestedAt: video.rightsAttestedAt,
-        source: video.source,
-        sameVideoConfirmedAt: video.sameVideoConfirmedAt,
         ...lockFlags(db),
         // The source posting (video_posting_source_uidx: at most one) and its post (03 §7.4's Where-posted join).
         postingVerification: videoPosting.verification,
@@ -144,10 +179,9 @@ const videoForCreator = cache(
       .where(and(eq(video.id, videoId), eq(video.creatorId, creatorId)));
     if (!row) return null;
     return {
+      ...stepFactsOf(row),
       id: row.id,
       title: row.title,
-      status: row.status,
-      originalStatus: row.originalStatus,
       originalError: row.originalError,
       originalFilename: row.originalFilename,
       durationMs: row.durationMs,
@@ -156,9 +190,6 @@ const videoForCreator = cache(
       posterSrc: ownerPosterSrc(row.id, row.posterObjectKey),
       posterOrigin: row.posterOrigin,
       originalLocked: lockedBy(row),
-      rightsAnswered: row.rightsAttestedAt !== null,
-      source: row.source,
-      sameVideoConfirmed: row.sameVideoConfirmedAt !== null,
       sourcePost: sourcePostOf(row),
     };
   },
@@ -170,4 +201,22 @@ export function getVideoForCreator(
   videoId: string,
 ): Promise<CreatorVideoDTO | null> {
   return videoForCreator(requireCreatorActor(a).creatorId, videoId);
+}
+
+/**
+ * The creator's own video's step facts read now, or null (another creator's, missing, or not a uuid). Not cached: P11c's
+ * composed Continue reads them again after its writes in the same request, where getVideoForCreator's cache() would
+ * answer with the first read.
+ */
+export async function getVideoStepFacts(
+  a: Actor,
+  videoId: string,
+): Promise<VideoStepState | null> {
+  const { creatorId } = requireCreatorActor(a);
+  if (!isUuid(videoId)) return null;
+  const [row] = await db
+    .select(stepFactColumns)
+    .from(video)
+    .where(and(eq(video.id, videoId), eq(video.creatorId, creatorId)));
+  return row ? stepFactsOf(row) : null;
 }

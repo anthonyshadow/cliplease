@@ -36,4 +36,20 @@ describe("the postings refusals", () => {
       "not_posted_library",
     );
   });
+
+  it("carry the refused row's input index when a save gives one, and keep their codes (owner answer Q-78 a)", () => {
+    const elsewhere = new AlreadyLicensableElsewhereError(2);
+    const mine = new AlreadyOnYourVideoError("Snow day", 0);
+    expect([elsewhere.index, elsewhere.message]).toEqual([
+      2,
+      "already_licensable_elsewhere",
+    ]);
+    expect([mine.index, mine.videoTitle, mine.message]).toEqual([
+      0,
+      "Snow day",
+      "already_on_your_video",
+    ]);
+    expect(new AlreadyLicensableElsewhereError().index).toBeUndefined();
+    expect(new AlreadyOnYourVideoError("Snow day").index).toBeUndefined();
+  });
 });

@@ -25,32 +25,31 @@ const REQUESTS = [
 
 const facts = (
   originalReady: boolean,
-  sameVideoDone: boolean,
+  postingsDone: boolean,
   rightsAnswered: boolean,
-): VideoStepFacts => ({ originalReady, sameVideoDone, rightsAnswered });
+): VideoStepFacts => ({ originalReady, postingsDone, rightsAnswered });
 
-// originalReady, sameVideoDone, rightsAnswered, the first incomplete step, the steps that render.
+// originalReady, postingsDone, rightsAnswered, the first incomplete step, the steps that render.
 const FACTS: [boolean, boolean, boolean, VideoStep, VideoStep[]][] = [
-  // The tick done (a plain upload needs none): the File step waits only for the original.
-  [false, true, false, "file", ["file"]],
-  [false, true, true, "file", ["file"]],
-  [true, true, false, "rights", ["file", "rights"]],
-  [true, true, true, "review", ["file", "rights", "review"]],
-  // A Library video without the tick (P11): the File step stays incomplete, even with the original ready and the
-  // rights answered.
+  // The original not ready: the File step, whatever the rest.
   [false, false, false, "file", ["file"]],
   [false, false, true, "file", ["file"]],
-  [true, false, false, "file", ["file"]],
-  [true, false, true, "file", ["file"]],
+  [false, true, false, "file", ["file"]],
+  [false, true, true, "file", ["file"]],
+  // Ready, Where posted not done: Rights and Review wait for it, even with the rights answered.
+  [true, false, false, "postings", ["file", "postings"]],
+  [true, false, true, "postings", ["file", "postings"]],
+  [true, true, false, "rights", ["file", "postings", "rights"]],
+  [true, true, true, "review", ["file", "postings", "rights", "review"]],
 ];
 
-describe("resolveStep (07 D39, D69)", () => {
+describe("resolveStep (07 D69)", () => {
   describe.each(FACTS)(
-    "originalReady %s, sameVideoDone %s, rightsAnswered %s",
-    (ready, sameVideoDone, rights, firstIncomplete, renders) => {
+    "originalReady %s, postingsDone %s, rightsAnswered %s",
+    (ready, postingsDone, rights, firstIncomplete, renders) => {
       it.each(REQUESTS)("?step=%j", (requested) => {
         const route = resolveStep(
-          facts(ready, sameVideoDone, rights),
+          facts(ready, postingsDone, rights),
           requested,
         );
         const step = renders.find((s) => s === requested);
@@ -63,65 +62,133 @@ describe("resolveStep (07 D39, D69)", () => {
     },
   );
 
-  it("sends a Library draft's ?step=rights back to ?step=file until the tick is given", () => {
+  it("sends ?step=rights back to ?step=postings until Where posted is done", () => {
     expect(resolveStep(facts(true, false, false), "rights")).toEqual({
       kind: "redirect",
-      step: "file",
+      step: "postings",
     });
     expect(resolveStep(facts(true, true, false), "rights")).toEqual({
       kind: "render",
       step: "rights",
     });
   });
-});
 
-describe("videoStepFacts", () => {
-  it("reads a Library video's facts: the tick is needed", () => {
-    const library = {
-      originalStatus: "ready",
-      source: "library",
-      sameVideoConfirmed: false,
-      rightsAnswered: false,
-    } as const;
-    expect(videoStepFacts(library)).toEqual(facts(true, false, false));
-    expect(videoStepFacts({ ...library, sameVideoConfirmed: true })).toEqual(
-      facts(true, true, false),
-    );
+  it("sends ?step=postings back to ?step=file until the original is ready", () => {
+    expect(resolveStep(facts(false, true, true), "postings")).toEqual({
+      kind: "redirect",
+      step: "file",
+    });
+    expect(resolveStep(facts(true, false, false), "postings")).toEqual({
+      kind: "render",
+      step: "postings",
+    });
   });
 
-  it.each([false, true])(
-    "reads a plain upload's facts: no tick needed (stored tick %s)",
-    (sameVideoConfirmed) => {
-      expect(
-        videoStepFacts({
-          originalStatus: "ready",
-          source: "upload",
-          sameVideoConfirmed,
-          rightsAnswered: true,
-        }),
-      ).toEqual(facts(true, true, true));
-    },
-  );
-
-  it.each(["none", "uploading", "failed"] as const)(
-    "is not ready while the original is %s",
-    (originalStatus) => {
-      expect(
-        videoStepFacts({
-          originalStatus,
-          source: "library",
-          sameVideoConfirmed: true,
-          rightsAnswered: false,
-        }).originalReady,
-      ).toBe(false);
+  it.each(["nonsense", "", "Postings", "file ", undefined, null])(
+    "redirects an invalid ?step=%j to the first incomplete step",
+    (requested) => {
+      expect(resolveStep(facts(true, false, false), requested)).toEqual({
+        kind: "redirect",
+        step: "postings",
+      });
+      expect(resolveStep(facts(true, true, false), requested)).toEqual({
+        kind: "redirect",
+        step: "rights",
+      });
     },
   );
 });
 
-describe("VIDEO_STEPS (04 §9.28)", () => {
-  it("lists the steps and their Stepper labels in order", () => {
-    expect(VIDEO_STEPS).toEqual(["file", "rights", "review"]);
-    expect(VIDEO_STEP_LABELS).toEqual(["File", "Rights", "Review"]);
+describe("videoStepFacts (07 D66, D69)", () => {
+  const UPLOAD = {
+    originalStatus: "ready",
+    postingsConfirmedAt: null,
+    hasVerifiedPosting: false,
+    sameVideoConfirmed: false,
+    rightsAnswered: false,
+  } as const;
+  const CONFIRMED = "2026-10-21T12:00:00.000Z";
+
+  it("an upload without postingsConfirmedAt stops at Where posted", () => {
+    expect(videoStepFacts(UPLOAD)).toEqual(facts(true, false, false));
+    expect(resolveStep(videoStepFacts(UPLOAD), "rights")).toEqual({
+      kind: "redirect",
+      step: "postings",
+    });
+  });
+
+  it("confirmed with nothing verified (also “I haven't posted it anywhere yet.”) → Rights, no tick asked", () => {
+    const video = { ...UPLOAD, postingsConfirmedAt: CONFIRMED };
+    expect(videoStepFacts(video)).toEqual(facts(true, true, false));
+    expect(resolveStep(videoStepFacts(video), undefined)).toEqual({
+      kind: "redirect",
+      step: "rights",
+    });
+  });
+
+  it("confirmed with a verified posting needs the tick: without it → Where posted; with it → Rights", () => {
+    const video = {
+      ...UPLOAD,
+      postingsConfirmedAt: CONFIRMED,
+      hasVerifiedPosting: true,
+    };
+    expect(videoStepFacts(video)).toEqual(facts(true, false, false));
+    expect(resolveStep(videoStepFacts(video), "rights")).toEqual({
+      kind: "redirect",
+      step: "postings",
+    });
+    const ticked = { ...video, sameVideoConfirmed: true };
+    expect(videoStepFacts(ticked)).toEqual(facts(true, true, false));
+    expect(resolveStep(videoStepFacts(ticked), "rights")).toEqual({
+      kind: "render",
+      step: "rights",
+    });
+  });
+
+  it("a stored tick without postingsConfirmedAt doesn't complete Where posted", () => {
+    expect(
+      videoStepFacts({
+        ...UPLOAD,
+        hasVerifiedPosting: true,
+        sameVideoConfirmed: true,
+      }).postingsDone,
+    ).toBe(false);
+  });
+
+  it.each(["none", "uploading", "failed"] as const)(
+    "the original %s → the File step, whatever the rest",
+    (originalStatus) => {
+      const video = {
+        originalStatus,
+        postingsConfirmedAt: CONFIRMED,
+        hasVerifiedPosting: true,
+        sameVideoConfirmed: true,
+        rightsAnswered: true,
+      };
+      expect(videoStepFacts(video)).toEqual(facts(false, true, true));
+      expect(resolveStep(videoStepFacts(video), "review")).toEqual({
+        kind: "redirect",
+        step: "file",
+      });
+    },
+  );
+
+  it("passes the rights answer through", () => {
+    expect(
+      videoStepFacts({ ...UPLOAD, rightsAnswered: true }).rightsAnswered,
+    ).toBe(true);
+  });
+});
+
+describe("VIDEO_STEPS (04 §9.28, 07 D69)", () => {
+  it("lists the four steps and their Stepper labels in order", () => {
+    expect(VIDEO_STEPS).toEqual(["file", "postings", "rights", "review"]);
+    expect(VIDEO_STEP_LABELS).toEqual([
+      "File",
+      "Where posted",
+      "Rights",
+      "Review",
+    ]);
   });
 });
 
@@ -129,6 +196,9 @@ describe("hrefs", () => {
   it("videoStepHref is the draft's step page", () => {
     expect(videoStepHref("abc", "rights")).toBe(
       "/dashboard/videos/abc?step=rights",
+    );
+    expect(videoStepHref("abc", "postings")).toBe(
+      "/dashboard/videos/abc?step=postings",
     );
   });
 

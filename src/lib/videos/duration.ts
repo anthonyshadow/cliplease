@@ -1,5 +1,5 @@
-// The uploaded file against the post it claims to be (01 J5.10, 07 D39): a length check the creator sees before the
-// same-video tick. Pure and client-safe: the File step reads the file's length in the browser.
+// The uploaded file against the posts it claims to be (01 J5.10, 07 D39, D69): a length check the creator sees on Where
+// posted, per verified post, before "These posts show this same video". Pure and client-safe.
 import { formatDuration } from "../format";
 
 /** A length is known when it is a positive, finite number: 0, NaN and Infinity are how "unknown" arrives. */
@@ -22,14 +22,18 @@ export function durationMismatch(
 
 /**
  * The Banner above the tick when the lengths differ (01 J5.10, 04 §11.10): "This file is 0:14 but the post is 0:38.
- * Make sure it's the same video."; null when they match or either is unknown.
+ * Make sure it's the same video."; null when they match or either is unknown. With `postLabel` (the post's platform,
+ * when the block shows more than one verified post; owner answer Q-76 a, proposed copy) it names the post: "…but the
+ * Demo post is 0:38…".
  */
 export function durationMismatchMessage(
   fileMs: number | null | undefined,
   postSec: number | null | undefined,
+  postLabel?: string,
 ): string | null {
   if (!known(fileMs) || !known(postSec) || !durationMismatch(fileMs, postSec)) {
     return null;
   }
-  return `This file is ${formatDuration(fileMs / 1000)} but the post is ${formatDuration(postSec)}. Make sure it's the same video.`;
+  const post = postLabel === undefined ? "post" : `${postLabel} post`;
+  return `This file is ${formatDuration(fileMs / 1000)} but the ${post} is ${formatDuration(postSec)}. Make sure it's the same video.`;
 }

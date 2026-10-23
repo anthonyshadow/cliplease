@@ -1,20 +1,22 @@
 import "server-only";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "../../db/client";
 import { video } from "../../db/schema";
 import { isUuid } from "../../lib/validation/uuid";
 import { type Actor, requireCreatorActor } from "../auth/actor";
 import {
-  NotFromLibraryError,
+  NoVerifiedPostingError,
   OriginalNotReadyError,
   VideoNotFoundError,
 } from "./errors";
 
 /**
- * The File step's "This file is the same video as the post" (07 D39; P11 stages it there, P11c moves it to Where posted
- * and widens it to any video with a verified posting, D69): the owner's Library video with a `ready` original gets
+ * "These posts show this same video" on the Where posted step (02 §5.6, 07 D69; P11c moved it there from P11's File
+ * step): the owner's video with a `ready` original and at least one verified posting, any source, gets
  * `same_video_confirmed_at`, once. Confirming again keeps the first time and writes nothing. Refusals, in this order:
- * VideoNotFoundError, NotFromLibraryError, OriginalNotReadyError.
+ * VideoNotFoundError, NoVerifiedPostingError, OriginalNotReadyError. "A verified posting" is the locked row's
+ * `ownership = 'verified_owner'` (07 D66): every posting write refreshes it (refreshVideoOwnership) under this same video
+ * lock, so a save or Check again that changes the verified set (and clears the tick, D69) is either seen whole or waits.
  */
 export async function confirmSameVideo(
   a: Actor,
@@ -22,26 +24,23 @@ export async function confirmSameVideo(
 ): Promise<void> {
   const { creatorId } = requireCreatorActor(a);
   if (!isUuid(videoId)) throw new VideoNotFoundError();
-  const mine = and(eq(video.id, videoId), eq(video.creatorId, creatorId));
-  const [confirmed] = await db
-    .update(video)
-    .set({ sameVideoConfirmedAt: new Date() })
-    .where(
-      and(
-        mine,
-        eq(video.source, "library"),
-        eq(video.originalStatus, "ready"),
-        isNull(video.sameVideoConfirmedAt),
-      ),
-    )
-    .returning({ id: video.id });
-  if (confirmed) return;
-  // Nothing changed: already confirmed, or refused. Say which.
-  const [row] = await db
-    .select({ source: video.source, originalStatus: video.originalStatus })
-    .from(video)
-    .where(mine);
-  if (!row) throw new VideoNotFoundError();
-  if (row.source !== "library") throw new NotFromLibraryError();
-  if (row.originalStatus !== "ready") throw new OriginalNotReadyError();
+  await db.transaction(async (tx) => {
+    const [row] = await tx
+      .select({
+        ownership: video.ownership,
+        originalStatus: video.originalStatus,
+        sameVideoConfirmedAt: video.sameVideoConfirmedAt,
+      })
+      .from(video)
+      .where(and(eq(video.id, videoId), eq(video.creatorId, creatorId)))
+      .for("update");
+    if (!row) throw new VideoNotFoundError();
+    if (row.ownership !== "verified_owner") throw new NoVerifiedPostingError();
+    if (row.originalStatus !== "ready") throw new OriginalNotReadyError();
+    if (row.sameVideoConfirmedAt) return;
+    await tx
+      .update(video)
+      .set({ sameVideoConfirmedAt: new Date() })
+      .where(eq(video.id, videoId));
+  });
 }

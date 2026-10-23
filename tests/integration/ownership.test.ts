@@ -29,14 +29,11 @@ import { confirmSameVideo } from "../../src/server/videos/edit";
 import {
   makeLicensableErrorCode,
   NeedsReconnectError,
-  NotFromLibraryError,
   NotOnAccountError,
-  OriginalNotReadyError,
   PostNotFoundError,
-  VideoNotFoundError,
 } from "../../src/server/videos/errors";
 import { getVideoForCreator } from "../../src/server/videos/queries";
-import { mockNextHeaders, signedInCreator } from "../helpers/auth";
+import { mockNextHeaders } from "../helpers/auth";
 import { accountRow, auditsOf, postNumber } from "../helpers/connect-flow";
 import { resetDb } from "../helpers/db";
 import {
@@ -48,9 +45,7 @@ import {
 } from "../helpers/factories";
 import { syncedDemo } from "../helpers/library";
 import {
-  confirmedAt,
   expectNothingWritten,
-  libraryDraft,
   liveGetPost,
   postingsOn,
   spyGetPost,
@@ -453,60 +448,8 @@ describe("createVideoFromPost: refusals write nothing", () => {
   });
 });
 
-describe("confirmSameVideo (07 D39; P11c moves it to Where posted)", () => {
-  it("sets same_video_confirmed_at once the original is ready; confirming again keeps the first time", async () => {
-    const me = await signedInCreator();
-    const draft = await libraryDraft(me);
-
-    await confirmSameVideo(me.actor, draft.id);
-    const first = await confirmedAt(draft.id);
-    expect(first).toBeInstanceOf(Date);
-
-    await confirmSameVideo(me.actor, draft.id);
-    expect(await confirmedAt(draft.id)).toEqual(first);
-  });
-
-  it("refuses before the original is ready (OriginalNotReadyError) and stores nothing", async () => {
-    const me = await signedInCreator();
-    const draft = await libraryDraft(me, { ready: false });
-
-    await expect(confirmSameVideo(me.actor, draft.id)).rejects.toBeInstanceOf(
-      OriginalNotReadyError,
-    );
-    expect(await confirmedAt(draft.id)).toBeNull();
-  });
-
-  it("refuses a plain upload (NotFromLibraryError), even with its original ready", async () => {
-    const me = await signedInCreator();
-    const upload = await insertUploadVideo({ id: me.creatorId });
-    await markOriginalReady(upload);
-
-    await expect(confirmSameVideo(me.actor, upload.id)).rejects.toBeInstanceOf(
-      NotFromLibraryError,
-    );
-    expect(await confirmedAt(upload.id)).toBeNull();
-  });
-
-  it("answers another creator's video, an unknown id and a non-uuid as not found", async () => {
-    const owner = await signedInCreator();
-    const draft = await libraryDraft(owner);
-    const other = await signedInCreator();
-
-    for (const [actor, id] of [
-      [other.actor, draft.id],
-      [owner.actor, randomUUID()],
-      [owner.actor, "not-a-uuid"],
-    ] as const) {
-      await expect(confirmSameVideo(actor, id)).rejects.toBeInstanceOf(
-        VideoNotFoundError,
-      );
-    }
-    expect(await confirmedAt(draft.id)).toBeNull();
-  });
-});
-
-describe("getVideoForCreator: a Library draft's source post (the File step's data)", () => {
-  it("gives the source, the tick and the source post with the Library's thumbnail URL; no account or platform ids", async () => {
+describe("getVideoForCreator: a Library draft's step facts and source post", () => {
+  it("gives the source, the verified posting, the tick and the source post with the Library's thumbnail URL; no account or platform ids", async () => {
     const { d, post } = await demoPost();
     const { videoId } = await createVideoFromPost(d.actor, post.id);
     const [posting] = await postingsOn(post.id);
@@ -515,7 +458,9 @@ describe("getVideoForCreator: a Library draft's source post (the File step's dat
     expect(dto).toMatchObject({
       id: videoId,
       source: "library",
+      postingsConfirmedAt: null,
       sameVideoConfirmed: false,
+      hasVerifiedPosting: true,
     });
     expect(dto?.sourcePost).toStrictEqual({
       platform: "mock",

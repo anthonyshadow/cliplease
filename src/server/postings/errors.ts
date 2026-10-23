@@ -2,14 +2,15 @@ import "server-only";
 
 // The postings refusals (02 §5.12; P11b), shared by createVideoFromPost, saveVideoPostings and recheckPosting.
 // Messages are fixed codes: never a title, a handle, a link or a link key. The pages word them (01 J5.2–J5.4,
-// J5.23–J5.28).
+// J5.23–J5.28). The two cross-creator refusals of a save carry the refused row's `index` in the input (owner answer
+// Q-78 a: the step shows them under that link field); Check again's, createVideoFromPost's and a lost index's carry none.
 
 /**
  * Another creator's video holds this platform post (07 D66, D68): its verified posting, or a lost
  * video_posting_verified_uidx. A paste is refused whether or not it would verify.
  */
 export class AlreadyLicensableElsewhereError extends Error {
-  constructor() {
+  constructor(readonly index?: number) {
     super("already_licensable_elsewhere");
     this.name = "AlreadyLicensableElsewhereError";
   }
@@ -17,7 +18,10 @@ export class AlreadyLicensableElsewhereError extends Error {
 
 /** The creator's other video holds this platform post verified (07 D68); `videoTitle` names it in the copy. */
 export class AlreadyOnYourVideoError extends Error {
-  constructor(readonly videoTitle: string) {
+  constructor(
+    readonly videoTitle: string,
+    readonly index?: number,
+  ) {
     super("already_on_your_video");
     this.name = "AlreadyOnYourVideoError";
   }

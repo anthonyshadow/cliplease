@@ -5,6 +5,7 @@ import {
   COVER_COPY,
   checkOriginalFile,
   DROPZONE_COPY,
+  hintsLine,
   INDICATOR_COPY,
   milestoneAnnouncement,
   PAUSE_COPY,
@@ -350,6 +351,18 @@ describe("attachedLine", () => {
     [{ duration: null, width: null, height: null }, "Original attached"],
   ])("%j → %s", (hints, line) => {
     expect(attachedLine(hints)).toBe(line);
+  });
+
+  it("words the stored length in m:ss (hintsLine), leaving out a length that is unknown or 0", () => {
+    expect(hintsLine({ durationMs: 14_900, width: 720, height: 1280 })).toBe(
+      "Original attached · 0:14 · 720 × 1280",
+    );
+    expect(hintsLine({ durationMs: null, width: 720, height: 1280 })).toBe(
+      "Original attached · 720 × 1280",
+    );
+    expect(hintsLine({ durationMs: 0, width: null, height: null })).toBe(
+      "Original attached",
+    );
   });
 });
 

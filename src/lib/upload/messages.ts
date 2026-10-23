@@ -1,6 +1,6 @@
 // The File step's words and the pure rules behind them (04 §9.26, §11.10; 07 D80; owner answers Q-40, Q-42, Q-46,
 // Q-47, Q-49). Client-safe.
-import { formatBytes } from "../format";
+import { formatBytes, formatDuration } from "../format";
 import { GENERIC_ERROR_MESSAGE } from "../result";
 import { SIGN_IN_COPY } from "../sign-in";
 import { graphemes } from "../text/graphemes";
@@ -240,4 +240,17 @@ export function attachedLine(hints: {
   if (hints.width && hints.height)
     parts.push(`${hints.width} × ${hints.height}`);
   return parts.join(" · ");
+}
+
+/** attachedLine from the stored file's (or the browser's read of it) length and size: the File step and Where posted. */
+export function hintsLine(h: {
+  durationMs: number | null;
+  width: number | null;
+  height: number | null;
+}): string {
+  return attachedLine({
+    duration: h.durationMs ? formatDuration(h.durationMs / 1000) : null,
+    width: h.width,
+    height: h.height,
+  });
 }
