@@ -11,6 +11,7 @@ import type { PostingPlatform } from "../../lib/domain/values";
 import { postingPlatformLabel } from "../../lib/postings/labels";
 import type { OwnerPostingDTO } from "../../lib/postings/types";
 import { isUuid } from "../../lib/validation/uuid";
+import { primaryVerifiedPosting } from "../../lib/videos/ownership";
 import type { Actor, CreatorActor } from "../auth/actor";
 import { postThumbnail } from "../library/queries";
 import { VideoNotFoundError } from "../videos/errors";
@@ -59,6 +60,7 @@ async function ownerPostingRows(where: SQL | undefined) {
       verification: videoPosting.verification,
       unverifiedReason: videoPosting.unverifiedReason,
       verifiedUsername: videoPosting.verifiedUsername,
+      verifiedAccountLinkedAt: videoPosting.verifiedAccountLinkedAt,
       showLink: videoPosting.showLink,
       checkedAt: videoPosting.checkedAt,
       position: videoPosting.position,
@@ -138,6 +140,9 @@ export function toOwnerPosting(row: OwnerPostingRow): OwnerPostingDTO {
     verification: row.verification,
     unverifiedReason: row.unverifiedReason,
     verifiedUsername: verified ? row.verifiedUsername : null,
+    verifiedAccountLinkedAt: verified
+      ? (row.verifiedAccountLinkedAt?.toISOString() ?? null)
+      : null,
     accountStatus: row.accountStatus,
     thumbnailSrc:
       verified && row.postId !== null
@@ -207,8 +212,7 @@ export function toPublicPostings(
 ): PublicPostings {
   const byPosition = [...rows].sort((x, y) => x.position - y.position);
   const verified = byPosition.filter((row) => row.verification === "verified");
-  const primaryRow =
-    verified.find((row) => row.isSource) ?? verified[0] ?? null;
+  const primaryRow = primaryVerifiedPosting(byPosition);
   const ordered = [
     ...verified,
     ...byPosition.filter((row) => row.verification !== "verified"),

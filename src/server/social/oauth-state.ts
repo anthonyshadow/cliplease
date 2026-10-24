@@ -90,24 +90,28 @@ const RETURN_PATH = /^\/(dashboard|onboarding)(\/[a-z0-9/-]*)?$/;
 const RETURN_PARAMS = new Set(["step", "post", "platform", "account"]);
 
 /**
- * Where a connect lands (07 D37): a same-origin /dashboard or /onboarding path with only the step, post, platform and
- * account params; anything else is /dashboard/library. Dot segments are refused before parsing, because the URL parser
- * would quietly resolve them.
+ * A return target that passes 07 D37: a same-origin /dashboard or /onboarding path with only the step, post, platform and
+ * account params; anything else is null. Dot segments are refused before parsing, because the URL parser would quietly
+ * resolve them.
  */
-export function parseReturnTo(raw: string | null): URL {
-  const fallback = new URL("/dashboard/library", env.APP_URL);
-  if (!raw || raw.length > 512 || /\.\.|%2e|\\/i.test(raw)) return fallback;
+export function returnToUrl(raw: string | null): URL | null {
+  if (!raw || raw.length > 512 || /\.\.|%2e|\\/i.test(raw)) return null;
   let url: URL;
   try {
     url = new URL(raw, env.APP_URL);
   } catch {
-    return fallback;
+    return null;
   }
-  if (url.origin !== new URL(env.APP_URL).origin) return fallback;
-  if (url.username || url.password || url.hash) return fallback;
-  if (!RETURN_PATH.test(url.pathname)) return fallback;
+  if (url.origin !== new URL(env.APP_URL).origin) return null;
+  if (url.username || url.password || url.hash) return null;
+  if (!RETURN_PATH.test(url.pathname)) return null;
   for (const key of url.searchParams.keys()) {
-    if (!RETURN_PARAMS.has(key)) return fallback;
+    if (!RETURN_PARAMS.has(key)) return null;
   }
   return url;
+}
+
+/** Where a connect lands (07 D37): returnToUrl's target, else /dashboard/library. */
+export function parseReturnTo(raw: string | null): URL {
+  return returnToUrl(raw) ?? new URL("/dashboard/library", env.APP_URL);
 }

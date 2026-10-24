@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { listPostingAccountStates } from "@/server/library/queries";
 import { listVideoPostings } from "@/server/postings/queries";
 import type { CreatorVideoDTO } from "@/server/videos/queries";
+import { creatorVideoFixture } from "./creator-video-fixture";
 import { SOURCE_POSTING, VIDEO_ID } from "./postings-fixtures";
 import { PostingsStep } from "./postings-step";
 
@@ -32,26 +33,16 @@ const ACTOR = {
   creatorId: "c",
 } as const;
 
-const UPLOAD: CreatorVideoDTO = {
+const UPLOAD = creatorVideoFixture({
   id: VIDEO_ID,
-  title: "Beach day",
-  status: "draft",
   originalStatus: "ready",
-  originalError: null,
   originalFilename: "sample.mp4",
   durationMs: 14_000,
   width: 720,
   height: 1280,
   posterSrc: `/api/media/posters/${VIDEO_ID}?v=abcd1234`,
   posterOrigin: "frame_capture",
-  originalLocked: false,
-  rightsAnswered: false,
-  source: "upload",
-  postingsConfirmedAt: null,
-  sameVideoConfirmed: false,
-  hasVerifiedPosting: false,
-  sourcePost: null,
-};
+});
 const LIBRARY: CreatorVideoDTO = {
   ...UPLOAD,
   source: "library",
@@ -101,7 +92,7 @@ describe("PostingsStep", () => {
     expect(document.querySelector('[aria-current="step"]')?.textContent).toBe(
       "Where posted",
     );
-    expect(document.querySelector("[data-postings-step] form")).not.toBeNull();
+    expect(document.querySelector("[data-step=postings] form")).not.toBeNull();
   });
 
   it("lays out per tier: one 640 column, the summary hidden below md and left of the step from lg", async () => {
@@ -116,7 +107,7 @@ describe("PostingsStep", () => {
     expect(summary.className).toContain("md:flex");
     expect(summary.className).toContain("lg:col-span-5");
     expect(
-      container.querySelector("[data-postings-step]")?.className,
+      container.querySelector("[data-step=postings]")?.className,
     ).toContain("lg:col-span-7");
     expect(summary.textContent).toContain(
       "Original attached · 0:14 · 720 × 1280",
@@ -143,14 +134,14 @@ describe("PostingsStep", () => {
 
   it("shows a connect's ?error= line in a Banner, and reads ?connected= as a provider only", async () => {
     await renderStep(UPLOAD, "edit", { error: "denied", connected: "mock" });
-    const step = document.querySelector("[data-postings-step]") as HTMLElement;
+    const step = document.querySelector("[data-step=postings]") as HTMLElement;
     expect(within(step).getByRole("status").textContent).toBe(
       "Nothing was linked.",
     );
     cleanup();
     await renderStep(UPLOAD, "edit", { error: "<script>" });
     expect(
-      document.querySelector("[data-postings-step] [role=status]"),
+      document.querySelector("[data-step=postings] [role=status]"),
     ).toBeNull();
   });
 

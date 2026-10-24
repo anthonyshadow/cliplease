@@ -18,7 +18,7 @@ import {
  * never stands alone, and the badge never sits over a thumbnail or poster.
  */
 export function VerifiedOwnerBadge(props: BadgeInput) {
-  const { line1, line2 } = badgeText(props);
+  const { line1, line2, line3 } = badgeText(props);
   const lg = props.size === "lg";
   const verified = props.ownership === "verified_owner";
   const Icon = verified ? ShieldCheck : UserRound;
@@ -46,9 +46,8 @@ export function VerifiedOwnerBadge(props: BadgeInput) {
           {line1}
         </p>
         {line2 ? <p className="text-footnote text-ink-2">{line2}</p> : null}
-        {lg ? (
-          <BadgeExplainer paragraphs={badgeExplainer(props.ownership)} />
-        ) : null}
+        {line3 ? <p className="text-footnote text-ink-2">{line3}</p> : null}
+        {lg ? <BadgeExplainer paragraphs={badgeExplainer(props)} /> : null}
       </div>
     </div>
   );

@@ -7,6 +7,7 @@ import {
   oauthCookieOptions,
   openOAuthState,
   parseReturnTo,
+  returnToUrl,
   sealOAuthState,
   stateMatches,
 } from "./oauth-state";
@@ -135,5 +136,16 @@ describe("parseReturnTo (07 D37)", () => {
     "/dashboard/connections#frag",
   ])("sends %j to the Library", (raw) => {
     expect(parseReturnTo(raw).href).toBe(LIBRARY);
+  });
+});
+
+describe("returnToUrl (07 D37; owner answer Q-94 a)", () => {
+  it("gives the URL of an allowed path, and null for one parseReturnTo would replace", () => {
+    const review =
+      "/dashboard/videos/0b9c5b8e-5a4f-4c1e-9d2a-3f6e7a8b9c0d?step=review";
+    expect(returnToUrl(review)?.href).toBe(new URL(review, env.APP_URL).href);
+    expect(returnToUrl(null)).toBeNull();
+    expect(returnToUrl("//evil.com")).toBeNull();
+    expect(returnToUrl("/admin")).toBeNull();
   });
 });

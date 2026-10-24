@@ -15,6 +15,7 @@ import type {
 } from "../../lib/domain/values";
 import type { LibraryPostDTO } from "../../lib/library/post";
 import { isUuid } from "../../lib/validation/uuid";
+import { type RightsLock, rightsLockOf } from "../../lib/videos/rights";
 import { type Actor, requireCreatorActor } from "../auth/actor";
 import { postThumbnail } from "../library/queries";
 import { lockedBy, lockFlags } from "../storage/uploads";
@@ -59,6 +60,14 @@ export type VideoStepState = {
 export type CreatorVideoDTO = VideoStepState & {
   id: string;
   title: string;
+  slug: string;
+  /** 07 D09: the slug can't change once the video was first published. */
+  slugLocked: boolean;
+  /** The Rights answers, null until answered. */
+  containsMusic: boolean | null;
+  identifiablePeople: boolean | null;
+  /** Why the Rights answers can't change now (owner answer Q-96 a), or null. */
+  rightsLock: RightsLock | null;
   originalError: string | null;
   originalFilename: string | null;
   durationMs: number | null;
@@ -151,6 +160,10 @@ const videoForCreator = cache(
         ...stepFactColumns,
         id: video.id,
         title: video.title,
+        slug: video.slug,
+        publishedAt: video.publishedAt,
+        containsMusic: video.containsMusic,
+        identifiablePeople: video.identifiablePeople,
         originalError: video.originalError,
         originalFilename: video.originalFilename,
         durationMs: video.durationMs,
@@ -186,6 +199,11 @@ const videoForCreator = cache(
       ...stepFactsOf(row),
       id: row.id,
       title: row.title,
+      slug: row.slug,
+      slugLocked: row.publishedAt !== null,
+      containsMusic: row.containsMusic,
+      identifiablePeople: row.identifiablePeople,
+      rightsLock: rightsLockOf(row),
       originalError: row.originalError,
       originalFilename: row.originalFilename,
       durationMs: row.durationMs,

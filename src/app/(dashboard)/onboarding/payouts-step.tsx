@@ -5,7 +5,11 @@ import { PayoutsStatusLine } from "@/components/payouts/payouts-status-line";
 import { Button } from "@/components/ui/button";
 import { PRIMARY_WIDTH, TERTIARY } from "@/components/ui/primary-width";
 import type { Currency, PayoutsStatus } from "@/lib/domain/values";
-import { payoutsSetupLabel } from "@/lib/payouts";
+import {
+  PAYOUTS_NOTICE_COPY,
+  payoutsSetupHref,
+  payoutsSetupLabel,
+} from "@/lib/payouts";
 
 /**
  * Step 3: publishing never waits for payouts (07 D74). Settings' button (Set up payouts, or Finish setup when Stripe
@@ -25,7 +29,7 @@ export function PayoutsStep({
     actions = (
       <>
         <Button asChild className={PRIMARY_WIDTH}>
-          <a href="/api/stripe/onboarding">{setupLabel}</a>
+          <a href={payoutsSetupHref()}>{setupLabel}</a>
         </Button>
         <Button asChild variant="tertiary" className={TERTIARY}>
           <Link href="/dashboard/library">Skip for now</Link>
@@ -42,7 +46,7 @@ export function PayoutsStep({
   return (
     <>
       <p className="text-callout text-ink-2">
-        You can publish now. You'll need payouts set up to approve a request.
+        {PAYOUTS_NOTICE_COPY.canPublish}
       </p>
       <PayoutsStatusLine status={status} onboarding />
       <PayoutCurrencyFacts currency={currency} />

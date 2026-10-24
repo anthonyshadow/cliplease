@@ -13,11 +13,13 @@ import { env } from "@/server/env";
 import { errorName, logEvent } from "@/server/log";
 import { ensureConnectedAccount } from "@/server/payments/connect";
 import { paymentsDriver } from "@/server/payments/registry";
+import { returnToUrl } from "@/server/social/oauth-state";
 
 // "Set up payouts" (02 §6.2, 07 D35, D95): create the connected account on the payout currency's platform account if
-// needed, then send the creator to its onboarding link (Stripe from P24; the fake returns straight to Settings). Every
-// creator is 18+ (07 D93). It stays a GET: it is also Stripe's refresh_url. P24 revisits the refresh-before-link order
-// for real Stripe.
+// needed, then send the creator to its onboarding link (Stripe from P24; the fake returns straight back). The optional
+// `returnTo` (owner answer Q-94: a draft's Review) is where the creator comes back, once it passes 07 D37's rules;
+// without it, or when it fails them, Settings. Every creator is 18+ (07 D93). It stays a GET: it is also Stripe's
+// refresh_url. P24 revisits the refresh-before-link order for real Stripe and carries `returnTo` into its URLs.
 
 /** Sec-Fetch-Site of a navigation from inside ClipLease, or typed in. A browser too old to send it is let through. */
 const IN_APP_FETCH_SITES = new Set(["same-origin", "none"]);
@@ -59,9 +61,14 @@ export async function GET(request: Request) {
       row: stored ? ctx.creator : undefined,
       debitsActor: stored ? toActor(ctx) : null,
     });
+    const target = returnToUrl(
+      new URL(request.url).searchParams.get("returnTo"),
+    );
     const link = await paymentsDriver(
       ctx.creator.payoutCurrency,
-    ).createOnboardingLink(accountId);
+    ).createOnboardingLink(accountId, {
+      returnTo: target ? target.pathname + target.search : undefined,
+    });
     return NextResponse.redirect(link, 303);
   } catch (error) {
     // Next's own handler would print the whole error, and a database or Stripe error's message can hold bound values.

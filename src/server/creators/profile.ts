@@ -322,15 +322,19 @@ export async function refreshPayoutsStatus(
 }
 
 /**
- * refreshPayoutsStatus for a page (Settings, the onboarding payouts step): a failed read is logged and the stored
- * status shown, so the rest of the page still works. `row` is the page's creator context, read with the session.
+ * refreshPayoutsStatus for a page (Settings, the onboarding payouts step, a draft's Review): a failed read is logged and
+ * the stored status shown, so the rest of the page still works. `row` is the page's creator context, read with the
+ * session. `returned`: back from payout setup (`?payouts=returned`), so a read older than the forced 10 s is redone.
  */
 export async function payoutsStatusForPage(
   creatorId: string,
   {
-    maxAgeMs = PAYOUTS_STATUS_MAX_AGE_MS,
+    returned = false,
+    maxAgeMs = returned
+      ? PAYOUTS_FORCED_READ_MAX_AGE_MS
+      : PAYOUTS_STATUS_MAX_AGE_MS,
     row,
-  }: { maxAgeMs?: number; row?: PayoutsRow } = {},
+  }: { returned?: boolean; maxAgeMs?: number; row?: PayoutsRow } = {},
 ): Promise<PayoutsStatus> {
   return payoutsStatus(creatorId, {
     row,

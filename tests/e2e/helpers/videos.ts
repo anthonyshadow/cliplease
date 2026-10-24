@@ -9,6 +9,7 @@ import {
 } from "@playwright/test";
 import type { PostingPlatform } from "../../../src/lib/domain/values";
 import { resumeHintKey } from "../../../src/lib/upload/resume";
+import { RIGHTS_COPY } from "../../../src/lib/videos/rights";
 import {
   sourcePageHref,
   VIDEO_STEP_LABELS,
@@ -210,11 +211,11 @@ export const sameVideoTick = (page: Page) =>
     exact: true,
   });
 
-/** Where posted's two parts (P11c's hooks): the video summary and the step column. */
-export const wherePostedParts = (page: Page): [Locator, Locator] => [
-  page.locator("[data-video-summary]"),
-  page.locator("[data-postings-step]"),
-];
+/** A draft step's column in the step layout (VideoStepFrame's `data-step`): Where posted, Rights or Review. */
+export const stepColumn = (
+  page: Page,
+  step: "postings" | "rights" | "review",
+) => page.locator(`[data-step="${step}"]`);
 
 /**
  * The chips wrap at every tier and never scroll (07 D146, D153; 04 §9.14 multiple mode): the group is a wrapping row,
@@ -225,7 +226,7 @@ export async function expectChipsWrap(page: Page) {
   const group = chipGroup(page);
   await expect(group).toHaveCSS("flex-wrap", "wrap");
   const facts = await group.evaluate((el) => {
-    const step = el.closest("[data-postings-step]");
+    const step = el.closest('[data-step="postings"]');
     if (!step) throw new Error("the chip group is outside the step column");
     const clipping: string[] = [];
     for (
@@ -247,12 +248,15 @@ export async function expectChipsWrap(page: Page) {
 }
 
 /**
- * Where posted at `width` (05 §6.5 S17b and its Tablet, Desktop and XL frames; 05 §1.6; 07 D146, D156): below lg one
- * centered ≤ 640 px column holding the step, with no video summary below md and the summary above the step on md; from
- * lg the summary left of the step. The chips wrap (expectChipsWrap).
+ * A draft step in the S17 layout (07 D146, D156) at `width`: below lg one centered ≤ 640 px column holding the step; the
+ * video summary absent below md, above the step on md, and left of it from lg.
  */
-export async function expectWherePostedLayout(page: Page, width: number) {
-  const [summary, step] = wherePostedParts(page);
+export async function expectStepLayout(
+  page: Page,
+  width: number,
+  step: Locator,
+) {
+  const summary = page.locator("[data-video-summary]");
   await expect(step).toBeVisible();
   if (width < TIERS.desktop) {
     await expectReadingColumn(page);
@@ -268,6 +272,11 @@ export async function expectWherePostedLayout(page: Page, width: number) {
     await expect(summary).toBeVisible();
     await expectLeftOf(summary, step);
   }
+}
+
+/** Where posted in the S17 layout (expectStepLayout), its chips wrapping (expectChipsWrap). */
+export async function expectWherePostedLayout(page: Page, width: number) {
+  await expectStepLayout(page, width, stepColumn(page, "postings"));
   await expectChipsWrap(page);
 }
 
@@ -286,6 +295,71 @@ export async function continueToPostings(page: Page, videoId: string) {
   await expect(
     page.getByRole("heading", { level: 2, name: WHERE_POSTED, exact: true }),
   ).toBeVisible();
+}
+
+/** Waits for the draft's Rights step (P13): its address and the first attestation (the step's h1 is the title). */
+export async function expectRightsStep(page: Page, videoId: string) {
+  await page.waitForURL(videoStepHref(videoId, "rights"));
+  await expect(
+    page.getByLabel(RIGHTS_COPY.ownsRights, { exact: true }),
+  ).toBeVisible();
+}
+
+/** Rights' four answers (01 J5.13, J5.14): both boxes ticked and each question answered by keyboard. */
+export async function answerRights(
+  page: Page,
+  {
+    music = "No",
+    people = "No",
+  }: { music?: "Yes" | "No"; people?: "Yes" | "No" } = {},
+) {
+  for (const box of [RIGHTS_COPY.ownsRights, RIGHTS_COPY.notReupload]) {
+    const tick = page.getByLabel(box, { exact: true });
+    await tick.focus();
+    await tick.press("Space");
+    await expect(tick).toBeChecked();
+  }
+  for (const [question, answer] of [
+    [RIGHTS_COPY.musicQuestion, music],
+    [RIGHTS_COPY.peopleQuestion, people],
+  ] as const) {
+    const choice = rightsAnswer(page, question, answer);
+    await choice.focus();
+    await choice.press("Space");
+    await expect(choice).toBeChecked();
+  }
+}
+
+/** One of Rights' Yes / No questions, by its question. */
+export const rightsQuestion = (page: Page, question: string) =>
+  page.getByRole("group", { name: question });
+
+/** One answer's radio in a Rights question. */
+export const rightsAnswer = (
+  page: Page,
+  question: string,
+  answer: "Yes" | "No",
+) =>
+  rightsQuestion(page, question).getByRole("radio", {
+    name: answer,
+    exact: true,
+  });
+
+/** A step's Continue button (File while its original isn't ready, Where posted, Rights). */
+export const continueButton = (page: Page) =>
+  page.getByRole("button", { name: "Continue", exact: true });
+
+/** Presses Where posted's Continue and waits for Rights (P13). */
+export async function continueToRights(page: Page, videoId: string) {
+  await pressButton(page, "Continue");
+  await expectRightsStep(page, videoId);
+}
+
+/** Presses Rights' Continue and waits for the Review (P13). */
+export async function continueToReview(page: Page, videoId: string) {
+  await pressButton(page, "Continue");
+  await page.waitForURL(videoStepHref(videoId, "review"));
+  await expect(stepColumn(page, "review")).toBeVisible();
 }
 
 /**

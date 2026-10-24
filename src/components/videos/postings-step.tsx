@@ -3,19 +3,11 @@ import {
   connectedProvider,
 } from "@/components/connections/connect-messages";
 import { StripConnectParams } from "@/components/connections/strip-connect-params";
-import { READING_COLUMN, TWO_COLUMN } from "@/components/layout/gutter";
+import { READING_COLUMN } from "@/components/layout/gutter";
 import { Banner } from "@/components/ui/banner";
-import { Stepper } from "@/components/ui/stepper";
 import { POSTINGS_COPY } from "@/lib/postings/copy";
 import type { PostingsStepMode } from "@/lib/postings/form";
-import { cn } from "@/lib/utils";
-import { provenanceLine } from "@/lib/videos/source-page";
-import {
-  VIDEO_STEP_LABELS,
-  VIDEO_STEPS,
-  videoHref,
-  videoStepHref,
-} from "@/lib/videos/steps";
+import { videoHref, videoStepHref } from "@/lib/videos/steps";
 import type { Actor } from "@/server/auth/actor";
 import { listPostingAccountStates } from "@/server/library/queries";
 import { listVideoPostings } from "@/server/postings/queries";
@@ -25,7 +17,7 @@ import { BackLink } from "./back-link";
 import { postingAccounts } from "./posting-picker-state";
 import { PostingsForm } from "./postings-form";
 import { PostingsReadOnly } from "./postings-read-only";
-import { VideoSummary } from "./video-summary";
+import { VideoStepFrame } from "./video-step-frame";
 
 type SearchParam = string | string[] | undefined;
 
@@ -36,7 +28,7 @@ type SearchParam = string | string[] | undefined;
  * Editable (`draft`, `unpublished`): "‹ Back" (a draft's File step at every tier, Q-80 a; an unpublished video's page)
  * with no visible heading (the title is the sr-only h1), a draft's Stepper ("Step 2 of 4 · Where posted" below md),
  * then the video summary and the step. Below md one centered max-w-reading column without the summary (05's Mobile
- * frame); on md the summary above the step in that column; from lg two columns in max-w-app (TWO_COLUMN), Back and the
+ * frame); on md the summary above the step in that column; from lg two columns in max-w-app (VideoStepFrame), Back and the
  * Stepper over both, the summary left, the step right. The step is the client PostingsForm, given the saved postings,
  * whether Demo links count (mock enabled), and per provider only whether it is enabled and which accounts are connected
  * or all need a reconnect (listPostingAccountStates, read alongside the postings: never avatars, names or tokens). A
@@ -76,59 +68,37 @@ export async function PostingsStep({
     listPostingAccountStates(actor),
   ]);
   const draft = video.status === "draft";
-  const post = video.sourcePost;
   const errorBanner = connectErrorBanner(connectError);
   return (
-    <div className={TWO_COLUMN.page}>
+    <VideoStepFrame
+      video={video}
+      step="postings"
+      backHref={draft ? videoStepHref(video.id, "file") : videoHref(video.id)}
+      stepper={draft}
+    >
       <StripConnectParams />
-      <div className={cn(TWO_COLUMN.span, "flex flex-col gap-6")}>
-        <BackLink
-          href={draft ? videoStepHref(video.id, "file") : videoHref(video.id)}
-        >
-          Back
-        </BackLink>
-        <h1 className="sr-only">{video.title}</h1>
-        {draft ? (
-          <Stepper
-            steps={VIDEO_STEP_LABELS}
-            current={VIDEO_STEPS.indexOf("postings")}
-          />
-        ) : null}
-      </div>
-      <VideoSummary
-        className={TWO_COLUMN.side}
-        video={video}
-        provenance={
-          post ? provenanceLine({ ...post, name: post.verifiedUsername }) : null
+      {errorBanner ? (
+        <Banner tone={errorBanner.tone}>{errorBanner.message}</Banner>
+      ) : null}
+      <PostingsForm
+        video={{
+          id: video.id,
+          durationMs: video.durationMs,
+          posterSrc: video.posterSrc,
+          width: video.width,
+          height: video.height,
+          sameVideoConfirmed: video.sameVideoConfirmed,
+        }}
+        postings={postings}
+        notPostedSaved={
+          video.source === "upload" &&
+          video.postingsConfirmedAt !== null &&
+          postings.length === 0
         }
+        allowMock={mockEnabled()}
+        accounts={postingAccounts(enabledPlatforms(), accountStates)}
+        connected={connectedProvider(connected)}
       />
-      <div
-        data-postings-step
-        className={cn(TWO_COLUMN.main, "flex flex-col gap-6")}
-      >
-        {errorBanner ? (
-          <Banner tone={errorBanner.tone}>{errorBanner.message}</Banner>
-        ) : null}
-        <PostingsForm
-          video={{
-            id: video.id,
-            durationMs: video.durationMs,
-            posterSrc: video.posterSrc,
-            width: video.width,
-            height: video.height,
-            sameVideoConfirmed: video.sameVideoConfirmed,
-          }}
-          postings={postings}
-          notPostedSaved={
-            video.source === "upload" &&
-            video.postingsConfirmedAt !== null &&
-            postings.length === 0
-          }
-          allowMock={mockEnabled()}
-          accounts={postingAccounts(enabledPlatforms(), accountStates)}
-          connected={connectedProvider(connected)}
-        />
-      </div>
-    </div>
+    </VideoStepFrame>
   );
 }

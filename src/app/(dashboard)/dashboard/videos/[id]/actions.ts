@@ -31,6 +31,7 @@ import {
   type ActionResult,
   fieldError,
   fieldErrors,
+  formError,
   GENERIC_ERROR_MESSAGE,
 } from "@/lib/result";
 import { DROPZONE_COPY } from "@/lib/upload/messages";
@@ -96,12 +97,6 @@ const sameVideoInput = z.object({
   verifiedKey: z.string().max(POSTINGS_MAX * (POSTING_URL_MAX + 16)),
 });
 
-/** A refusal shown above the cards: no field to put it under. */
-const formError = (code: string, message: string): ActionError => ({
-  ok: false,
-  error: { code, message },
-});
-
 /** The video's step facts read now (uncached); none → the 404. */
 async function stepFactsNow(
   actor: Actor,
@@ -149,7 +144,7 @@ function inputError(
     const row = typeof k === "number" ? form.postings[k] : undefined;
     const i = typeof k === "number" ? form.indices[k] : undefined;
     if (top !== "postings" || row === undefined || i === undefined) {
-      return formError("invalid_input", GENERIC_ERROR_MESSAGE);
+      return formError("invalid_input");
     }
     if (
       field === "otherLabel" &&
@@ -173,7 +168,7 @@ function inputError(
         ),
       ]);
     } else {
-      return formError("invalid_input", GENERIC_ERROR_MESSAGE);
+      return formError("invalid_input");
     }
   }
   return fieldErrors("invalid_input", fields);
@@ -362,7 +357,7 @@ export async function saveVideoPostings(
   });
   if (!parsed.success) return inputError(parsed.error, form, allowMock);
   const tick = sameVideoInput.safeParse(form);
-  if (!tick.success) return formError("invalid_input", GENERIC_ERROR_MESSAGE);
+  if (!tick.success) return formError("invalid_input");
   const input = parsed.data;
   const before = await listVideoPostings(actor, videoId);
   if (
@@ -438,7 +433,7 @@ export async function recheckPosting(input: {
 }): Promise<ActionResult<{ posting: OwnerPostingDTO }>> {
   const ctx = await requireCreator();
   const parsed = recheckInput.safeParse(input);
-  if (!parsed.success) return formError("invalid_input", GENERIC_ERROR_MESSAGE);
+  if (!parsed.success) return formError("invalid_input");
   let result: ActionResult<{ posting: OwnerPostingDTO }>;
   try {
     const posting = await recheckPostingFor(toActor(ctx), parsed.data);

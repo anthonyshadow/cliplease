@@ -7,6 +7,10 @@ export const HANDLE_RE = /^(?!.*\.\.)[a-z0-9][a-z0-9._]{1,28}[a-z0-9]$/;
 export const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 export const SLUG_MAX_LENGTH = 60;
 
+/** A slug as stored: SLUG_RE within SLUG_MAX_LENGTH (the video_slug_format CHECK, 07 D09). */
+export const isValidSlug = (slug: string) =>
+  slug.length <= SLUG_MAX_LENGTH && SLUG_RE.test(slug);
+
 const HANDLE_MIN = 3;
 const HANDLE_MAX = 30;
 

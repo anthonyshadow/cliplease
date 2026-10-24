@@ -15,7 +15,7 @@ import type {
   SocialAccountStatus,
   SocialProviderId,
 } from "@/lib/domain/values";
-import { formatRelative } from "@/lib/format";
+import { formatRelative, joinList } from "@/lib/format";
 import { type LibraryFilter, libraryHref } from "@/lib/library/filter";
 
 /** The account fields these rules read (AccountSummaryDTO's, structurally). */
@@ -334,12 +334,6 @@ const PLATFORM_EMPTY_NOTES: Partial<Record<SocialProviderId, string>> = {
   tiktok: "Only public videos show up.",
 };
 
-/** "@a", "@a or @b", "@a, @b or @c". */
-function joinOr(names: readonly string[]): string {
-  if (names.length <= 1) return names.join("");
-  return `${names.slice(0, -1).join(", ")} or ${names.at(-1)}`;
-}
-
 export type LibraryEmptyState =
   | { kind: "no-accounts" }
   /** `anyConnected`: Sync now has something to sync (the header's Sync all rule). */
@@ -385,7 +379,7 @@ export function libraryEmptyState({
   const platforms = [...new Set(scope.map((a) => a.platform))];
   return {
     kind: "no-videos",
-    title: `No videos found on ${joinOr(scope.map(accountName))}.`,
+    title: `No videos found on ${joinList(scope.map(accountName), "or")}.`,
     notes: platforms.flatMap((p) => PLATFORM_EMPTY_NOTES[p] ?? []),
     target: targetFor(scope),
   };

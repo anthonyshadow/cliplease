@@ -49,6 +49,7 @@ export function savedPosting(over: Partial<OwnerPostingDTO>): OwnerPostingDTO {
     verification: "verified",
     unverifiedReason: null,
     verifiedUsername: "@demo.creator",
+    verifiedAccountLinkedAt: "2026-10-01T09:00:00.000Z",
     accountStatus: "connected",
     thumbnailSrc:
       "/api/library/thumbnails/00000000-0000-4000-8000-0000000000c2?v=1",

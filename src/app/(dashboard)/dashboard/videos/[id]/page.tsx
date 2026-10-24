@@ -2,10 +2,9 @@ import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 import { FileStep } from "@/components/videos/file-step";
 import { PostingsStep } from "@/components/videos/postings-step";
-import {
-  StepPlaceholder,
-  VideoPlaceholder,
-} from "@/components/videos/step-placeholder";
+import { ReviewStep } from "@/components/videos/review-step";
+import { RightsStep } from "@/components/videos/rights-step";
+import { VideoPlaceholder } from "@/components/videos/video-placeholder";
 import { isUuid } from "@/lib/validation/uuid";
 import { videoHref, videoStepFacts, videoStepHref } from "@/lib/videos/steps";
 import {
@@ -13,6 +12,8 @@ import {
   requireCreator,
   toActor,
 } from "@/server/auth/session";
+import { payoutsStatusForPage } from "@/server/creators/profile";
+import { env } from "@/server/env";
 import { getOriginalUploadProgress } from "@/server/storage/uploads";
 import { getVideoForCreator } from "@/server/videos/queries";
 import { videoView } from "./video-view";
@@ -33,8 +34,10 @@ export async function generateMetadata({
 /**
  * /dashboard/videos/[id] (07 D39, D69): the creator's own video, else 404. A draft renders `?step=` when every step
  * before it is complete, otherwise it goes to the first incomplete one (a missing or unknown step too): File, then Where
- * posted (both sources), then Rights and Review, placeholders until P13. Past the draft, ?step=postings is Where posted,
- * editable while unpublished and read-only once published; anything else is a placeholder until P14a (videoView).
+ * posted (both sources), then Rights and Review. Past the draft, ?step=postings is Where posted, editable while
+ * unpublished and read-only once published; anything else is a placeholder until P14a (videoView). Review reads the
+ * payouts status as Settings does: again when back from payout setup (?payouts=returned, owner answer Q-94 a), then
+ * goes to its plain address.
  */
 export default async function VideoPage({
   params,
@@ -47,7 +50,7 @@ export default async function VideoPage({
   const video = await getVideoForCreator(actor, id);
   if (!video) notFound();
 
-  const { step, connected, error } = await searchParams;
+  const { step, connected, error, payouts } = await searchParams;
   const view = videoView(
     { status: video.status, facts: videoStepFacts(video) },
     typeof step === "string" ? step : undefined,
@@ -64,8 +67,27 @@ export default async function VideoPage({
       />
     );
   }
-  if (view.kind === "step_placeholder") {
-    return <StepPlaceholder videoId={video.id} step={view.step} />;
+  if (view.kind === "rights") return <RightsStep video={video} />;
+  if (view.kind === "review") {
+    // Back from payout setup: the status read again, then the plain address, so a later refresh doesn't read it again.
+    if (payouts === "returned") {
+      await payoutsStatusForPage(ctx.creator.id, {
+        row: ctx.creator,
+        returned: true,
+      });
+      redirect(videoStepHref(video.id, "review"));
+    }
+    return (
+      <ReviewStep
+        actor={actor}
+        video={video}
+        handle={ctx.creator.handle}
+        payoutsStatus={payoutsStatusForPage(ctx.creator.id, {
+          row: ctx.creator,
+        })}
+        platformFeeBps={env.PLATFORM_FEE_BPS}
+      />
+    );
   }
   if (view.kind === "video_placeholder") {
     return <VideoPlaceholder title={video.title} />;

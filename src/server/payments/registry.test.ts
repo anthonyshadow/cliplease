@@ -70,6 +70,14 @@ describe("the fake driver (07 D35)", () => {
     await expect(fake.createOnboardingLink("acct_fake_c1")).resolves.toBe(
       "http://fake.test/dashboard/settings?payouts=returned",
     );
+    // Back to where the creator started (owner answer Q-94 a), keeping its own query.
+    await expect(
+      fake.createOnboardingLink("acct_fake_c1", {
+        returnTo: "/dashboard/videos/v1?step=review",
+      }),
+    ).resolves.toBe(
+      "http://fake.test/dashboard/videos/v1?step=review&payouts=returned",
+    );
     await expect(fake.fetchPayoutsStatus("acct_fake_c1")).resolves.toEqual({
       status: "active",
       payoutsActive: true,

@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { db, pool } from "../../../src/db/client";
 import { socialAccount } from "../../../src/db/schema";
@@ -29,6 +29,7 @@ import {
   demoAccount,
   insertDemoAccount,
 } from "../../helpers/connect-flow";
+import { waitForLockWaiter } from "../../helpers/db";
 import { insertCreator } from "../../helpers/factories";
 
 // 07 D12 (c): concurrent requests refresh a token once. Under rotating_refresh a second refresh with the same refresh
@@ -204,15 +205,7 @@ describe("markNeedsReconnect fenced on the refused tokens (07 D12b)", () => {
         tokens: fresh,
         profile: await mockProvider.getProfile(fresh.accessToken),
       });
-      await vi.waitFor(
-        async () => {
-          const { rows } = await db.execute<{ n: number }>(
-            sql`select count(*)::int as n from pg_stat_activity where wait_event_type = 'Lock' and query like 'update "social_account"%'`,
-          );
-          expect(rows[0]?.n).toBeGreaterThan(0);
-        },
-        { timeout: 10_000, interval: 20 },
-      );
+      await waitForLockWaiter('update "social_account"%');
       throw new SocialAuthError();
     });
     // The call failed, but the account is fine: an upstream error, never a prompt to reconnect.

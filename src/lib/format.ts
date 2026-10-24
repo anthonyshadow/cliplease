@@ -186,3 +186,12 @@ export function formatBytes(n: number, total?: number): string {
   if (total === undefined) return `${value} ${label}`;
   return `${value} of ${sizeIn(total, unit, decimalsBelow)} ${label}`;
 }
+
+/** "A" · "A and B" · "A, B and C" (or "or"): the app's lists, with no serial comma. */
+export function joinList(
+  items: readonly string[],
+  conjunction: "and" | "or",
+): string {
+  if (items.length <= 1) return items.join("");
+  return `${items.slice(0, -1).join(", ")} ${conjunction} ${items.at(-1)}`;
+}

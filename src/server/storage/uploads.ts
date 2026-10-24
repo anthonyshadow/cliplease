@@ -117,7 +117,11 @@ const posterTokenKey = () => deriveSubkey(POSTER_TOKEN_SUBKEY);
 
 type Exec = Pick<typeof db, "select">;
 
-/** What the D09 lock reads besides the video's status: an open request, and any license. */
+/**
+ * What the D09 lock reads besides the video's status: an open request, and any license. Under a video row lock, read
+ * these in a statement after the one that took the lock (as startOriginal and attestRights do), never in it: a statement
+ * that waited for the lock sees these tables as they were when it began (READ COMMITTED).
+ */
 export const lockFlags = (exec: Exec) => ({
   openRequest: sql<boolean>`exists (${exec
     .select({ one: sql`1` })

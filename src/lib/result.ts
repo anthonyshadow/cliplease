@@ -15,6 +15,14 @@ export type ActionResult<T = undefined> =
 
 export type ActionError = Extract<ActionResult, { ok: false }>;
 
+/** A refusal with no field to put it under: `message`, or the generic one. */
+export function formError(
+  code: string,
+  message: string = GENERIC_ERROR_MESSAGE,
+): ActionError {
+  return { ok: false, error: { code, message } };
+}
+
 /** A refusal with one field error that is also the form's message. */
 export function fieldError(
   code: string,

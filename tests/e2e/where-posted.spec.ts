@@ -1,9 +1,15 @@
 import { expect, type Page, test } from "@playwright/test";
+import { POSTINGS_COPY } from "../../src/lib/postings/copy";
 import { sourcePageHref, videoStepHref } from "../../src/lib/videos/steps";
 import { collectConsoleErrors } from "./helpers/console";
 import { signUpCreator } from "./helpers/creator";
-import { expectAbove, expectLeftOf } from "./helpers/layout";
-import { libraryPostId, tiles, waitForLibrary } from "./helpers/library";
+import { expectAbove, expectLeftOf, viewportWidth } from "./helpers/layout";
+import {
+  libraryPostId,
+  POST_01,
+  tiles,
+  waitForLibrary,
+} from "./helpers/library";
 import {
   trackExternalRequests,
   trackPageFetches,
@@ -21,6 +27,7 @@ import {
   chipGroup,
   cleanCreatedVideos,
   continueToPostings,
+  continueToRights,
   createDraft,
   expectOneLine,
   expectVideoStepper,
@@ -47,8 +54,7 @@ import {
 test.use({ reducedMotion: "reduce" });
 test.afterEach(cleanCreatedVideos);
 
-// Post 01 (14 s, 1 Oct 2026) and post 02 (38 s, 24 Sep 2026), the two newest Demo posts (07 D53).
-const POST_01 = /^He saw snow for the first time/;
+// Post 02 (38 s, 24 Sep 2026), the second newest Demo post (07 D53); post 01 is the helpers' POST_01.
 const POST_02 = /^Caught a wave at sunrise/;
 /** The creator's own Demo link to post 01 (P11b: built from the provider's post id only, unique per creator). */
 const OWN_DEMO_LINK =
@@ -58,7 +64,6 @@ const TIKTOK_SHORT = "https://vm.tiktok.com/ZMabc123/";
 const FB_REEL = "https://www.facebook.com/reel/1234567890123";
 const VIMEO = "https://vimeo.com/123456789";
 
-const NOT_POSTED = "I haven't posted it anywhere yet.";
 const UPLOAD_NOTE =
   "Is this video on Instagram, TikTok or YouTube? Connect the account to get a Verified label.";
 const MISSING_TICK = "Confirm these posts show this same video";
@@ -70,9 +75,6 @@ const VERIFIED_DEMO = "Verified · on @demo.creator";
 const POSTER_SRC = (videoId: string) =>
   new RegExp(`^/api/media/posters/${videoId}\\?v=[0-9a-f]{8}$`);
 const THUMBNAIL_SRC = /^\/api\/library\/thumbnails\/[0-9a-f-]{36}(\?v=\S+)?$/;
-
-/** The page's viewport width (the project's own: these tests never resize). */
-const viewportWidth = (page: Page) => page.viewportSize()?.width ?? 0;
 
 /** "Say where it was posted" under the chips (the field error, not its screen-reader announcement). */
 const nothingChosen = (page: Page) =>
@@ -152,7 +154,9 @@ test("J5.10, J5.22: a Library draft's Where posted locks the source row and wait
     "Other",
     "Demo",
   ]);
-  await expect(main.getByLabel(NOT_POSTED, { exact: true })).toHaveCount(0);
+  await expect(
+    main.getByLabel(POSTINGS_COPY.notPosted, { exact: true }),
+  ).toHaveCount(0);
   await expect(main.getByText(UPLOAD_NOTE, { exact: true })).toHaveCount(0);
 
   // The same-video block: the cover beside the post's picture, no warning (post 01 is 14 s, as the file is), unticked.
@@ -176,11 +180,7 @@ test("J5.10, J5.22: a Library draft's Where posted locks the source row and wait
   await tick.press("Space");
   await expect(tick).toBeChecked();
   await expect(main.getByText(MISSING_TICK, { exact: true })).toHaveCount(0);
-  await pressButton(page, "Continue");
-  await page.waitForURL(videoStepHref(videoId, "rights"));
-  await expect(
-    page.getByRole("heading", { level: 1, name: "Rights" }),
-  ).toBeVisible();
+  await continueToRights(page, videoId);
 
   // Both were saved: a fresh load of Where posted has the source Switch off and the tick on.
   await page.goto(videoStepHref(videoId, "postings"));
@@ -283,7 +283,9 @@ test("J5.6, J5.22–J5.26: an upload's links: Move, the short-link copy, then ea
   await expect(
     main.getByRole("link", { name: "Connect an account", exact: true }),
   ).toHaveAttribute("href", "/dashboard/connections");
-  await expect(main.getByLabel(NOT_POSTED, { exact: true })).not.toBeChecked();
+  await expect(
+    main.getByLabel(POSTINGS_COPY.notPosted, { exact: true }),
+  ).not.toBeChecked();
   await expect(page.locator("[data-posting-card]")).toHaveCount(0);
   // Rights isn't reachable before Where posted is done.
   await page.goto(videoStepHref(videoId, "rights"));
@@ -414,11 +416,7 @@ test("J5.6, J5.22–J5.26: an upload's links: Move, the short-link copy, then ea
   await tick.focus();
   await tick.press("Space");
   await expect(tick).toBeChecked();
-  await pressButton(page, "Continue");
-  await page.waitForURL(videoStepHref(videoId, "rights"));
-  await expect(
-    page.getByRole("heading", { level: 1, name: "Rights" }),
-  ).toBeVisible();
+  await continueToRights(page, videoId);
 
   // The page never asked another host for anything, least of all a pasted one (07 D67): only the e2e server.
   expect(external).toEqual([]);
@@ -466,7 +464,7 @@ test("J5.29: nothing chosen says where; “I haven't posted it anywhere yet.” 
   await expect(page).toHaveURL(videoStepHref(videoId, "postings"));
 
   // Ticked: every chip aria-disabled; unticked: the chips come back, all off.
-  const notPosted = main.getByLabel(NOT_POSTED, { exact: true });
+  const notPosted = main.getByLabel(POSTINGS_COPY.notPosted, { exact: true });
   await notPosted.focus();
   await notPosted.press("Space");
   await expect(notPosted).toBeChecked();
@@ -484,14 +482,12 @@ test("J5.29: nothing chosen says where; “I haven't posted it anywhere yet.” 
   await notPosted.press("Space");
   await expect(notPosted).toBeChecked();
 
-  await pressButton(page, "Continue");
-  await page.waitForURL(videoStepHref(videoId, "rights"));
-  await expect(
-    page.getByRole("heading", { level: 1, name: "Rights" }),
-  ).toBeVisible();
+  await continueToRights(page, videoId);
   // Saved that way: Where posted reads it back ticked, with no card.
   await page.goto(videoStepHref(videoId, "postings"));
-  await expect(main.getByLabel(NOT_POSTED, { exact: true })).toBeChecked();
+  await expect(
+    main.getByLabel(POSTINGS_COPY.notPosted, { exact: true }),
+  ).toBeChecked();
   await expect(page.locator("[data-posting-card]")).toHaveCount(0);
   expect(errors).toEqual([]);
 });

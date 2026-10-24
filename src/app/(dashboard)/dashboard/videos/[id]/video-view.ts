@@ -12,14 +12,15 @@ export type VideoView =
   | { kind: "redirect"; step: VideoStep }
   | { kind: "file" }
   | { kind: "postings"; mode: PostingsStepMode }
-  | { kind: "step_placeholder"; step: Extract<VideoStep, "rights" | "review"> }
+  | { kind: "rights" }
+  | { kind: "review" }
   | { kind: "video_placeholder" };
 
 /**
  * A draft goes through resolveStep: the requested step when every step before it is complete, else a redirect to the
- * first incomplete one; Where posted is editable (postingsStepMode). Past the draft only ?step=postings has a page so
- * far: editable while `unpublished`, read-only while `published` (05 frame 35). Everything else, and any `disabled` video, keeps P10b's
- * placeholder until P14a builds the video page.
+ * first incomplete one; File, Where posted (editable, postingsStepMode), Rights and Review (P13). Past the draft only
+ * ?step=postings has a page so far: editable while `unpublished`, read-only while `published` (05 frame 35). Everything
+ * else, and any `disabled` video, keeps P10b's placeholder until P14a builds the video page.
  */
 export function videoView(
   video: { status: VideoStatus; facts: VideoStepFacts },
@@ -28,11 +29,10 @@ export function videoView(
   if (video.status === "draft") {
     const route = resolveStep(video.facts, requested);
     if (route.kind === "redirect") return route;
-    if (route.step === "file") return { kind: "file" };
     if (route.step === "postings") {
       return { kind: "postings", mode: postingsStepMode(video.status) };
     }
-    return { kind: "step_placeholder", step: route.step };
+    return { kind: route.step };
   }
   if (requested === "postings" && video.status !== "disabled") {
     return { kind: "postings", mode: postingsStepMode(video.status) };

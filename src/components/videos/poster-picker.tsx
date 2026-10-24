@@ -8,12 +8,15 @@ import { COVER_IMAGE_TYPES } from "@/lib/media/encode-image";
 import { GENERIC_ERROR_MESSAGE } from "@/lib/result";
 import { COVER_COPY, TRY_AGAIN } from "@/lib/upload/messages";
 import { pickCover, retryCover, useUploads } from "@/lib/upload/upload-store";
+import { cn } from "@/lib/utils";
+import { editRowLabel, REVIEW_COPY } from "@/lib/videos/review";
 
 /**
  * The cover image (01 J5.11, 07 D19): the frame read from the original while it uploads, or the creator's own JPEG, PNG
  * or WebP ("Choose an image" / "Use a different image", origin creator_image). Shows the local preview at once and the
- * stored poster after a reload; the store keeps the stored cover's preview and origin for the tab's life, so the page
- * needs no refresh when a cover finishes. Works without a frame capture too (P13's Review row reuses it).
+ * stored poster after a reload; the store keeps the stored cover's preview and origin for the tab's life, so the picker
+ * itself needs no refresh when a cover finishes (the Review fetches its server-read parts again, RefreshOnCoverDone).
+ * Works without a frame capture too; the Review's Cover image row reuses it (`inRow`).
  */
 export function PosterPicker({
   videoId,
@@ -21,6 +24,7 @@ export function PosterPicker({
   posterSrc,
   width,
   height,
+  inRow = false,
 }: {
   videoId: string;
   title: string;
@@ -28,6 +32,11 @@ export function PosterPicker({
   posterSrc: string | null;
   width: number | null;
   height: number | null;
+  /**
+   * The Review's Cover image row (05 callout 45): the row's label names it, and the frame's change button is the row's
+   * _Edit_ at its end, as Title and Link have.
+   */
+  inRow?: boolean;
 }) {
   const cover = useUploads().covers[videoId] ?? null;
   const input = useRef<HTMLInputElement>(null);
@@ -63,7 +72,11 @@ export function PosterPicker({
       aria-label={COVER_COPY.label}
       className="flex flex-col gap-3"
     >
-      <p className="text-callout font-semibold text-ink">{COVER_COPY.label}</p>
+      {inRow ? null : (
+        <p className="text-callout font-semibold text-ink">
+          {COVER_COPY.label}
+        </p>
+      )}
       <input
         ref={input}
         type="file"
@@ -78,7 +91,12 @@ export function PosterPicker({
         }}
       />
       {src || capturing ? (
-        <div className="flex items-center gap-4">
+        <div
+          className={cn(
+            "flex items-center gap-4",
+            inRow && "items-start justify-between gap-3",
+          )}
+        >
           {/* Reading the frame (no src yet): the static fill block (04 §9.20 loading). */}
           <PosterFrame
             size="small"
@@ -88,8 +106,13 @@ export function PosterPicker({
             height={height}
           />
           {askLine ? null : (
-            <Button variant="tertiary" size="sm" onClick={choose}>
-              {COVER_COPY.change}
+            <Button
+              variant="tertiary"
+              size="sm"
+              aria-label={inRow ? editRowLabel(COVER_COPY.label) : undefined}
+              onClick={choose}
+            >
+              {inRow ? REVIEW_COPY.edit : COVER_COPY.change}
             </Button>
           )}
         </div>

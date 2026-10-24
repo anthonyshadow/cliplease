@@ -1,4 +1,5 @@
 import "server-only";
+import type { RightsLock } from "../../lib/videos/rights";
 import {
   AlreadyLicensableElsewhereError,
   NotPublicError,
@@ -56,6 +57,38 @@ export class OriginalNotReadyError extends Error {
   constructor() {
     super("original_not_ready");
     this.name = "OriginalNotReadyError";
+  }
+}
+
+/** An admin disabled the video: its details and answers can't change (02 §5.6). */
+export class VideoDisabledError extends Error {
+  constructor() {
+    super("video_disabled");
+    this.name = "VideoDisabledError";
+  }
+}
+
+/** attestRights after a license was sold, or while a request waits (02 §6.1; owner answer Q-96 a). */
+export class RightsLockedError extends Error {
+  constructor(readonly lock: RightsLock) {
+    super(`rights_locked_${lock}`);
+    this.name = "RightsLockedError";
+  }
+}
+
+/** Another of the creator's videos has this slug (video_creator_slug_uidx). */
+export class SlugTakenError extends Error {
+  constructor() {
+    super("slug_taken");
+    this.name = "SlugTakenError";
+  }
+}
+
+/** The slug changed after the first publish (07 D09). */
+export class SlugLockedError extends Error {
+  constructor() {
+    super("slug_locked");
+    this.name = "SlugLockedError";
   }
 }
 

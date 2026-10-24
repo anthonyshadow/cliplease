@@ -1,34 +1,40 @@
 import { expect, type Locator, type Page, test } from "@playwright/test";
+import { RIGHTS_COPY } from "../../src/lib/videos/rights";
 import { sourcePageHref } from "../../src/lib/videos/steps";
 import { collectConsoleErrors } from "./helpers/console";
 import { signUpCreator } from "./helpers/creator";
 import {
   atEveryWidth,
   expectAbove,
-  expectCreatorChrome,
+  expectCreatorFrame,
   expectInside,
   expectInsideColumn,
   expectLeftOf,
-  expectPageFrame,
   expectReadingColumn,
   expectTouchTarget,
   TIERS,
 } from "./helpers/layout";
-import { libraryPostId, tiles } from "./helpers/library";
+import { libraryPostId, POST_01, tiles } from "./helpers/library";
 import {
+  answerRights,
   attachSample,
   cleanCreatedVideos,
+  continueButton,
   continueToPostings,
+  continueToReview,
+  continueToRights,
   expectOneLine,
+  expectStepLayout,
   expectVideoStepper,
   expectWherePostedLayout,
   makeLicensable,
   platformChip,
+  rightsQuestion,
   sameVideoBlock,
   sameVideoTick,
   showLinkSwitch,
   sourceRow,
-  wherePostedParts,
+  stepColumn,
 } from "./helpers/videos";
 
 // G.6 for Make licensable (P11, P11c; 05 §1.6 S16, S17, S17b, §6.5; 07 D145, D146, D150, D154, D156) on all four
@@ -37,19 +43,11 @@ import {
 // from lg two columns in the app frame with the line left of the step; swept before and after sample.mp4 is attached.
 // Its Where posted step (after the upload, so the locked source row, the same-video block and its picture row show) is
 // one centered max-w-reading column below lg (the video summary absent below md, above the step on md) and two columns
-// from lg; the chips wrap and never scroll, and the cover and the post's picture sit on one line from md. P13 extends
-// this spec with its steps.
+// from lg; the chips wrap and never scroll, and the cover and the post's picture sit on one line from md. Rights and
+// Review (P13) take the same layout: the Yes / No tiles side by side on one line, the Review's rows, read-only prices,
+// payouts Notice and Publish inside the step column; every control a 44 px target.
 test.use({ reducedMotion: "reduce" });
 test.afterEach(cleanCreatedVideos);
-
-// Post 01, the newest Demo post (07 D53).
-const POST_01 = /^He saw snow for the first time/;
-
-/** The page frame (<main> within its cap, the tier's gutter, nothing sideways) and the creator chrome. */
-async function expectFrame(page: Page, width: number) {
-  await expectPageFrame(page, width, { banner: true });
-  await expectCreatorChrome(page, width);
-}
 
 /** The Library File step's two parts (P11's hooks): the post summary and the step itself. */
 const fileStepParts = (page: Page): [Locator, Locator] => [
@@ -96,7 +94,7 @@ test("G.6: the Source page is one centered reading column at every tier", async 
     exact: true,
   });
   await atEveryWidth(page, testInfo, async ({ width }) => {
-    await expectFrame(page, width);
+    await expectCreatorFrame(page, width);
     await expectReadingColumn(page);
     for (const part of [heading, well, badge, primary]) {
       await expect(part).toBeVisible();
@@ -112,7 +110,7 @@ test("G.6: the Source page is one centered reading column at every tier", async 
   expect(errors).toEqual([]);
 });
 
-test("G.6: a Library draft's File step (before and after the upload) and its Where posted (the source row and the same-video block) are one column below lg and two from lg", async ({
+test("G.6: a Library draft's File step (before and after the upload), Where posted (the source row and the same-video block), Rights and Review are one column below lg and two from lg", async ({
   page,
 }, testInfo) => {
   test.setTimeout(600_000);
@@ -125,7 +123,7 @@ test("G.6: a Library draft's File step (before and after the upload) and its Whe
   const [summary, step] = fileStepParts(page);
   const dropzone = page.locator("[data-dropzone]");
   await atEveryWidth(page, testInfo, async ({ width }) => {
-    await expectFrame(page, width);
+    await expectCreatorFrame(page, width);
     await expectFileStepLayout(page, width);
     // The upload stays whole in the step (owner answer Q-66 a).
     await expect(dropzone).toBeVisible();
@@ -139,7 +137,7 @@ test("G.6: a Library draft's File step (before and after the upload) and its Whe
     { exact: true },
   );
   await atEveryWidth(page, testInfo, async ({ width }) => {
-    await expectFrame(page, width);
+    await expectCreatorFrame(page, width);
     await expectFileStepLayout(page, width);
     await expect(provenance).toBeVisible();
     await expect(summary.locator("figure, img")).toHaveCount(0);
@@ -148,21 +146,18 @@ test("G.6: a Library draft's File step (before and after the upload) and its Whe
   });
 
   await continueToPostings(page, videoId);
-  const [, postingsStep] = wherePostedParts(page);
+  const postingsStep = stepColumn(page, "postings");
   const source = sourceRow(page);
   const block = sameVideoBlock(page);
   const figures = block.locator("figure");
   await expect(figures).toHaveCount(2);
   const demoChip = platformChip(page, "Demo");
-  const continueButton = page.getByRole("button", {
-    name: "Continue",
-    exact: true,
-  });
+  const next = continueButton(page);
   await atEveryWidth(page, testInfo, async ({ width }) => {
-    await expectFrame(page, width);
+    await expectCreatorFrame(page, width);
     await expectVideoStepper(page, width, { step: 2, label: "Where posted" });
     await expectWherePostedLayout(page, width);
-    for (const part of [source, block, continueButton]) {
+    for (const part of [source, block, next]) {
       await expect(part).toBeVisible();
       await expectInside(part, postingsStep);
     }
@@ -173,7 +168,67 @@ test("G.6: a Library draft's File step (before and after the upload) and its Whe
       demoChip,
       showLinkSwitch(source),
       sameVideoTick(page).locator("xpath=ancestor::label[1]"),
-      continueButton,
+      next,
+    ]) {
+      await expectTouchTarget(control);
+    }
+  });
+
+  // Rights (P13): the attestations and the Yes / No tiles fill the step column.
+  const tick = sameVideoTick(page);
+  await tick.focus();
+  await tick.press("Space");
+  await continueToRights(page, videoId);
+  const rightsStep = stepColumn(page, "rights");
+  const tilesOf = (question: string) =>
+    rightsQuestion(page, question).locator("label");
+  await atEveryWidth(page, testInfo, async ({ width }) => {
+    await expectCreatorFrame(page, width);
+    await expectVideoStepper(page, width, { step: 3, label: "Rights" });
+    await expectStepLayout(page, width, rightsStep);
+    for (const question of [
+      RIGHTS_COPY.musicQuestion,
+      RIGHTS_COPY.peopleQuestion,
+    ]) {
+      await expect(tilesOf(question)).toHaveCount(2);
+      await expectOneLine(tilesOf(question));
+      for (const tile of await tilesOf(question).all()) {
+        await expectInside(tile, rightsStep);
+        await expectTouchTarget(tile);
+      }
+    }
+    await expectTouchTarget(
+      page
+        .getByLabel(RIGHTS_COPY.ownsRights)
+        .locator("xpath=ancestor::label[1]"),
+    );
+  });
+
+  // Review (P13): its rows, the read-only prices and the payouts Notice fill the step column.
+  await answerRights(page);
+  await continueToReview(page, videoId);
+  const reviewStep = stepColumn(page, "review");
+  const rowParts = [
+    reviewStep.locator("dl"),
+    reviewStep.locator("[data-price-preview]"),
+    page.locator("[data-payouts-notice]"),
+  ];
+  const publish = reviewStep.getByRole("button", {
+    name: "Publish",
+    exact: true,
+  });
+  await atEveryWidth(page, testInfo, async ({ width }) => {
+    await expectCreatorFrame(page, width);
+    await expectVideoStepper(page, width, { step: 4, label: "Review" });
+    await expectStepLayout(page, width, reviewStep);
+    for (const part of [...rowParts, publish]) {
+      await expect(part).toBeVisible();
+      await expectInside(part, reviewStep);
+    }
+    for (const control of [
+      reviewStep.getByRole("button", { name: "Edit title", exact: true }),
+      reviewStep.getByRole("link", { name: "Set up payouts", exact: true }),
+      publish,
     ]) {
       await expectTouchTarget(control);
     }

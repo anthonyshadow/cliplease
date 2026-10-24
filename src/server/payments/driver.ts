@@ -101,7 +101,14 @@ export interface PaymentsDriver {
   enableNegativeBalanceDebits(
     accountId: string,
   ): Promise<{ ok: true } | MoneyCallFailure>;
-  createOnboardingLink(accountId: string): Promise<string>;
+  /**
+   * The account's onboarding link. `returnTo` is a path already checked with returnToUrl (07 D37; owner answer Q-94):
+   * where the creator comes back, with `payouts=returned` added; without one, /dashboard/settings?payouts=returned.
+   */
+  createOnboardingLink(
+    accountId: string,
+    opts?: { returnTo?: string },
+  ): Promise<string>;
   fetchPayoutsStatus(accountId: string): Promise<{
     status: PayoutsStatus;
     payoutsActive: boolean;

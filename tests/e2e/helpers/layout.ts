@@ -292,3 +292,12 @@ export async function atEveryWidth(
     }
   }
 }
+
+/** The creator page frame at `width`: <main> and the NavBar within their caps (expectPageFrame) and the creator chrome. */
+export async function expectCreatorFrame(page: Page, width: number) {
+  await expectPageFrame(page, width, { banner: true });
+  await expectCreatorChrome(page, width);
+}
+
+/** The page's viewport width (a project's own, or the last atEveryWidth size). */
+export const viewportWidth = (page: Page) => page.viewportSize()?.width ?? 0;

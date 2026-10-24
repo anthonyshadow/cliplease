@@ -1,48 +1,48 @@
 import { expect, type Page, test } from "@playwright/test";
-import { videoStepHref } from "../../src/lib/videos/steps";
+import { POSTINGS_COPY } from "../../src/lib/postings/copy";
 import { collectConsoleErrors } from "./helpers/console";
 import { signUpCreator } from "./helpers/creator";
 import {
   atEveryWidth,
-  expectCreatorChrome,
+  expectCreatorFrame,
   expectInside,
   expectInsideColumn,
-  expectPageFrame,
   expectReadingColumn,
   expectTouchTarget,
   TIERS,
 } from "./helpers/layout";
-import { pressButton, pressLocator } from "./helpers/press";
+import { pressLocator } from "./helpers/press";
 import {
   attachSample,
   cleanCreatedVideos,
   continueToPostings,
+  continueToRights,
   createDraft,
+  expectStepLayout,
   expectVideoStepper,
   expectWherePostedLayout,
   linkFields,
   NEW_VIDEO,
   platformChip,
   postingCard,
-  wherePostedParts,
+  stepColumn,
 } from "./helpers/videos";
 
 // G.6 for the plain upload (S18, S17b; 05 §1.6, §6.5, §6.6; 07 D145, D146, D149, D153, D154) on all four projects:
-// /dashboard/videos, the title page, the File step (before and after sample.mp4 is attached) and the Rights step's
-// placeholder are one centered max-w-reading column inside the app frame at every tier; the dropzone is ≥ 160 px tall
-// below md and ≥ 200 px from md; the four-step Stepper shows its segment bar below md and its <ol> from md. Where posted,
-// on the way to Rights, is swept with every card open, the longest Other name and a long link's error: one centered
-// column below lg (no video summary below md, the summary above the step on md), two columns from lg, the chips wrapping
-// and every card inside the step. The iPhone hint is never asserted (07 D152). The Review and non-draft placeholders
-// can't be reached yet: P13 and P14a, which replace them, add their sweeps (D154).
+// /dashboard/videos, the title page and the File step (before and after sample.mp4 is attached) are one centered
+// max-w-reading column inside the app frame at every tier; the dropzone is ≥ 160 px tall below md and ≥ 200 px from md;
+// the four-step Stepper shows its segment bar below md and its <ol> from md. Where posted, on the way to Rights, is
+// swept with every card open, the longest Other name and a long link's error, then Rights: one centered column below lg
+// (no video summary below md, the summary above the step on md), two columns from lg, the chips wrapping and every card
+// inside the step. The iPhone hint is never asserted (07 D152). make-licensable.responsive.spec.ts sweeps Rights and
+// Review in full (P13); the non-draft placeholder is P14a's (D154).
 test.use({ reducedMotion: "reduce" });
 test.afterEach(cleanCreatedVideos);
 
 /** One centered ≤ 640 px column inside the app frame, with the creator chrome. */
 async function expectColumn(page: Page, width: number) {
-  await expectPageFrame(page, width, { banner: true });
+  await expectCreatorFrame(page, width);
   await expectReadingColumn(page);
-  await expectCreatorChrome(page, width);
 }
 
 test("G.6: the title page and the File step are one centered reading column at every tier", async ({
@@ -97,7 +97,7 @@ test("G.6: /dashboard/videos is one centered reading column at every tier", asyn
   expect(errors).toEqual([]);
 });
 
-test("G.6: an upload's Where posted with every card open, then the Rights placeholder through it, at every tier", async ({
+test("G.6: an upload's Where posted with every card open, then its Rights step, at every tier", async ({
   page,
 }, testInfo) => {
   test.setTimeout(360_000);
@@ -129,15 +129,12 @@ test("G.6: an upload's Where posted with every card open, then the Rights placeh
   await longLink.fill(`https://www.instagram.com/reel/${"A".repeat(400)}/`);
   await longLink.blur();
   await expect(longLink).toHaveAttribute("aria-invalid", "true");
-  const [, step] = wherePostedParts(page);
+  const step = stepColumn(page, "postings");
   const cards = page.locator("[data-posting-card]");
   await expect(cards).toHaveCount(8);
-  const notPosted = page.getByLabel("I haven't posted it anywhere yet.", {
-    exact: true,
-  });
+  const notPosted = page.getByLabel(POSTINGS_COPY.notPosted, { exact: true });
   await atEveryWidth(page, testInfo, async ({ width }) => {
-    await expectPageFrame(page, width, { banner: true });
-    await expectCreatorChrome(page, width);
+    await expectCreatorFrame(page, width);
     await expectVideoStepper(page, width, { step: 2, label: "Where posted" });
     await expectWherePostedLayout(page, width);
     for (const card of await cards.all()) await expectInside(card, step);
@@ -150,14 +147,12 @@ test("G.6: an upload's Where posted with every card open, then the Rights placeh
   await notPosted.focus();
   await notPosted.press("Space");
   await expect(cards).toHaveCount(0);
-  await pressButton(page, "Continue");
-  await page.waitForURL(videoStepHref(videoId, "rights"));
-  const heading = page.getByRole("heading", { level: 1, name: "Rights" });
+  await continueToRights(page, videoId);
+  const rights = stepColumn(page, "rights");
   await atEveryWidth(page, testInfo, async ({ width }) => {
-    await expectColumn(page, width);
+    await expectCreatorFrame(page, width);
     await expectVideoStepper(page, width, { step: 3, label: "Rights" });
-    await expect(heading).toBeVisible();
-    await expectInsideColumn(heading);
+    await expectStepLayout(page, width, rights);
   });
   expect(errors).toEqual([]);
 });

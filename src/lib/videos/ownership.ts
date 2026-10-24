@@ -6,7 +6,8 @@ import type {
   PostingPlatform,
   SocialAccountStatus,
 } from "../domain/values";
-import { formatPostDate } from "../format";
+import { formatPostDate, joinList } from "../format";
+import type { OwnerPostingDTO } from "../postings/types";
 import { tidyText } from "../text/tidy";
 
 /**
@@ -66,29 +67,40 @@ export type VerifiedBadgeInput = {
   linkedAt: Date | string;
   /** The posting's account is disconnected (01 J2.15): lg's line 2 says so. */
   noLongerLinked: boolean;
+  /** The other verified postings' platform names, in posting order: lg's line 3 (04 §9.19). */
+  alsoVerifiedOn?: readonly string[];
 };
 
 /** No verified posting (07 D89): the badge names no platform, even when unverified postings exist. */
 type SelfAttestedBadgeInput = {
   size: BadgeSize;
   ownership: Extract<Ownership, "self_attested">;
+  /** The video has an unverified posting: the explainer adds the D70 sentence (04 §9.19). */
+  hasUnverifiedPosting?: boolean;
 };
 
 export type BadgeInput = VerifiedBadgeInput | SelfAttestedBadgeInput;
 
-/** The badge's two lines; `line2` is lg's "Account linked …" line, null for sm and self-attested. */
-type BadgeText = { line1: string; line2: string | null };
+/**
+ * The badge's lines; `line2` is lg's "Account linked …" line and `line3` its "Also verified on …", each null for sm and
+ * self-attested.
+ */
+type BadgeText = { line1: string; line2: string | null; line3: string | null };
+
+/** "TikTok" · "TikTok and YouTube" · "TikTok, YouTube and Demo": each platform once, in order (04 §9.19). */
+const joinPlatforms = (names: readonly string[]) =>
+  joinList([...new Set(names)], "and");
 
 /**
  * The words of every 04 §9.19 variant. lg: "Verified · @maya.films on Instagram" / "Account linked 12 Oct 2026" (+ " · no
  * longer linked"). sm: "Verified · @maya.films · Instagram", one line. A channel without a handle reads "Verified ·
  * {channel title} on YouTube" through the same template. Demo, at both sizes: "Verified · @demo.creator (demo account)",
- * lg keeping its line 2. Self-attested: "Self-attested by the creator". Line 3 ("Also verified on …") waits for the other
- * postings (P11b).
+ * lg keeping its line 2. lg's line 3, "Also verified on TikTok and YouTube", when other postings are verified too.
+ * Self-attested: "Self-attested by the creator".
  */
 export function badgeText(input: BadgeInput): BadgeText {
   if (input.ownership === "self_attested") {
-    return { line1: BADGE_COPY.selfAttested, line2: null };
+    return { line1: BADGE_COPY.selfAttested, line2: null, line3: null };
   }
   const { size, provider, platformLabel, verifiedUsername } = input;
   const verified = `Verified · ${verifiedUsername}`;
@@ -96,21 +108,77 @@ export function badgeText(input: BadgeInput): BadgeText {
   if (provider === "mock") line1 = `${verified} (demo account)`;
   else if (size === "lg") line1 = `${verified} on ${platformLabel}`;
   else line1 = `${verified} · ${platformLabel}`;
-  if (size === "sm") return { line1, line2: null };
+  if (size === "sm") return { line1, line2: null, line3: null };
   const linked = `Account linked ${formatPostDate(new Date(input.linkedAt))}`;
+  const also = input.alsoVerifiedOn ?? [];
   return {
     line1,
     line2: input.noLongerLinked ? `${linked} · no longer linked` : linked,
+    line3: also.length > 0 ? `Also verified on ${joinPlatforms(also)}` : null,
   };
 }
 
 /**
  * The "What does this mean?" sheet's paragraphs (04 §9.19, 07 D70): verified (Demo included) adds the postings sentence
- * to D43's explainer; self-attested is 01 §4.5's line alone (P11b, which adds unverified postings, adds the sentence for
- * a video with one).
+ * to D43's explainer; self-attested is 01 §4.5's line, with the postings sentence when the video has an unverified one.
  */
-export function badgeExplainer(ownership: Ownership): string[] {
-  return ownership === "verified_owner"
-    ? [BADGE_COPY.verifiedExplainer, BADGE_COPY.postingsExplainer]
+export function badgeExplainer(input: BadgeInput): string[] {
+  if (input.ownership === "verified_owner") {
+    return [BADGE_COPY.verifiedExplainer, BADGE_COPY.postingsExplainer];
+  }
+  return input.hasUnverifiedPosting
+    ? [BADGE_COPY.selfAttestedExplainer, BADGE_COPY.postingsExplainer]
     : [BADGE_COPY.selfAttestedExplainer];
+}
+
+/** The primary verified posting (07 D70): the verified source posting, else the lowest-position verified one. */
+export function primaryVerifiedPosting<
+  T extends { isSource: boolean; verification: string; position: number },
+>(postings: readonly T[]): T | null {
+  const verified = postings
+    .filter((p) => p.verification === "verified")
+    .sort((x, y) => x.position - y.position);
+  return verified.find((p) => p.isSource) ?? verified[0] ?? null;
+}
+
+/**
+ * The lg badge the owner's postings give (07 D70, D89; P13's Review, where the buyer's read gives nothing for a draft):
+ * the primary verified posting's, with the other verified platforms on line 3, else self-attested, with the D70
+ * sentence when a posting isn't verified.
+ */
+export function ownerBadge(
+  postings: readonly Pick<
+    OwnerPostingDTO,
+    | "platform"
+    | "label"
+    | "isSource"
+    | "verification"
+    | "position"
+    | "verifiedUsername"
+    | "verifiedAccountLinkedAt"
+    | "accountStatus"
+  >[],
+): BadgeInput {
+  const primary = primaryVerifiedPosting(postings);
+  if (!primary?.verifiedUsername || !primary.verifiedAccountLinkedAt) {
+    return {
+      size: "lg",
+      ownership: "self_attested",
+      hasUnverifiedPosting: postings.some((p) => p.verification !== "verified"),
+    };
+  }
+  const others = postings
+    .filter((p) => p !== primary && p.verification === "verified")
+    .sort((x, y) => x.position - y.position)
+    .map((p) => p.label);
+  return {
+    size: "lg",
+    ownership: "verified_owner",
+    provider: primary.platform,
+    platformLabel: primary.label,
+    verifiedUsername: primary.verifiedUsername,
+    linkedAt: primary.verifiedAccountLinkedAt,
+    noLongerLinked: primary.accountStatus === "disconnected",
+    alsoVerifiedOn: others,
+  };
 }

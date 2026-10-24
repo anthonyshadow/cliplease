@@ -318,6 +318,7 @@ describe("the post's lines", () => {
     expect(badgeText(input)).toEqual({
       line1: "Verified · @demo.creator (demo account)",
       line2: "Account linked 12 Oct 2026",
+      line3: null,
     });
     const channel = sourceBadge({
       ...demo,

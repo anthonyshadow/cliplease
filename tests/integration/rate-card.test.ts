@@ -5,7 +5,6 @@ import { saveRateCard as saveRateCardAction } from "../../src/app/(dashboard)/da
 import { db } from "../../src/db/client";
 import { rateCard, rateOption } from "../../src/db/schema";
 import type { RateOptionKey } from "../../src/lib/domain/values";
-import { defaultRateOptions } from "../../src/lib/pricing/presets";
 import {
   defaultRateCardInput,
   type RateCardInput,
@@ -17,6 +16,7 @@ import {
   InvalidRateCardError,
   saveRateCard,
 } from "../../src/server/pricing/rate-card";
+import { rateCardFixture } from "../../src/server/pricing/rate-card-fixtures";
 import { redirectTo } from "../helpers/actions";
 import {
   creatorActor,
@@ -82,17 +82,7 @@ async function stored(creatorId: string) {
 describe("getRateCard", () => {
   it("J4.1: onboarding writes CA$150 and the presets, all on, read in the creator's currency", async () => {
     const { creatorId } = await onboardedCreator();
-    expect(await getRateCard(creatorId)).toEqual({
-      currency: "cad",
-      basePriceCents: 15000,
-      options: defaultRateOptions().map((o) => ({
-        dimension: o.dimension,
-        key: o.optionKey,
-        enabled: true,
-        multiplierBps: o.multiplierBps,
-        sortOrder: o.sortOrder,
-      })),
-    });
+    expect(await getRateCard(creatorId)).toEqual(rateCardFixture());
   });
 });
 

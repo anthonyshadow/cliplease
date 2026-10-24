@@ -25,6 +25,7 @@ import {
 import { auditsOf as auditsWithActorOf } from "../../helpers/connect-flow";
 import { insertCreator } from "../../helpers/factories";
 import { captureLogEvents } from "../../helpers/logs";
+import { ONBOARDING_URL, onboardingRequest } from "../../helpers/payouts";
 
 // Payout setup with the fake driver (02 §5.8, 07 D35, D95, D139). The registry memoizes one driver per currency, so a
 // spy on paymentsDriver("cad")'s methods sees every call the code makes through the registry for CAD.
@@ -59,12 +60,6 @@ async function auditsOf(creatorId: string, action: string) {
       and(eq(auditEvent.entityId, creatorId), eq(auditEvent.action, action)),
     );
 }
-
-const ONBOARDING_URL = "http://localhost:3000/api/stripe/onboarding";
-
-/** A GET of the setup route as a browser sends it from `fetchSite` (its Sec-Fetch-Site header). */
-const onboardingRequest = (fetchSite: string) =>
-  new Request(ONBOARDING_URL, { headers: { "sec-fetch-site": fetchSite } });
 
 /** A fake driver status reading. */
 const reading = (status: "pending" | "active") => ({

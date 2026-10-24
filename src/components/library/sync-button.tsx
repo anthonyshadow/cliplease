@@ -1,13 +1,14 @@
 "use client";
 
 import { RefreshCw } from "lucide-react";
-import { useId, useLayoutEffect, useRef } from "react";
+import { useId } from "react";
 import {
   syncAccount,
   syncAllAccounts,
 } from "@/app/(dashboard)/dashboard/_actions/social";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/components/ui/toast";
+import { useFocusOnRemove } from "@/components/ui/use-focus-on-remove";
 import { usePendingAction } from "@/components/ui/use-pending-action";
 import type { ActionResult } from "@/lib/result";
 import { type AccountSyncOutcome, ALREADY_SYNCING } from "./library-messages";
@@ -65,19 +66,7 @@ export function SyncButton({
   const library = useLibrarySync();
   const [pending, run] = usePendingAction();
   const helperId = useId();
-  const wrapper = useRef<HTMLDivElement>(null);
-  const fallback = useRef(focusAfterRemove);
-  fallback.current = focusAfterRemove;
-  // A layout-effect cleanup runs before React removes the button, so it still sees the focus on it (WCAG 2.4.3).
-  useLayoutEffect(() => {
-    const node = wrapper.current;
-    return () => {
-      const id = fallback.current;
-      if (id && node?.contains(document.activeElement)) {
-        document.getElementById(id)?.focus({ preventScroll: true });
-      }
-    };
-  }, []);
+  const wrapper = useFocusOnRemove<HTMLDivElement>(focusAfterRemove);
 
   const sync = async () => {
     library?.start();

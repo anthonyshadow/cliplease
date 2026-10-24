@@ -30,7 +30,7 @@ describe("videoView", () => {
     expect(view("draft", READY, "file")).toEqual({ kind: "file" });
   });
 
-  it("a draft: Rights before Where posted is complete goes back to it; after, Rights and Review are placeholders", () => {
+  it("a draft: Rights before Where posted is complete goes back to it; Review before Rights is answered goes to Rights", () => {
     expect(view("draft", READY, "rights")).toEqual({
       kind: "redirect",
       step: "postings",
@@ -39,9 +39,16 @@ describe("videoView", () => {
       kind: "redirect",
       step: "postings",
     });
-    expect(view("draft", DONE, "rights")).toEqual({
-      kind: "step_placeholder",
+    expect(view("draft", DONE, "rights")).toEqual({ kind: "rights" });
+    expect(view("draft", DONE, "review")).toEqual({
+      kind: "redirect",
       step: "rights",
+    });
+    expect(view("draft", { ...DONE, rightsAnswered: true }, "review")).toEqual({
+      kind: "review",
+    });
+    expect(view("draft", { ...DONE, rightsAnswered: true }, "rights")).toEqual({
+      kind: "rights",
     });
   });
 

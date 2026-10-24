@@ -216,10 +216,12 @@ describe("the title page's action (S18's Continue)", () => {
 
 describe("getVideoForCreator", () => {
   const DTO_KEYS = [
+    "containsMusic",
     "durationMs",
     "hasVerifiedPosting",
     "height",
     "id",
+    "identifiablePeople",
     "originalError",
     "originalFilename",
     "originalLocked",
@@ -228,7 +230,10 @@ describe("getVideoForCreator", () => {
     "posterSrc",
     "postingsConfirmedAt",
     "rightsAnswered",
+    "rightsLock",
     "sameVideoConfirmed",
+    "slug",
+    "slugLocked",
     "source",
     "sourcePost",
     "status",
@@ -243,6 +248,11 @@ describe("getVideoForCreator", () => {
     expect(await getVideoForCreator(c.actor, id)).toStrictEqual({
       id,
       title: "Beach day",
+      slug: "beach-day",
+      slugLocked: false,
+      containsMusic: null,
+      identifiablePeople: null,
+      rightsLock: null,
       status: "draft",
       originalStatus: "none",
       originalError: null,

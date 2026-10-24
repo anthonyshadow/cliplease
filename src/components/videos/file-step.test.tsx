@@ -4,6 +4,7 @@ import "./file-step-fixtures";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CreatorVideoDTO } from "@/server/videos/queries";
+import { creatorVideoFixture } from "./creator-video-fixture";
 import { FileStep } from "./file-step";
 import { NOTICE, SOURCE_POST } from "./file-step-fixtures";
 
@@ -12,26 +13,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const UPLOAD: CreatorVideoDTO = {
-  id: "00000000-0000-4000-8000-000000000002",
-  title: "Beach day",
-  status: "draft",
-  originalStatus: "none",
-  originalError: null,
-  originalFilename: null,
-  durationMs: null,
-  width: null,
-  height: null,
-  posterSrc: null,
-  posterOrigin: null,
-  originalLocked: false,
-  rightsAnswered: false,
-  source: "upload",
-  postingsConfirmedAt: null,
-  sameVideoConfirmed: false,
-  hasVerifiedPosting: false,
-  sourcePost: null,
-};
+const UPLOAD = creatorVideoFixture();
 const LIBRARY: CreatorVideoDTO = {
   ...UPLOAD,
   title: "He saw snow for the first time and lost it",

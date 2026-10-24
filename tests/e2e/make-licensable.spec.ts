@@ -1,4 +1,4 @@
-import { expect, type Page, test } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import {
   sourcePageHref,
   videoHref,
@@ -9,6 +9,7 @@ import { signUpCreator } from "./helpers/creator";
 import {
   LIBRARY,
   libraryPostId,
+  POST_01,
   tileByCaption,
   tileLink,
   tiles,
@@ -17,6 +18,7 @@ import { pressLocator } from "./helpers/press";
 import {
   attachSample,
   cleanCreatedVideos,
+  continueButton,
   continueToPostings,
   makeLicensable,
 } from "./helpers/videos";
@@ -32,8 +34,6 @@ import {
 test.use({ reducedMotion: "reduce" });
 test.afterEach(cleanCreatedVideos);
 
-// Post 01 (14 s, 1 Oct 2026), the newest Demo post (07 D53).
-const POST_01 = /^He saw snow for the first time/;
 const POST_01_CAPTION =
   "He saw snow for the first time and lost it #dogs #firstsnow";
 const BADGE = "Verified · @demo.creator (demo account)";
@@ -41,10 +41,6 @@ const LINKED = /^Account linked \d{1,2} [A-Z][a-z]{2} \d{4}$/;
 const NOTICE =
   "Demo doesn't share original files with apps. Upload the original from your phone or camera, the version without the Demo watermark.";
 const ANY_WARNING = /Make sure it's the same video\.$/;
-
-/** The File step's Continue while the original isn't ready: a disabled button (a link to Where posted once it is). */
-const continueButton = (page: Page) =>
-  page.getByRole("button", { name: "Continue", exact: true });
 
 test("J5.1–J5.5: post 01's Source page, Make licensable, the File step, then Where posted", async ({
   page,

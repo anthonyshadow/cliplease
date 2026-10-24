@@ -10,13 +10,15 @@ import { PRIMARY_WIDTH } from "@/components/ui/primary-width";
 import { StatusPill } from "@/components/ui/status-pill";
 import { ToastOnMount } from "@/components/ui/toast";
 import { currencyLabel } from "@/lib/money/currency";
-import { APPROVAL_WINDOW_LABEL, payoutsSetupLabel } from "@/lib/payouts";
+import {
+  APPROVAL_WINDOW_LABEL,
+  PAYOUTS_ON_MESSAGE,
+  payoutsSetupHref,
+  payoutsSetupLabel,
+} from "@/lib/payouts";
 import { GENERIC_ERROR_MESSAGE } from "@/lib/result";
 import { requireCreator } from "@/server/auth/session";
-import {
-  PAYOUTS_FORCED_READ_MAX_AGE_MS,
-  payoutsStatusForPage,
-} from "@/server/creators/profile";
+import { payoutsStatusForPage } from "@/server/creators/profile";
 import { DisplayNameForm } from "./display-name-form";
 import { TimeZoneRow } from "./time-zone-row";
 
@@ -62,7 +64,7 @@ export default async function SettingsPage({
   const returned = payouts === "returned";
   const status = await payoutsStatusForPage(creator.id, {
     row: creator,
-    ...(returned ? { maxAgeMs: PAYOUTS_FORCED_READ_MAX_AGE_MS } : {}),
+    returned,
   });
   const setupLabel = payoutsSetupLabel(status);
 
@@ -91,14 +93,14 @@ export default async function SettingsPage({
         <PayoutCurrencyFacts currency={creator.payoutCurrency} />
         {setupLabel ? (
           <Button asChild className={PRIMARY_WIDTH}>
-            <a href="/api/stripe/onboarding">{setupLabel}</a>
+            <a href={payoutsSetupHref()}>{setupLabel}</a>
           </Button>
         ) : null}
         {/* Back from payout setup with payouts on (05 §6.11 States, proposed copy). The address keeps
             ?payouts=returned: rewriting it on the client starts a router update in Next 16, and a Settings action
             sent during it is cancelled. */}
         {returned && status === "active" ? (
-          <ToastOnMount message="Payouts are on." />
+          <ToastOnMount message={PAYOUTS_ON_MESSAGE} />
         ) : null}
       </Section>
 

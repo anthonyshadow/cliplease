@@ -28,8 +28,10 @@ export function createFakeDriver({
     async enableNegativeBalanceDebits() {
       return { ok: true };
     },
-    async createOnboardingLink() {
-      return `${appUrl}/dashboard/settings?payouts=returned`;
+    async createOnboardingLink(_accountId, opts) {
+      const back = new URL(opts?.returnTo ?? "/dashboard/settings", appUrl);
+      back.searchParams.set("payouts", "returned");
+      return back.toString();
     },
     async fetchPayoutsStatus() {
       return { status: "active", payoutsActive: true, needsInfo: false };

@@ -61,6 +61,12 @@ export const sourcePageHref = (postId: string) =>
 /** A creator's video page; a draft's redirects to its first incomplete step (resolveStep). */
 export const videoHref = (videoId: string) => `/dashboard/videos/${videoId}`;
 
+/**
+ * The step pages' heading (the video's title, for screen readers; VideoStepFrame): where focus goes when the control it
+ * was on goes away.
+ */
+export const STEP_HEADING_ID = "video-step-title";
+
 /** A draft's step page: `/dashboard/videos/<id>?step=<step>`. */
 export const videoStepHref = (videoId: string, step: VideoStep) =>
   `${videoHref(videoId)}?step=${step}`;

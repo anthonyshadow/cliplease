@@ -11,6 +11,9 @@ import { pressLink } from "./press";
 
 export const LIBRARY = "/dashboard/library";
 
+/** Post 01 (14 s, 1 Oct 2026), the newest Demo post (07 D53), by its caption. */
+export const POST_01 = /^He saw snow for the first time/;
+
 /**
  * Waits for the Library page itself, not only its URL. The page streams in behind its loading.tsx, so the URL is there
  * while its data still loads; a goto, or going offline, then cancels that stream, and Next answers by loading the Library

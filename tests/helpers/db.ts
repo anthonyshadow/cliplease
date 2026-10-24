@@ -1,8 +1,8 @@
 import { fileURLToPath } from "node:url";
-import { DrizzleQueryError } from "drizzle-orm";
+import { DrizzleQueryError, sql } from "drizzle-orm";
 import { DatabaseError } from "pg";
-import { assert, expect } from "vitest";
-import { pool } from "../../src/db/client";
+import { assert, expect, vi } from "vitest";
+import { db, pool } from "../../src/db/client";
 import { checkTestDatabaseFiles, emptyPublicTables } from "./test-database";
 
 const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
@@ -56,4 +56,17 @@ export async function expectDbError(
   assert.instanceOf(error, DrizzleQueryError);
   assert.instanceOf(error.cause, DatabaseError);
   expect(error.cause).toMatchObject(want);
+}
+
+/** Waits until a statement whose text is LIKE `queryLike` waits for a lock: the moment a race test acts on. */
+export async function waitForLockWaiter(queryLike: string): Promise<void> {
+  await vi.waitFor(
+    async () => {
+      const { rows } = await db.execute<{ n: number }>(
+        sql`select count(*)::int as n from pg_stat_activity where wait_event_type = 'Lock' and query like ${queryLike}`,
+      );
+      expect(rows[0]?.n).toBeGreaterThan(0);
+    },
+    { timeout: 10_000, interval: 20 },
+  );
 }

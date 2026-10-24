@@ -10,6 +10,8 @@ import {
   license,
   licenseRequest,
   moneyMovement,
+  rateCard,
+  rateOption,
   socialAccount,
   socialPost,
   user,
@@ -35,8 +37,10 @@ import type {
   Video,
   VideoPosting,
 } from "../../src/db/schema/types";
+import type { RateOptionKey } from "../../src/lib/domain/values";
 import { LICENSE_V1_VERSION } from "../../src/lib/legal/license-v1";
 import type { LicenseSnapshotV1 } from "../../src/lib/licensing/snapshot";
+import { defaultRateOptions } from "../../src/lib/pricing/presets";
 import { DAY_MS, HOUR_MS } from "../../src/lib/time";
 
 /** Random lowercase hex, for unique test values. */
@@ -99,6 +103,21 @@ export async function insertCreator(
     ageConfirmedAt: new Date(),
     ...overrides,
   });
+}
+
+/** onboarding's default rate card (CA$150, every option on), with the `off` options switched off. */
+export async function insertRateCard(
+  creator: Pick<CreatorProfile, "id">,
+  off: readonly RateOptionKey[] = [],
+): Promise<void> {
+  const card = await insertOne(rateCard, { creatorId: creator.id });
+  await db.insert(rateOption).values(
+    defaultRateOptions().map((o) => ({
+      ...o,
+      rateCardId: card.id,
+      enabled: !off.includes(o.optionKey),
+    })),
+  );
 }
 
 /** A connected account with a sealed-looking access token (tests never encrypt; P06 owns the cipher). */
@@ -220,29 +239,35 @@ export async function markOriginalReady(
 }
 
 /**
- * Publishes `draft` with every column `video_published_requirements` asks for: a ready original, a poster, the
- * attestations and the confirmed postings.
+ * Every Make licensable step done on `v`, as the columns `video_published_requirements` checks: a ready original, a
+ * cover, the postings saved and the rights answered (no music, no people); then `extra`.
  */
-export async function publishVideo(draft: Video): Promise<Video> {
-  const [live] = await db
+export async function completeSteps(
+  v: Pick<Video, "id" | "creatorId">,
+  extra: Partial<NewVideo> = {},
+): Promise<Video> {
+  const [row] = await db
     .update(video)
     .set({
-      status: "published",
-      ...readyOriginal(draft),
-      posterObjectKey: `posters/${draft.creatorId}/${draft.id}.jpg`,
+      ...readyOriginal(v),
+      posterObjectKey: `posters/${v.creatorId}/${v.id}.jpg`,
       posterOrigin: "frame_capture",
       rightsAttestedAt: new Date(),
       attestationVersion: "v1",
       containsMusic: false,
       identifiablePeople: false,
       postingsConfirmedAt: new Date(),
-      publishedAt: new Date(),
+      ...extra,
     })
-    .where(eq(video.id, draft.id))
+    .where(eq(video.id, v.id))
     .returning();
-  if (!live) throw new Error("no video to publish");
-  return live;
+  if (!row) throw new Error("no video");
+  return row;
 }
+
+/** Publishes `draft`: every step done (completeSteps), then `published` now. */
+export const publishVideo = (draft: Video): Promise<Video> =>
+  completeSteps(draft, { status: "published", publishedAt: new Date() });
 
 /** The video's row as stored, failing the setup when there is none. */
 export async function videoRow(id: string): Promise<Video> {
@@ -382,11 +407,12 @@ function testSnapshot(
 /**
  * A license for `request` (30 days from now unless `startsAt` / `endsAt` are given), with a random CL- code. The
  * snapshot follows the code and dates; its scope, creator and ownership are placeholders, so pass `snapshot` when a
- * test reads them.
+ * test reads them. Pass `executor` to write it inside a transaction.
  */
 export async function insertLicense(
   request: LicenseRequest,
   overrides: Partial<NewLicense> = {},
+  executor: Pick<typeof db, "insert"> = db,
 ): Promise<License> {
   const code = overrides.code ?? randomLicenseCode();
   const startsAt = overrides.startsAt ?? new Date();
@@ -394,18 +420,22 @@ export async function insertLicense(
     overrides.endsAt === undefined
       ? new Date(startsAt.getTime() + 30 * DAY_MS)
       : overrides.endsAt;
-  return insertOne(license, {
-    licenseRequestId: request.id,
-    videoId: request.videoId,
-    creatorId: request.creatorId,
-    code,
-    termsVersion: request.termsVersion,
-    startsAt,
-    endsAt,
-    snapshot: testSnapshot(request, code, startsAt, endsAt),
-    originalObjectKey: `originals/${request.creatorId}/${request.videoId}.mp4`,
-    originalBytes: 1_048_576,
-    originalMime: "video/mp4",
-    ...overrides,
-  });
+  return insertOne(
+    license,
+    {
+      licenseRequestId: request.id,
+      videoId: request.videoId,
+      creatorId: request.creatorId,
+      code,
+      termsVersion: request.termsVersion,
+      startsAt,
+      endsAt,
+      snapshot: testSnapshot(request, code, startsAt, endsAt),
+      originalObjectKey: `originals/${request.creatorId}/${request.videoId}.mp4`,
+      originalBytes: 1_048_576,
+      originalMime: "video/mp4",
+      ...overrides,
+    },
+    executor,
+  );
 }

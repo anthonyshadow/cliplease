@@ -50,6 +50,7 @@ const posting = (over: Partial<OwnerPostingDTO> = {}): OwnerPostingDTO => ({
   verification: "unverified",
   unverifiedReason: "no_account",
   verifiedUsername: null,
+  verifiedAccountLinkedAt: null,
   accountStatus: null,
   thumbnailSrc: null,
   durationSec: null,

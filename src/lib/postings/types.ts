@@ -21,6 +21,8 @@ export type OwnerPostingDTO = {
   unverifiedReason: PostingUnverifiedReason | null;
   /** Verified rows only: 07 D43's display form, printed as stored. */
   verifiedUsername: string | null;
+  /** Verified rows only: when its account was linked, as ISO (the badge's "Account linked {date}"). */
+  verifiedAccountLinkedAt: string | null;
   /** The posting's account, when it has one: a verified row whose account is `disconnected` is "no longer linked". */
   accountStatus: SocialAccountStatus | null;
   /** Verified rows only: the post's image through the creator-only proxy (P11's postThumbnail, with its `?v=`). */
