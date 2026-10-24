@@ -13,7 +13,25 @@ export type SwitchProps = Omit<
   label: ReactNode;
 };
 
-/** 04 §9.7: 51 × 31 track; off = fill with a hairline border, on = action. */
+/**
+ * 04 §9.7's toggle alone: 51 × 31 track; off = fill with a hairline border, on = action. For a layout that places its
+ * own `<label htmlFor>` (RateRow); everywhere else use Switch.
+ */
+export function SwitchControl(
+  props: Omit<ComponentProps<typeof SwitchPrimitive.Root>, "children">,
+) {
+  return (
+    <SwitchPrimitive.Root
+      className="hit-44 inline-flex h-[31px] w-[51px] shrink-0 items-center rounded-full border border-hairline-strong bg-fill p-0.5 transition-colors duration-200 ease-out data-[state=checked]:border-transparent data-[state=checked]:bg-action disabled:cursor-not-allowed disabled:border-hairline"
+      {...props}
+    >
+      {/* The thumb keeps a transparent border so it stays visible in forced-colors mode (04 §7). */}
+      <SwitchPrimitive.Thumb className="block size-[25px] rounded-full border border-transparent bg-surface transition-transform duration-200 ease-out data-[state=checked]:translate-x-5 data-[state=checked]:bg-action-ink" />
+    </SwitchPrimitive.Root>
+  );
+}
+
+/** 04 §9.7: the label on the left, the toggle on the right. */
 export function Switch({ label, id, className, ...props }: SwitchProps) {
   const { fieldId, controlProps } = useFieldControl({ id });
   return (
@@ -26,14 +44,7 @@ export function Switch({ label, id, className, ...props }: SwitchProps) {
       <label htmlFor={fieldId} className="text-body text-ink">
         {label}
       </label>
-      <SwitchPrimitive.Root
-        {...controlProps}
-        className="hit-44 inline-flex h-[31px] w-[51px] shrink-0 items-center rounded-full border border-hairline-strong bg-fill p-0.5 transition-colors duration-200 ease-out data-[state=checked]:border-transparent data-[state=checked]:bg-action disabled:cursor-not-allowed disabled:border-hairline"
-        {...props}
-      >
-        {/* The thumb keeps a transparent border so it stays visible in forced-colors mode (04 §7). */}
-        <SwitchPrimitive.Thumb className="block size-[25px] rounded-full border border-transparent bg-surface transition-transform duration-200 ease-out data-[state=checked]:translate-x-5 data-[state=checked]:bg-action-ink" />
-      </SwitchPrimitive.Root>
+      <SwitchControl {...controlProps} {...props} />
     </div>
   );
 }

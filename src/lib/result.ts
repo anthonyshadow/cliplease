@@ -27,6 +27,21 @@ export function fieldError(
   };
 }
 
+/** A refusal with one error per field; the first one is also the form's message. */
+export function fieldErrors(
+  code: string,
+  fields: readonly (readonly [key: string, message: string])[],
+): ActionError {
+  return {
+    ok: false,
+    error: {
+      code,
+      message: fields[0]?.[1] ?? GENERIC_ERROR_MESSAGE,
+      fields: Object.fromEntries(fields.map(([key, msg]) => [key, [msg]])),
+    },
+  };
+}
+
 /** A posted text field, or "" when it is missing or a file. */
 export function formText(formData: FormData, key: string): string {
   const value = formData.get(key);

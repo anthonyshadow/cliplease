@@ -10,6 +10,8 @@ export const FIELD_BOX =
 // Text inputs and textareas only: a <select> always matches :read-only, so SelectField never gets these.
 const FIELD_READ_ONLY =
   "read-only:border-transparent read-only:bg-fill read-only:hover:border-transparent";
+/** A one-line field's height (04 §9.6, D149): 48 px, 44 px from lg. For boxes that line up with a field. */
+export const FIELD_HEIGHT = "h-12 lg:h-11";
 export const FIELD_ERROR =
   "border-danger ring-1 ring-inset ring-danger hover:border-danger";
 
@@ -65,14 +67,20 @@ export function useFieldControl({
 export function FieldLabel({
   htmlFor,
   optional,
+  srOnly,
   children,
 }: {
   htmlFor: string;
   optional?: boolean;
+  /** Read by screen readers only, for a field whose row already names it on screen (RateRow's multiplier). */
+  srOnly?: boolean;
   children: ReactNode;
 }) {
   return (
-    <label htmlFor={htmlFor} className="text-callout font-semibold text-ink">
+    <label
+      htmlFor={htmlFor}
+      className={cn("text-callout font-semibold text-ink", srOnly && "sr-only")}
+    >
       {children}
       {optional ? (
         <span className="font-normal text-ink-2"> (optional)</span>
@@ -139,6 +147,8 @@ export type TextFieldProps = Omit<ComponentProps<"input">, "prefix"> &
   FieldProps & {
     /** Leading adornment, e.g. `CURRENCY_DISPLAY[currency].prefix` ("CA$"); never a bare "$" (07 D98). */
     prefix?: string;
+    /** The label is for screen readers only (FieldLabel `hidden`). */
+    hideLabel?: boolean;
   };
 
 /** 04 §9.6: label above, helper and error linked by aria-describedby. */
@@ -148,6 +158,7 @@ export function TextField({
   helper,
   error,
   prefix,
+  hideLabel,
   "aria-describedby": describedBy,
   id,
   className,
@@ -162,7 +173,7 @@ export function TextField({
   });
   return (
     <FieldShell className={className}>
-      <FieldLabel htmlFor={fieldId} optional={optional}>
+      <FieldLabel htmlFor={fieldId} optional={optional} srOnly={hideLabel}>
         {label}
       </FieldLabel>
       <div className="relative">
@@ -182,7 +193,8 @@ export function TextField({
           className={cn(
             FIELD_BOX,
             FIELD_READ_ONLY,
-            "h-12 px-3.5 lg:h-11",
+            FIELD_HEIGHT,
+            "px-3.5",
             prefix && "pl-12",
             error && FIELD_ERROR,
           )}

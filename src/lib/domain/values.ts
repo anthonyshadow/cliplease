@@ -40,6 +40,11 @@ export const RATE_OPTION_KEYS = [
   ...TERM_KEYS,
   ...TERRITORY_KEYS,
 ] as const;
+export const RATE_DIMENSION_KEYS = {
+  use: USE_KEYS,
+  term: TERM_KEYS,
+  territory: TERRITORY_KEYS,
+} as const; // the keys of each RATE_DIMENSIONS group (CHECK rate_option_key_matches_dimension)
 export const REGION_KEYS = [
   "north_america",
   "latam_caribbean",

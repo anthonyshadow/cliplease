@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import {
   FIELD_BOX,
   FIELD_ERROR,
+  FIELD_HEIGHT,
   FieldLabel,
   FieldMessages,
   type FieldProps,
@@ -43,7 +44,8 @@ export function SelectField({
           {...controlProps}
           className={cn(
             FIELD_BOX,
-            "h-12 appearance-none pr-10 pl-3.5 lg:h-11",
+            FIELD_HEIGHT,
+            "appearance-none pr-10 pl-3.5",
             error && FIELD_ERROR,
           )}
           {...props}

@@ -1,5 +1,5 @@
 // Rate card presets (02 §5.5, 07 D97): per-currency money maps, currency-free multipliers. The only home of these
-// constants: P12 adds PLATFORM_FEE_MIN_CENTS here, P19e the exclusive constants; nothing redeclares them.
+// constants (P19e adds the exclusive ones here); nothing redeclares them.
 import {
   type Currency,
   RATE_DIMENSIONS,
@@ -22,10 +22,17 @@ export const BASE_PRICE_MAX_CENTS = {
   cad: 1_000_000,
   usd: 1_000_000,
 } as const satisfies Record<Currency, number>; // CA$10,000 / US$10,000
+// Applied to the total (OQ-09): at or below Stripe's CAD and USD maximums, 8 digits for non-card methods while cards
+// allow 12 and American Express 9 (owner answer Q-90, read 2026-10-23).
 export const MAX_TOTAL_CENTS = {
   cad: 99_999_999,
   usd: 99_999_999,
-} as const satisfies Record<Currency, number>; // Stripe's 8-digit limit, applied to the total
+} as const satisfies Record<Currency, number>;
+// The service fee's floor (OQ-18, 07 D79, D97): a constant, not env; PLATFORM_FEE_BPS stays env.
+export const PLATFORM_FEE_MIN_CENTS = {
+  cad: 200,
+  usd: 200,
+} as const satisfies Record<Currency, number>; // CA$2.00 / US$2.00
 
 export const MULTIPLIER_MIN_BPS = 10000; // ×1.00 (rate_option_multiplier_range)
 export const MULTIPLIER_MAX_BPS = 100000; // ×10.00

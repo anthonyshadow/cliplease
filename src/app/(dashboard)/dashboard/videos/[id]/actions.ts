@@ -30,6 +30,7 @@ import {
   type ActionError,
   type ActionResult,
   fieldError,
+  fieldErrors,
   GENERIC_ERROR_MESSAGE,
 } from "@/lib/result";
 import { DROPZONE_COPY } from "@/lib/upload/messages";
@@ -100,21 +101,6 @@ const formError = (code: string, message: string): ActionError => ({
   ok: false,
   error: { code, message },
 });
-
-/** A refusal with one error per field; the first one is also the form's message. */
-function fieldErrors(
-  code: string,
-  fields: readonly (readonly [key: string, message: string])[],
-): ActionError {
-  return {
-    ok: false,
-    error: {
-      code,
-      message: fields[0]?.[1] ?? GENERIC_ERROR_MESSAGE,
-      fields: Object.fromEntries(fields.map(([key, msg]) => [key, [msg]])),
-    },
-  };
-}
 
 /** The video's step facts read now (uncached); none → the 404. */
 async function stepFactsNow(

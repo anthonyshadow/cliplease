@@ -11,6 +11,7 @@ import {
   MULTIPLIER_MAX_BPS,
   MULTIPLIER_MIN_BPS,
   MULTIPLIER_STEP_BPS,
+  PLATFORM_FEE_MIN_CENTS,
 } from "./presets";
 
 // The CHECK literals the money maps must equal (07 D97), read from the migration, so a divergence fails here first.
@@ -75,7 +76,13 @@ describe("presets (02 §5.5, brief §5, 07 D97)", () => {
   it("cover every currency, with the CHECK literals of 0000_init", () => {
     const [baseMin, baseMax] = checkRange("rate_card_base_price_range");
     const [, totalMax] = checkRange("license_request_total");
+    const [feeMinLow, feeMinHigh] = checkRange("license_request_fee_min_range");
     for (const currency of CURRENCIES) {
+      expect(PLATFORM_FEE_MIN_CENTS[currency]).toBe(200);
+      expect(PLATFORM_FEE_MIN_CENTS[currency]).toBeGreaterThanOrEqual(
+        feeMinLow,
+      );
+      expect(PLATFORM_FEE_MIN_CENTS[currency]).toBeLessThanOrEqual(feeMinHigh);
       expect(BASE_PRICE_MIN_CENTS[currency]).toBe(baseMin);
       expect(BASE_PRICE_MAX_CENTS[currency]).toBe(baseMax);
       expect(MAX_TOTAL_CENTS[currency]).toBe(totalMax);
