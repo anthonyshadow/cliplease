@@ -63,15 +63,21 @@ describe("videoView", () => {
     });
   });
 
-  it("past the draft: any other request, and a disabled video, keep the placeholder", () => {
+  it("past the draft: a published video's Review is the success view", () => {
+    expect(view("published", DONE, "review")).toEqual({ kind: "published" });
+    expect(view("unpublished", DONE, "review")).toEqual({ kind: "video" });
+    expect(view("disabled", DONE, "review")).toEqual({ kind: "video" });
+  });
+
+  it("past the draft: any other request, and a disabled video, show the video's header", () => {
     expect(view("published", DONE, undefined)).toEqual({
-      kind: "video_placeholder",
+      kind: "video",
     });
     expect(view("unpublished", DONE, "rights")).toEqual({
-      kind: "video_placeholder",
+      kind: "video",
     });
     expect(view("disabled", DONE, "postings")).toEqual({
-      kind: "video_placeholder",
+      kind: "video",
     });
   });
 });

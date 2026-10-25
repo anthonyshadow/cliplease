@@ -32,12 +32,10 @@ import { formOf, redirectTo } from "../helpers/actions";
 import { bareCreator, mockNextHeaders, signedInCreator } from "../helpers/auth";
 import { waitForLockWaiter } from "../helpers/db";
 import {
-  completeSteps,
   insertCreator,
   insertLibraryVideo,
   insertLicense,
   insertLicenseRequest,
-  insertRateCard,
   insertSocialAccount,
   insertSocialPost,
   insertUploadVideo,
@@ -45,8 +43,12 @@ import {
   publishVideo,
   videoRow,
 } from "../helpers/factories";
-import { libraryDraft } from "../helpers/library-videos";
 import { onboardingRequest } from "../helpers/payouts";
+import {
+  pricedCreator,
+  readyLibraryVideo,
+  readyUpload,
+} from "../helpers/ready-videos";
 
 // The Rights and Review steps (P13; 02 §5.6, §6.1; 07 §8.2, D09, D66, D74, D82; owner answers Q-94–Q-96) against the
 // test database: attestRights and its music rule and locks, updateVideoDetails' title and link rules,
@@ -64,27 +66,6 @@ const ANSWERS = {
   containsMusic: false,
   identifiablePeople: false,
 } as const;
-
-/** A creator with onboarding's rate card (with `off` options switched off) and its actor. */
-async function pricedCreator(off: Parameters<typeof insertRateCard>[1] = []) {
-  const owner = await bareCreator();
-  await insertRateCard(owner.creator, off);
-  return owner;
-}
-
-/** An upload with every step done ("I haven't posted it anywhere yet." saved). */
-const readyUpload = async (creatorId: string) =>
-  completeSteps(await insertUploadVideo({ id: creatorId }));
-
-/** A Library draft with every step done and its tick saved, on an account in `accountStatus`. */
-const readyLibraryVideo = async (
-  creatorId: string,
-  accountStatus: "connected" | "needs_reconnect" = "connected",
-) =>
-  completeSteps(
-    await libraryDraft({ creatorId }, { account: { status: accountStatus } }),
-    { sameVideoConfirmedAt: new Date() },
-  );
 
 /** Rights' form as posted: both boxes ticked and both answers No, with `change` on top. */
 const rightsForm = (videoId: string, change: Record<string, string> = {}) =>

@@ -1,7 +1,11 @@
 import { ChevronRight } from "lucide-react";
 import Link from "next/link";
 import { connectStartHref } from "@/components/connections/connect-messages";
-import { type BlockerRow, REVIEW_COPY } from "@/lib/videos/review";
+import {
+  BLOCKERS_HEADING_ID,
+  type BlockerRow,
+  REVIEW_COPY,
+} from "@/lib/videos/review";
 
 const ROW =
   "flex min-h-11 w-full items-center justify-between gap-3 py-2 text-callout text-ink";
@@ -19,11 +23,15 @@ export function ReviewBlockers({ rows }: { rows: readonly BlockerRow[] }) {
   if (rows.length === 0) return null;
   return (
     <section
-      aria-labelledby="publish-blockers"
+      aria-labelledby={BLOCKERS_HEADING_ID}
       data-publish-blockers
       className="flex flex-col gap-1 rounded-lg border border-hairline p-4"
     >
-      <h2 id="publish-blockers" className="text-callout font-semibold text-ink">
+      <h2
+        id={BLOCKERS_HEADING_ID}
+        tabIndex={-1}
+        className="text-callout font-semibold text-ink outline-none"
+      >
         {REVIEW_COPY.blockersTitle}
       </h2>
       <ul className="flex flex-col divide-y divide-hairline">

@@ -3,7 +3,6 @@ import { VerifiedOwnerBadge } from "@/components/license/verified-owner-badge";
 import { PricePreview } from "@/components/pricing/price-preview";
 import { Banner } from "@/components/ui/banner";
 import { Button } from "@/components/ui/button";
-import { PRIMARY_WIDTH } from "@/components/ui/primary-width";
 import type { PayoutsStatus } from "@/lib/domain/values";
 import { COVER_COPY } from "@/lib/upload/messages";
 import { ownerBadge } from "@/lib/videos/ownership";
@@ -21,6 +20,7 @@ import { listVideoPostings } from "@/server/postings/queries";
 import { getPublishBlockers } from "@/server/videos/publish";
 import type { CreatorVideoDTO } from "@/server/videos/queries";
 import { PosterPicker } from "./poster-picker";
+import { PublishButton } from "./publish-button";
 import { RefreshOnCoverDone } from "./refresh-on-cover";
 import { ReviewBlockers } from "./review-blockers";
 import { ReviewDetails } from "./review-details";
@@ -31,8 +31,9 @@ import { VideoStepFrame } from "./video-step-frame";
  * Step 4 · Review, `/dashboard/videos/<id>?step=review` (01 J5.16, J5.17; 05 §6.5 callouts 42–52; 07 D69, D74, D146,
  * D156), in Rights' layout. The step: "Ready to publish" when nothing blocks, the rows (Title and Link edited in place,
  * the cover image, "Where it was posted" with _Edit_ to that step, the video's prices read-only and the badge buyers
- * will see), the payouts Notice while payouts aren't on (never a blocker), "Before you can publish", and Publish,
- * disabled until P14a. The postings and the blockers (with the effective options) are read together.
+ * will see), the payouts Notice while payouts aren't on (never a blocker), "Before you can publish", and Publish, off
+ * while anything blocks (once published, the page renders PublishedView instead). The postings and the blockers (with
+ * the effective options) are read together.
  */
 export async function ReviewStep({
   actor,
@@ -131,7 +132,7 @@ export async function ReviewStep({
           },
           {
             label: REVIEW_COPY.buyersSee,
-            value: <VerifiedOwnerBadge {...ownerBadge(postings)} />,
+            value: <VerifiedOwnerBadge {...ownerBadge(postings, "lg")} />,
           },
         ]}
       />
@@ -142,9 +143,7 @@ export async function ReviewStep({
       />
       <ReviewBlockers rows={rows} />
       <RefreshOnCoverDone videoId={video.id} />
-      <Button disabled className={PRIMARY_WIDTH}>
-        {REVIEW_COPY.publish}
-      </Button>
+      <PublishButton videoId={video.id} blocked={publish.blockers.length > 0} />
     </VideoStepFrame>
   );
 }

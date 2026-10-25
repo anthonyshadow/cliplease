@@ -54,3 +54,38 @@ export const waitInPage = (page: Page, ms: number) =>
     (delay) => new Promise<void>((resolve) => setTimeout(resolve, delay)),
     ms,
   );
+
+declare global {
+  interface Window {
+    __countPress?: () => void;
+  }
+}
+
+/** Reports each real press to the test: a pointer down, or Enter or Space pressed. */
+function listenForPresses() {
+  const count = (event: Event) => {
+    if (event.isTrusted) window.__countPress?.();
+  };
+  window.addEventListener("pointerdown", count, true);
+  window.addEventListener(
+    "keydown",
+    (event) => {
+      if (event.key === "Enter" || event.key === " ") count(event);
+    },
+    true,
+  );
+}
+
+/**
+ * Counts the presses the test makes on the page from now on, in this document and every one it loads (S10's taps).
+ * File choosers set by the test (setInputFiles) aren't presses, so the caller adds those.
+ */
+export async function countPresses(page: Page): Promise<() => number> {
+  let presses = 0;
+  await page.exposeFunction("__countPress", () => {
+    presses += 1;
+  });
+  await page.addInitScript(listenForPresses);
+  await page.evaluate(listenForPresses);
+  return () => presses;
+}

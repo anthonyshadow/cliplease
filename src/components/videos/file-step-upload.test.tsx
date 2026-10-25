@@ -31,7 +31,7 @@ const READY: FileStepVideo = {
   durationMs: 14_000,
   width: 720,
   height: 1280,
-  posterSrc: `/api/media/posters/${VIDEO_ID}?v=abcd1234`,
+  posterSrc: "/poster.jpg?v=abcd1234",
   posterOrigin: "frame_capture",
 };
 

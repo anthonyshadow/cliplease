@@ -1,11 +1,18 @@
 import "server-only";
-import { createHash } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { cache } from "react";
 import { db } from "../../db/client";
-import { socialPost, video, videoPosting } from "../../db/schema";
+import {
+  creatorProfile,
+  license,
+  licenseRequest,
+  socialPost,
+  video,
+  videoPosting,
+} from "../../db/schema";
 import type { Video } from "../../db/schema/types";
 import type {
+  Currency,
   OriginalFileStatus,
   PosterOrigin,
   PostingVerification,
@@ -15,10 +22,19 @@ import type {
 } from "../../lib/domain/values";
 import type { LibraryPostDTO } from "../../lib/library/post";
 import { isUuid } from "../../lib/validation/uuid";
+import { type BadgeInput, ownerBadge } from "../../lib/videos/ownership";
 import { type RightsLock, rightsLockOf } from "../../lib/videos/rights";
+import {
+  firstIncompleteStep,
+  videoStepFacts,
+  videoStepHref,
+} from "../../lib/videos/steps";
 import { type Actor, requireCreatorActor } from "../auth/actor";
 import { postThumbnail } from "../library/queries";
+import { ownerPostingsByVideo } from "../postings/queries";
+import { getRateCard, videoFromPrice } from "../pricing/rate-card";
 import { lockedBy, lockFlags } from "../storage/uploads";
+import { posterSrc, shareUrl } from "./visibility";
 
 /**
  * A Library video's source posting and its post, as the Library File step shows them (P11; 07 D39, D65): the post's
@@ -82,16 +98,9 @@ export type CreatorVideoDTO = VideoStepState & {
   sourcePost: CreatorSourcePostDTO | null;
 };
 
-/** `/api/media/posters/<id>?v=<first 8 hex of sha256(key)>` (P14a moves this to `posterSrc` in visibility.ts). */
-function ownerPosterSrc(id: string, posterObjectKey: string | null) {
-  if (!posterObjectKey) return null;
-  const v = createHash("sha256").update(posterObjectKey).digest("hex");
-  return `/api/media/posters/${id}?v=${v.slice(0, 8)}`;
-}
-
 /**
- * The step facts' columns: read by both readers below, and returned by saveVideoPostings' final video update (its
- * `facts`, so the Continue needn't read them again).
+ * The step facts' columns: read by the readers below and by publish.ts, and returned by saveVideoPostings' final video
+ * update (its `facts`, so the Continue needn't read them again).
  */
 export const stepFactColumns = {
   status: video.status,
@@ -209,7 +218,7 @@ const videoForCreator = cache(
       durationMs: row.durationMs,
       width: row.width,
       height: row.height,
-      posterSrc: ownerPosterSrc(row.id, row.posterObjectKey),
+      posterSrc: posterSrc(row),
       posterOrigin: row.posterOrigin,
       originalLocked: lockedBy(row),
       sourcePost: sourcePostOf(row),
@@ -241,4 +250,97 @@ export async function getVideoStepFacts(
     .from(video)
     .where(and(eq(video.id, videoId), eq(video.creatorId, creatorId)));
   return row ? stepFactsOf(row) : null;
+}
+
+/** One card on /dashboard/videos (04 §9.27; 03 §7.4): no object key, creator id or upload id reaches it. */
+export type CreatorVideoCardDTO = {
+  id: string;
+  title: string;
+  status: VideoStatus;
+  posterSrc: string | null;
+  width: number | null;
+  height: number | null;
+  /** The sm badge from the primary verified posting, else self-attested (07 D70, D89). */
+  badge: BadgeInput;
+  /** "From {price}" in `currency` (fromPriceCents), null when no combination can be bought. */
+  fromPriceCents: number | null;
+  currency: Currency;
+  /** A draft's Continue: its first incomplete step. */
+  continueHref: string | null;
+  /** A live video's link to share. */
+  shareUrl: string | null;
+  /** Requests awaiting approval and licenses (03 §7.4); the card shows neither (P14b's page does). */
+  pendingCount: number;
+  licenseCount: number;
+};
+
+/**
+ * The creator's videos as cards (S20; 03 §7.4): drafts first, then the most recently changed. The videos with their
+ * counts, every posting of the creator's videos (for the badges), the handle and the rate card are read together, so a
+ * card costs no query of its own.
+ */
+export async function listCreatorVideos(
+  a: Actor,
+): Promise<{ handle: string; videos: CreatorVideoCardDTO[] }> {
+  const { creatorId } = requireCreatorActor(a);
+  const [rows, postings, [creator], rateCard] = await Promise.all([
+    db
+      .select({
+        ...stepFactColumns,
+        id: video.id,
+        title: video.title,
+        slug: video.slug,
+        posterObjectKey: video.posterObjectKey,
+        width: video.width,
+        height: video.height,
+        disabledUses: video.disabledUses,
+        basePriceOverrideCents: video.basePriceOverrideCents,
+        pendingCount: db.$count(
+          licenseRequest,
+          and(
+            eq(licenseRequest.videoId, video.id),
+            eq(licenseRequest.status, "awaiting_approval"),
+          ),
+        ),
+        licenseCount: db.$count(license, eq(license.videoId, video.id)),
+      })
+      .from(video)
+      .where(eq(video.creatorId, creatorId))
+      .orderBy(
+        desc(sql`${video.status} = 'draft'`),
+        desc(video.updatedAt),
+        asc(video.id),
+      ),
+    ownerPostingsByVideo(creatorId),
+    db
+      .select({ handle: creatorProfile.handle })
+      .from(creatorProfile)
+      .where(eq(creatorProfile.id, creatorId)),
+    getRateCard(creatorId),
+  ]);
+  if (!creator) throw new Error(`Creator ${creatorId} has no profile`);
+  const videos = rows.map(
+    (row): CreatorVideoCardDTO => ({
+      id: row.id,
+      title: row.title,
+      status: row.status,
+      posterSrc: posterSrc(row),
+      width: row.width,
+      height: row.height,
+      badge: ownerBadge(postings.get(row.id) ?? [], "sm"),
+      ...videoFromPrice(rateCard, row),
+      continueHref:
+        row.status === "draft"
+          ? videoStepHref(
+              row.id,
+              firstIncompleteStep(videoStepFacts(stepFactsOf(row))),
+            )
+          : null,
+      shareUrl:
+        row.status === "published" ? shareUrl(creator.handle, row.slug) : null,
+      pendingCount: row.pendingCount,
+      licenseCount: row.licenseCount,
+    }),
+  );
+  return { handle: creator.handle, videos };
 }

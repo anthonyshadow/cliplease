@@ -2,9 +2,10 @@ import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 import { FileStep } from "@/components/videos/file-step";
 import { PostingsStep } from "@/components/videos/postings-step";
+import { PublishedView } from "@/components/videos/published-view";
 import { ReviewStep } from "@/components/videos/review-step";
 import { RightsStep } from "@/components/videos/rights-step";
-import { VideoPlaceholder } from "@/components/videos/video-placeholder";
+import { VideoHeader } from "@/components/videos/video-header";
 import { isUuid } from "@/lib/validation/uuid";
 import { videoHref, videoStepFacts, videoStepHref } from "@/lib/videos/steps";
 import {
@@ -35,9 +36,9 @@ export async function generateMetadata({
  * /dashboard/videos/[id] (07 D39, D69): the creator's own video, else 404. A draft renders `?step=` when every step
  * before it is complete, otherwise it goes to the first incomplete one (a missing or unknown step too): File, then Where
  * posted (both sources), then Rights and Review. Past the draft, ?step=postings is Where posted, editable while
- * unpublished and read-only once published; anything else is a placeholder until P14a (videoView). Review reads the
- * payouts status as Settings does: again when back from payout setup (?payouts=returned, owner answer Q-94 a), then
- * goes to its plain address.
+ * unpublished and read-only once published; a published video's Review is the success view Publish lands on; anything
+ * else is the video's header (videoView). Review reads the payouts status as Settings does: again when back from payout
+ * setup (?payouts=returned, owner answer Q-94 a), then goes to its plain address.
  */
 export default async function VideoPage({
   params,
@@ -51,6 +52,19 @@ export default async function VideoPage({
   if (!video) notFound();
 
   const { step, connected, error, payouts } = await searchParams;
+  // Back from payout setup (owner answer Q-94 a): the status read again, then the same address without ?payouts=, so a
+  // later refresh doesn't read it again, whichever view the address now shows.
+  if (payouts === "returned") {
+    await payoutsStatusForPage(ctx.creator.id, {
+      row: ctx.creator,
+      returned: true,
+    });
+    redirect(
+      typeof step === "string"
+        ? `${videoHref(video.id)}?${new URLSearchParams({ step })}`
+        : videoHref(video.id),
+    );
+  }
   const view = videoView(
     { status: video.status, facts: videoStepFacts(video) },
     typeof step === "string" ? step : undefined,
@@ -69,14 +83,6 @@ export default async function VideoPage({
   }
   if (view.kind === "rights") return <RightsStep video={video} />;
   if (view.kind === "review") {
-    // Back from payout setup: the status read again, then the plain address, so a later refresh doesn't read it again.
-    if (payouts === "returned") {
-      await payoutsStatusForPage(ctx.creator.id, {
-        row: ctx.creator,
-        returned: true,
-      });
-      redirect(videoStepHref(video.id, "review"));
-    }
     return (
       <ReviewStep
         actor={actor}
@@ -89,8 +95,19 @@ export default async function VideoPage({
       />
     );
   }
-  if (view.kind === "video_placeholder") {
-    return <VideoPlaceholder title={video.title} />;
+  if (view.kind === "published") {
+    return (
+      <PublishedView
+        videoId={video.id}
+        slug={video.slug}
+        handle={ctx.creator.handle}
+      />
+    );
+  }
+  if (view.kind === "video") {
+    return (
+      <VideoHeader actor={actor} video={video} handle={ctx.creator.handle} />
+    );
   }
   // The paused percent after a reload (P10c): only an unfinished upload has one.
   const progress =

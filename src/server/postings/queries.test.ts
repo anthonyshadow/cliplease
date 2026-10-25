@@ -12,6 +12,7 @@ const LINKED_AT = new Date("2026-10-01T09:00:00.000Z");
 
 const VERIFIED_ROW: OwnerPostingRow = {
   id: "posting-1",
+  videoId: "video-1",
   platform: "mock",
   otherLabel: null,
   url: "https://example.com/mock/mock_post_c4180ab2_01",
@@ -107,6 +108,7 @@ describe("toOwnerPosting", () => {
 
 function publicRow(row: Partial<PublicPostingRow>): PublicPostingRow {
   return {
+    videoId: "video-1",
     platform: "youtube",
     otherLabel: null,
     url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",

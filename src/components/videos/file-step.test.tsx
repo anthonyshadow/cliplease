@@ -28,7 +28,7 @@ const READY = {
   durationMs: 14_000,
   width: 720,
   height: 1280,
-  posterSrc: `/api/media/posters/${UPLOAD.id}?v=abcd1234`,
+  posterSrc: "/poster.jpg?v=abcd1234",
   posterOrigin: "frame_capture",
 } satisfies Partial<CreatorVideoDTO>;
 

@@ -15,6 +15,7 @@ import { GET } from "../../src/app/api/media/posters/[videoId]/route";
 import { db } from "../../src/db/client";
 import { video } from "../../src/db/schema";
 import { env } from "../../src/server/env";
+import { posterResponse } from "../../src/server/videos/poster";
 import {
   mockNextHeaders,
   newCreatorEmail,
@@ -22,6 +23,7 @@ import {
   signInWithOtp,
   userByEmail,
 } from "../helpers/auth";
+import { insertVideoPosting, publishVideo } from "../helpers/factories";
 import {
   type Bytes,
   fixture,
@@ -32,8 +34,9 @@ import {
   uploadPoster,
 } from "../helpers/uploads";
 
-// GET /api/media/posters/[videoId], the owner/admin branch (P10b; 02 §4.2, §6.2): the owner or an admin gets the stored
-// JPEG, private and uncached; everyone and everything else gets the same empty, uncached 404.
+// GET /api/media/posters/[videoId] (P10b, P14a; 02 §4.2, §6.2; 07 D72): a video anyone may see serves its poster to
+// anyone, cached publicly; otherwise the owner or an admin gets the stored JPEG, private and uncached; everyone and
+// everything else gets the same empty, uncached 404.
 vi.mock("next/headers", () => import("../helpers/next-headers"));
 
 const disk = trackTestStorage();
@@ -71,10 +74,16 @@ function getPoster(videoId: string, query = "") {
   return GET(new NextRequest(url), { params: Promise.resolve({ videoId }) });
 }
 
-async function expectPoster(response: Response) {
+const PUBLIC_CACHE =
+  "public, max-age=300, s-maxage=3600, stale-while-revalidate=86400";
+
+async function expectPoster(
+  response: Response,
+  cacheControl = "private, no-store",
+) {
   expect(response.status).toBe(200);
   expect(response.headers.get("content-type")).toBe("image/jpeg");
-  expect(response.headers.get("cache-control")).toBe("private, no-store");
+  expect(response.headers.get("cache-control")).toBe(cacheControl);
   expect(response.headers.get("content-length")).toBe(String(jpeg.length));
   expect(new Uint8Array(await response.arrayBuffer())).toEqual(jpeg);
 }
@@ -142,5 +151,51 @@ describe("everyone else and everything else: an empty 404", () => {
     await rm(objectPath(gone.key));
     mockNextHeaders(owner.session);
     await expectNotFound(await getPoster(gone.id));
+  });
+});
+
+describe("a video anyone may see (P14a; 07 D72)", () => {
+  /** The owner's video with a stored poster, published. */
+  async function livePoster() {
+    const { id, key } = await draftWithPoster(owner);
+    await publishVideo(
+      { id, creatorId: owner.creatorId },
+      { posterObjectKey: key },
+    );
+    return id;
+  }
+
+  it("serves a published video's poster to anyone, cached publicly", async () => {
+    const id = await livePoster();
+    await expectPoster(await getPoster(id), PUBLIC_CACHE);
+    mockNextHeaders(owner.session);
+    await expectPoster(await getPoster(id), PUBLIC_CACHE);
+  });
+
+  it("keeps a draft's and an unpublished video's poster from everyone but the owner", async () => {
+    await expectNotFound(await getPoster(withPoster.id));
+    const id = await livePoster();
+    await db
+      .update(video)
+      .set({ status: "unpublished" })
+      .where(eq(video.id, id));
+    await expectNotFound(await getPoster(id));
+    mockNextHeaders(owner.session);
+    await expectPoster(await getPoster(id));
+  });
+
+  it("keeps a video with a Demo posting private while Demo isn't enabled", async () => {
+    const id = await livePoster();
+    await insertVideoPosting(
+      { id, creatorId: owner.creatorId },
+      {
+        platform: "mock",
+        url: null,
+        linkKey: null,
+        unverifiedReason: "no_link",
+      },
+    );
+    await expectPoster(await posterResponse(id, ["mock"]), PUBLIC_CACHE);
+    await expectNotFound(await posterResponse(id, []));
   });
 });

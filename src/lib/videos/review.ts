@@ -28,6 +28,15 @@ export const REVIEW_COPY = {
   save: "Save",
   cancel: "Cancel",
   publish: "Publish",
+  publishing: "Publishing…",
+} as const;
+
+/** The success view's words (05 §6.5 callouts 53–56) and the share link's screen-reader name (01 J6). */
+export const PUBLISHED_COPY = {
+  live: "Your video is live.",
+  shareLink: "Share link",
+  openVideo: "Open video",
+  backToLibrary: "Back to Library",
 } as const;
 
 /** The admin's reasons as 05's Disable select names them. */
@@ -74,6 +83,9 @@ export const PUBLISH_BLOCKERS = [
   "reconnect_account",
 ] as const;
 export type PublishBlocker = (typeof PUBLISH_BLOCKERS)[number];
+
+/** "Before you can publish"'s heading id: Publish refused by a blocker that appeared meanwhile moves the focus to it. */
+export const BLOCKERS_HEADING_ID = "publish-blockers";
 
 /** The Cover image and Link rows' ids, so a blocker row can jump to them. */
 export const COVER_IMAGE_ID = "cover-image";

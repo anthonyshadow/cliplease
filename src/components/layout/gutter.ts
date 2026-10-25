@@ -22,6 +22,10 @@ export const WIDE_COLUMN = "flex flex-col gap-6 py-6 lg:py-12";
 export const LIBRARY_GRID =
   "grid grid-cols-2 gap-x-3 gap-y-6 md:grid-cols-[repeat(auto-fill,minmax(10rem,1fr))]";
 
+/** The video grids, /dashboard/videos and the public /@handle (04 §9.27, 07 D146): 2 / 3 / 4 / 5 columns. */
+export const VIDEO_GRID =
+  "grid grid-cols-2 gap-x-3 gap-y-6 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5";
+
 /**
  * A two-column creator page (07 D146; 04 §5.2.4; 05 §1.6 S17): one centered max-w-reading column below lg, in the
  * Mobile order; from lg the two columns of 05 §6.5's Desktop frame in the max-w-app width, 5 + 7 of 12 with a 48 px gap

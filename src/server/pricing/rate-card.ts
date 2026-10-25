@@ -4,9 +4,11 @@ import { db } from "@/db/client";
 import { creatorProfile, rateCard, rateOption } from "@/db/schema";
 import {
   type Currency,
+  isOneOf,
   RATE_OPTION_KEYS,
   type RateDimension,
   type RateOptionKey,
+  USE_KEYS,
   type UseKey,
 } from "@/lib/domain/values";
 import {
@@ -14,12 +16,14 @@ import {
   type RateChoices,
   rateChoices,
 } from "@/lib/pricing/choices";
+import { fromPriceCents } from "@/lib/pricing/from-price";
 import {
   type RateCardInput,
   rateCardFieldErrors,
   rateCardInputSchema,
 } from "@/lib/validation/pricing";
 import { type Actor, requireCreatorActor } from "@/server/auth/actor";
+import { env } from "@/server/env";
 
 // The creator's rate card (02 §5.5, 03 §3.4; J4): one base price in the creator's payout_currency (rate_card has no
 // currency column, 07 D94) and the 10 options of 03 §8.1. P19e adds the exclusive fields (07 D109).
@@ -48,9 +52,15 @@ export class InvalidRateCardError extends Error {
   }
 }
 
-/** The creator's card, read with their payout_currency. Onboarding creates it, so a missing card is a bug. */
-export async function getRateCard(creatorId: string): Promise<RateCardDTO> {
-  const rows = await db
+/**
+ * The creator's card, read with their payout_currency (`exec`: db, or the transaction reading it). Onboarding creates
+ * it, so a missing card is a bug.
+ */
+export async function getRateCard(
+  creatorId: string,
+  exec: Pick<typeof db, "select"> = db,
+): Promise<RateCardDTO> {
+  const rows = await exec
     .select({
       currency: creatorProfile.payoutCurrency,
       basePriceCents: rateCard.basePriceCents,
@@ -129,6 +139,15 @@ export type VideoPricing = {
   basePriceOverrideCents: number | null;
 };
 
+/** A video row's VideoPricing: its disabled uses (only use keys count) and its base override (07 D82). */
+export const videoPricingOf = (row: {
+  disabledUses: readonly RateOptionKey[];
+  basePriceOverrideCents: number | null;
+}): VideoPricing => ({
+  disabledUses: row.disabledUses.filter((key) => isOneOf(USE_KEYS, key)),
+  basePriceOverrideCents: row.basePriceOverrideCents,
+});
+
 export type EffectiveOptions = Omit<RateChoices, "use"> & {
   currency: Currency;
   basePriceCents: number;
@@ -160,5 +179,22 @@ export function effectiveOptions(
     }),
     term,
     territory,
+  };
+}
+
+/**
+ * A video's "From {price}" on its cards (04 §9.27; 07 D82, D98): fromPriceCents over its effective options with the
+ * server's fee, and the currency to print it in.
+ */
+export function videoFromPrice(
+  rateCard: RateCardDTO,
+  video: Parameters<typeof videoPricingOf>[0],
+): { fromPriceCents: number | null; currency: Currency } {
+  return {
+    fromPriceCents: fromPriceCents(
+      effectiveOptions(rateCard, videoPricingOf(video)),
+      env.PLATFORM_FEE_BPS,
+    ),
+    currency: rateCard.currency,
   };
 }

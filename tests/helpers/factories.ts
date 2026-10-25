@@ -265,9 +265,16 @@ export async function completeSteps(
   return row;
 }
 
-/** Publishes `draft`: every step done (completeSteps), then `published` now. */
-export const publishVideo = (draft: Video): Promise<Video> =>
-  completeSteps(draft, { status: "published", publishedAt: new Date() });
+/** Publishes `draft`: every step done (completeSteps), then `published` now; then `extra`. */
+export const publishVideo = (
+  draft: Pick<Video, "id" | "creatorId">,
+  extra: Partial<NewVideo> = {},
+): Promise<Video> =>
+  completeSteps(draft, {
+    status: "published",
+    publishedAt: new Date(),
+    ...extra,
+  });
 
 /** The video's row as stored, failing the setup when there is none. */
 export async function videoRow(id: string): Promise<Video> {

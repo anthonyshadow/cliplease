@@ -14,13 +14,15 @@ export type VideoView =
   | { kind: "postings"; mode: PostingsStepMode }
   | { kind: "rights" }
   | { kind: "review" }
-  | { kind: "video_placeholder" };
+  | { kind: "published" }
+  | { kind: "video" };
 
 /**
  * A draft goes through resolveStep: the requested step when every step before it is complete, else a redirect to the
- * first incomplete one; File, Where posted (editable, postingsStepMode), Rights and Review (P13). Past the draft only
- * ?step=postings has a page so far: editable while `unpublished`, read-only while `published` (05 frame 35). Everything
- * else, and any `disabled` video, keeps P10b's placeholder until P14a builds the video page.
+ * first incomplete one; File, Where posted (editable, postingsStepMode), Rights and Review (P13). Past the draft,
+ * ?step=postings is Where posted: editable while `unpublished`, read-only while `published` (05 frame 35); a published
+ * video's Review is the success view, where Publish lands (P14a); everything else, and any `disabled` video, is the
+ * video's header (P14a's minimal page, P14b's full one).
  */
 export function videoView(
   video: { status: VideoStatus; facts: VideoStepFacts },
@@ -37,5 +39,8 @@ export function videoView(
   if (requested === "postings" && video.status !== "disabled") {
     return { kind: "postings", mode: postingsStepMode(video.status) };
   }
-  return { kind: "video_placeholder" };
+  if (requested === "review" && video.status === "published") {
+    return { kind: "published" };
+  }
+  return { kind: "video" };
 }

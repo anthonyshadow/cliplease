@@ -7,9 +7,12 @@ import {
   video,
   videoPosting,
 } from "../../db/schema";
-import type { PostingPlatform } from "../../lib/domain/values";
 import { postingPlatformLabel } from "../../lib/postings/labels";
-import type { OwnerPostingDTO } from "../../lib/postings/types";
+import type {
+  OwnerPostingDTO,
+  PublicPostingDTO,
+  PublicPostings,
+} from "../../lib/postings/types";
 import { isUuid } from "../../lib/validation/uuid";
 import { primaryVerifiedPosting } from "../../lib/videos/ownership";
 import type { Actor, CreatorActor } from "../auth/actor";
@@ -19,32 +22,6 @@ import { VideoNotFoundError } from "../videos/errors";
 // A video's postings as plain DTOs (02 §5.12; 03 §7.4 "Where-posted step"; 07 D70), never rows. The owner sees every
 // posting with its stored canonical url; buyers see published videos only, never a social id, a thumbnail or a raw paste.
 
-/** One posting as buyers see it (02 §5.12, 07 D70): a handle only when verified, never an id or an image. */
-export type PublicPostingDTO = {
-  platform: PostingPlatform;
-  label: string;
-  verified: boolean;
-  /** Verified only: an unverified posting never shows a handle. */
-  verifiedUsername: string | null;
-  /** Verified only: the account's connect time when it verified, as ISO ("Account linked {date}"). */
-  linkedAt: string | null;
-  /** Verified and its account is `disconnected` (OQ-14): "· no longer linked". */
-  noLongerLinked: boolean;
-  /**
-   * The stored canonical url when the creator shows it (`show_link`) and the row is unverified or its post isn't
-   * `removed`; else null.
-   */
-  url: string | null;
-  /** Other with a url: its hostname as text, without a leading "www." ("vimeo.com"). */
-  hostLabel: string | null;
-};
-
-/** A published video's postings: verified first, then the creator's order, and the badge's primary posting (07 D70). */
-export type PublicPostings = {
-  primary: PublicPostingDTO | null;
-  postings: PublicPostingDTO[];
-};
-
 /**
  * The owner's read of postings matching `where` (over video_posting and its video), in position order: each with its
  * account's status and its post's image, length and visibility. listVideoPostings and getOwnerPosting share it.
@@ -53,6 +30,7 @@ async function ownerPostingRows(where: SQL | undefined) {
   return db
     .select({
       id: videoPosting.id,
+      videoId: videoPosting.videoId,
       platform: videoPosting.platform,
       otherLabel: videoPosting.otherLabel,
       url: videoPosting.url,
@@ -113,6 +91,23 @@ export async function listVideoPostings(
 }
 
 /**
+ * Every posting of the creator's videos as the owner's DTOs, by video id, in one read (the /dashboard/videos cards'
+ * badges): the same rows and mapping as listVideoPostings.
+ */
+export async function ownerPostingsByVideo(
+  creatorId: string,
+): Promise<Map<string, OwnerPostingDTO[]>> {
+  const rows = await ownerPostingRows(eq(video.creatorId, creatorId));
+  const byVideo = new Map<string, OwnerPostingDTO[]>();
+  for (const row of rows) {
+    const list = byVideo.get(row.videoId) ?? [];
+    list.push(toOwnerPosting(row));
+    byVideo.set(row.videoId, list);
+  }
+  return byVideo;
+}
+
+/**
  * One of the creator's postings by id as the owner's DTO (02 §5.12; Check again's answer), scoped by its video's
  * creator. None (another creator's, gone, or an id that isn't a uuid) → VideoNotFoundError.
  */
@@ -168,13 +163,19 @@ export async function getPublicPostings(
   videoId: string,
 ): Promise<PublicPostings> {
   if (!isUuid(videoId)) return { primary: null, postings: [] };
-  return toPublicPostings(await publicPostingRows(videoId));
+  return toPublicPostings(
+    await publicPostingRows(eq(videoPosting.videoId, videoId)),
+  );
 }
 
-/** A published video's postings in position order, each with its account's and its post's status. */
-async function publicPostingRows(videoId: string) {
+/**
+ * Buyers' read of postings matching `where` (over video_posting and its video, published only), in position order, each
+ * with its video's id and its account's and its post's status. getPublicPostings and publicPostingRowsByVideo share it.
+ */
+async function publicPostingRows(where: SQL) {
   return db
     .select({
+      videoId: videoPosting.videoId,
       platform: videoPosting.platform,
       otherLabel: videoPosting.otherLabel,
       url: videoPosting.url,
@@ -194,8 +195,20 @@ async function publicPostingRows(videoId: string) {
     )
     .leftJoin(socialAccount, eq(socialAccount.id, videoPosting.socialAccountId))
     .leftJoin(socialPost, eq(socialPost.id, videoPosting.socialPostId))
-    .where(eq(videoPosting.videoId, videoId))
+    .where(where)
     .orderBy(asc(videoPosting.position));
+}
+
+/**
+ * Every posting of the creator's published videos in one read, by video id, as getPublicPostings reads each: the
+ * public grid's badges (toPublicPostings) and its Demo rule (isPubliclyAvailable). Filtered on the video's creator, so
+ * the read goes through the creator's published videos (video_creator_status_published_idx).
+ */
+export async function publicPostingRowsByVideo(
+  creatorId: string,
+): Promise<Map<string, PublicPostingRow[]>> {
+  const rows = await publicPostingRows(eq(video.creatorId, creatorId));
+  return Map.groupBy(rows, (row) => row.videoId);
 }
 
 /** A posting row with its account's and post's status, as getPublicPostings reads it. */

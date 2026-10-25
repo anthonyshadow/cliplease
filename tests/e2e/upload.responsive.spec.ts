@@ -6,7 +6,6 @@ import {
   atEveryWidth,
   expectCreatorFrame,
   expectInside,
-  expectInsideColumn,
   expectReadingColumn,
   expectTouchTarget,
   TIERS,
@@ -29,13 +28,13 @@ import {
 } from "./helpers/videos";
 
 // G.6 for the plain upload (S18, S17b; 05 §1.6, §6.5, §6.6; 07 D145, D146, D149, D153, D154) on all four projects:
-// /dashboard/videos, the title page and the File step (before and after sample.mp4 is attached) are one centered
-// max-w-reading column inside the app frame at every tier; the dropzone is ≥ 160 px tall below md and ≥ 200 px from md;
+// /dashboard/videos with no video yet is its empty state in the app frame; the title page and the File step (before
+// and after sample.mp4 is attached) are one centered max-w-reading column inside the app frame at every tier; the dropzone is ≥ 160 px tall below md and ≥ 200 px from md;
 // the four-step Stepper shows its segment bar below md and its <ol> from md. Where posted, on the way to Rights, is
 // swept with every card open, the longest Other name and a long link's error, then Rights: one centered column below lg
 // (no video summary below md, the summary above the step on md), two columns from lg, the chips wrapping and every card
 // inside the step. The iPhone hint is never asserted (07 D152). make-licensable.responsive.spec.ts sweeps Rights and
-// Review in full (P13); the non-draft placeholder is P14a's (D154).
+// Review in full (P13); videos.responsive.spec.ts sweeps the success view and the video grids (P14a).
 test.use({ reducedMotion: "reduce" });
 test.afterEach(cleanCreatedVideos);
 
@@ -77,7 +76,7 @@ test("G.6: the title page and the File step are one centered reading column at e
   expect(errors).toEqual([]);
 });
 
-test("G.6: /dashboard/videos is one centered reading column at every tier", async ({
+test("G.6: /dashboard/videos with no video is its empty state, in the app frame at every tier", async ({
   page,
 }, testInfo) => {
   test.setTimeout(120_000);
@@ -86,13 +85,16 @@ test("G.6: /dashboard/videos is one centered reading column at every tier", asyn
 
   await page.goto("/dashboard/videos");
   const heading = page.getByRole("heading", { level: 1 });
+  const library = page.getByRole("link", { name: "Open Library", exact: true });
   const upload = page.getByRole("link", { name: "Upload a file", exact: true });
   await atEveryWidth(page, testInfo, async ({ width }) => {
-    await expectColumn(page, width);
-    await expect(heading).toHaveText("Videos. Ready to license.");
-    await expectInsideColumn(heading);
-    await expect(upload).toBeVisible();
-    await expectInsideColumn(upload);
+    await expectCreatorFrame(page, width);
+    await expect(heading).toHaveText("Videos. Nothing to license yet.");
+    for (const action of [library, upload]) {
+      await expect(action).toBeVisible();
+      await expectInside(action, page.locator("main"));
+      await expectTouchTarget(action);
+    }
   });
   expect(errors).toEqual([]);
 });

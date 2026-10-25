@@ -44,13 +44,17 @@ export async function checkHandleAvailability(
   };
 }
 
-/** The public face of a creator (/@handle): public fields only. Once per request (the page and its metadata). */
+/**
+ * The public face of a creator (/@handle): public fields, and the id the page's reads use (server-side only, never
+ * rendered). Once per request (the page and its metadata).
+ */
 export const getPublicCreator = cache(
   async (
     handle: string,
-  ): Promise<{ handle: string; displayName: string } | null> => {
+  ): Promise<{ id: string; handle: string; displayName: string } | null> => {
     const [row] = await db
       .select({
+        id: creatorProfile.id,
         handle: creatorProfile.handle,
         displayName: creatorProfile.displayName,
       })

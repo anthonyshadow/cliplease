@@ -7,7 +7,11 @@ import type {
   SocialAccountStatus,
 } from "../domain/values";
 import { formatPostDate, joinList } from "../format";
-import type { OwnerPostingDTO } from "../postings/types";
+import type {
+  OwnerPostingDTO,
+  PublicPostingDTO,
+  PublicPostings,
+} from "../postings/types";
 import { tidyText } from "../text/tidy";
 
 /**
@@ -141,10 +145,43 @@ export function primaryVerifiedPosting<
   return verified.find((p) => p.isSource) ?? verified[0] ?? null;
 }
 
+/** What a badge is built from: the primary verified posting (07 D70), or none. */
+type BadgeSource = {
+  primary: Pick<
+    PublicPostingDTO,
+    "platform" | "label" | "verifiedUsername" | "linkedAt" | "noLongerLinked"
+  > | null;
+  /** The other verified postings' platform names, in posting order. */
+  alsoVerifiedOn: readonly string[];
+  hasUnverifiedPosting: boolean;
+};
+
+/** The badge for `size` (04 §9.19; 07 D70, D89): verified from the primary posting, else self-attested. */
+function badgeFrom(source: BadgeSource, size: BadgeSize): BadgeInput {
+  const { primary } = source;
+  if (!primary?.verifiedUsername || !primary.linkedAt) {
+    return {
+      size,
+      ownership: "self_attested",
+      hasUnverifiedPosting: source.hasUnverifiedPosting,
+    };
+  }
+  return {
+    size,
+    ownership: "verified_owner",
+    provider: primary.platform,
+    platformLabel: primary.label,
+    verifiedUsername: primary.verifiedUsername,
+    linkedAt: primary.linkedAt,
+    noLongerLinked: primary.noLongerLinked,
+    alsoVerifiedOn: source.alsoVerifiedOn,
+  };
+}
+
 /**
- * The lg badge the owner's postings give (07 D70, D89; P13's Review, where the buyer's read gives nothing for a draft):
- * the primary verified posting's, with the other verified platforms on line 3, else self-attested, with the D70
- * sentence when a posting isn't verified.
+ * The badge the owner's postings give (07 D70, D89): the Review's (a draft's postings have no public read) and the
+ * creator's video cards'. The primary verified posting's, with the other verified platforms for line 3, else
+ * self-attested, with the D70 sentence when a posting isn't verified.
  */
 export function ownerBadge(
   postings: readonly Pick<
@@ -158,27 +195,44 @@ export function ownerBadge(
     | "verifiedAccountLinkedAt"
     | "accountStatus"
   >[],
+  size: BadgeSize,
 ): BadgeInput {
   const primary = primaryVerifiedPosting(postings);
-  if (!primary?.verifiedUsername || !primary.verifiedAccountLinkedAt) {
-    return {
-      size: "lg",
-      ownership: "self_attested",
+  return badgeFrom(
+    {
+      primary: primary && {
+        platform: primary.platform,
+        label: primary.label,
+        verifiedUsername: primary.verifiedUsername,
+        linkedAt: primary.verifiedAccountLinkedAt,
+        noLongerLinked: primary.accountStatus === "disconnected",
+      },
+      alsoVerifiedOn: postings
+        .filter((p) => p !== primary && p.verification === "verified")
+        .sort((x, y) => x.position - y.position)
+        .map((p) => p.label),
       hasUnverifiedPosting: postings.some((p) => p.verification !== "verified"),
-    };
-  }
-  const others = postings
-    .filter((p) => p !== primary && p.verification === "verified")
-    .sort((x, y) => x.position - y.position)
-    .map((p) => p.label);
-  return {
-    size: "lg",
-    ownership: "verified_owner",
-    provider: primary.platform,
-    platformLabel: primary.label,
-    verifiedUsername: primary.verifiedUsername,
-    linkedAt: primary.verifiedAccountLinkedAt,
-    noLongerLinked: primary.accountStatus === "disconnected",
-    alsoVerifiedOn: others,
-  };
+    },
+    size,
+  );
+}
+
+/**
+ * The badge buyers see (07 D70, D89), from a published video's public read (getPublicPostings): the success view's,
+ * the public grid's and the license page's (P15).
+ */
+export function publicBadge(
+  { primary, postings }: PublicPostings,
+  size: BadgeSize,
+): BadgeInput {
+  return badgeFrom(
+    {
+      primary,
+      alsoVerifiedOn: postings
+        .filter((p) => p !== primary && p.verified)
+        .map((p) => p.label),
+      hasUnverifiedPosting: postings.some((p) => !p.verified),
+    },
+    size,
+  );
 }

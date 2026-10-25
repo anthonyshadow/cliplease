@@ -36,6 +36,7 @@ import {
 } from "@/lib/result";
 import { DROPZONE_COPY } from "@/lib/upload/messages";
 import { isUuid } from "@/lib/validation/uuid";
+import { REVIEW_COPY } from "@/lib/videos/review";
 import { videoHref, videoStepFacts, videoStepHref } from "@/lib/videos/steps";
 import type { Actor } from "@/server/auth/actor";
 import { requireCreator, toActor } from "@/server/auth/session";
@@ -64,11 +65,16 @@ import {
   VideoNotFoundError,
 } from "@/server/videos/errors";
 import {
+  type PublishResult,
+  publishVideo as publish,
+} from "@/server/videos/publish";
+import {
   getVideoStepFacts,
   type VideoStepState,
 } from "@/server/videos/queries";
+import { shareUrl } from "@/server/videos/visibility";
 
-// The Where posted step's Server Actions (02 §6.1; 07 D69): Continue (saveVideoPostings, which also stores the same-video
+// The Where posted step's Server Actions, and Review's Publish (02 §6.1; 07 D69): Continue (saveVideoPostings, which also stores the same-video
 // tick or takes it back: no separate confirmSameVideo action, P11c Task 3; owner answer Q-83 a) and Check again
 // (recheckPosting). Thin: the form read (postingsFromFormData), the session gate, 02 §6.1's Zod (saveVideoPostingsInput),
 // the domain, and its refusals in 04 §11.10's words. Error shapes the step reads:
@@ -448,4 +454,35 @@ export async function recheckPosting(input: {
   }
   refresh();
   return result;
+}
+
+const publishInput = z.object({ videoId: z.uuid() });
+
+/**
+ * **Publish** on Review (02 §6.1; 07 D69, D74): the video live, then refresh(), which renders the success view in place
+ * (the page shows a published video's Review as "Your video is live."). Returns the link to share; a video already live
+ * is fine again. A blocker that appeared since the page rendered (another tab, a disconnected account) refuses with
+ * `publish_blocked`, and the refreshed Review lists it. Not the creator's video → 404. No payouts check (D74).
+ */
+export async function publishVideo(input: {
+  videoId: string;
+}): Promise<ActionResult<{ shareUrl: string }>> {
+  const parsed = publishInput.safeParse(input);
+  if (!parsed.success) notFound();
+  const { videoId } = parsed.data;
+  const ctx = await requireCreator(videoStepHref(videoId, "review"));
+  let result: PublishResult;
+  try {
+    result = await publish(toActor(ctx), { videoId });
+  } catch (error) {
+    if (!(error instanceof VideoNotFoundError)) throw error;
+    notFound();
+  }
+  refresh();
+  return result.ok
+    ? {
+        ok: true,
+        data: { shareUrl: shareUrl(ctx.creator.handle, result.slug) },
+      }
+    : formError("publish_blocked", REVIEW_COPY.blockersTitle);
 }

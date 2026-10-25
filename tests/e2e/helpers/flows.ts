@@ -1,0 +1,72 @@
+import { expect, type Locator, type Page } from "@playwright/test";
+import { PUBLISHED_COPY } from "../../../src/lib/videos/review";
+import { signUpCreator } from "./creator";
+import { LIBRARY, libraryPostId, POST_01, tiles } from "./library";
+import { pressButton } from "./press";
+import {
+  answerRights,
+  attachSample,
+  continueToPostings,
+  continueToReview,
+  continueToRights,
+  makeLicensable,
+  sameVideoTick,
+} from "./videos";
+
+// Whole creator flows the later specs start from (P14a; P15–P22 build on this file).
+
+/** Review's success view (05 §6.5 States "Success"), once Publish has run. */
+export const publishedView = (page: Page): Locator =>
+  page.locator("[data-published-view]");
+
+/** A card on /dashboard/videos or /@handle, by its title. */
+export const videoCard = (page: Page, title: string | RegExp): Locator =>
+  page.locator("[data-video-card]").filter({ hasText: title });
+
+/** Presses Review's Publish and waits for "Your video is live."; returns the link the view offers and its slug. */
+export async function publish(
+  page: Page,
+): Promise<{ shareUrl: string; slug: string }> {
+  await pressButton(page, "Publish");
+  await expect(
+    publishedView(page).getByRole("heading", {
+      level: 1,
+      name: PUBLISHED_COPY.live,
+    }),
+  ).toBeVisible();
+  const shareUrl =
+    (await publishedView(page).locator("bdi").textContent()) ?? "";
+  return { shareUrl, slug: new URL(shareUrl).pathname.split("/").at(-1) ?? "" };
+}
+
+/**
+ * A fresh creator with fake payouts and Demo linked publishes Demo post 01 through the UI (File with sample.mp4 →
+ * Where posted with the source and the same-video tick → Rights, four answers → Review → Publish) and stays on the
+ * success view. Returns the creator's handle, the video's slug, the link to share and the video's id.
+ */
+export async function publishDemoVideo(page: Page): Promise<{
+  handle: string;
+  slug: string;
+  shareUrl: string;
+  videoId: string;
+}> {
+  const { handle } = await signUpCreator(page, {
+    payouts: true,
+    connectDemo: true,
+  });
+  await page.goto(LIBRARY);
+  await expect(tiles(page)).toHaveCount(24);
+  const videoId = await makeLicensable(
+    page,
+    await libraryPostId(page, POST_01),
+  );
+  await attachSample(page);
+  await continueToPostings(page, videoId);
+  const tick = sameVideoTick(page);
+  await tick.focus();
+  await tick.press("Space");
+  await continueToRights(page, videoId);
+  await answerRights(page);
+  await continueToReview(page, videoId);
+  return { handle, videoId, ...(await publish(page)) };
+}

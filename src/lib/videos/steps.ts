@@ -81,6 +81,10 @@ const COMPLETE: Record<VideoStep, (f: VideoStepFacts) => boolean> = {
 const isVideoStep = (step: string): step is VideoStep =>
   (VIDEO_STEPS as readonly string[]).includes(step);
 
+/** The draft's first step not yet complete (Review when the others are): where its Continue goes. */
+export const firstIncompleteStep = (facts: VideoStepFacts): VideoStep =>
+  VIDEO_STEPS.find((step) => !COMPLETE[step](facts)) ?? "review";
+
 /**
  * `?step=` for a draft: the requested step when every step before it is complete; otherwise (and for a missing or
  * unknown step) a redirect to the first incomplete one.
@@ -89,8 +93,7 @@ export function resolveStep(
   facts: VideoStepFacts,
   requested: string | null | undefined,
 ): VideoStepRoute {
-  const firstIncomplete =
-    VIDEO_STEPS.find((step) => !COMPLETE[step](facts)) ?? "review";
+  const firstIncomplete = firstIncompleteStep(facts);
   if (!requested || !isVideoStep(requested)) {
     return { kind: "redirect", step: firstIncomplete };
   }

@@ -32,7 +32,7 @@ export const LINK_DEMO_HREF = `/api/connect/mock/start?returnTo=%2Fdashboard%2Fv
 export const VIDEO: PostingsFormVideo = {
   id: VIDEO_ID,
   durationMs: 14_000,
-  posterSrc: `/api/media/posters/${VIDEO_ID}?v=abcd1234`,
+  posterSrc: "/poster.jpg?v=abcd1234",
   width: 720,
   height: 1280,
   sameVideoConfirmed: false,

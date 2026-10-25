@@ -23,6 +23,7 @@ import { Notice } from "@/components/ui/notice";
 import { Progress } from "@/components/ui/progress";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { SelectField } from "@/components/ui/select-field";
+import { ShareButton } from "@/components/ui/share-button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -515,6 +516,7 @@ export function Gallery({ view }: { view: "waiting" | "history" }) {
             url="https://cliplease.com/@maya.films/first-snow-on-the-lake"
             className="max-w-md"
           />
+          <ShareButton url="https://cliplease.com/@maya.films/first-snow-on-the-lake" />
           <div className="flex flex-col gap-6">
             <Stepper
               steps={VIDEO_STEP_LABELS}

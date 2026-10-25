@@ -152,9 +152,10 @@ test("J5.13–J5.17: a plain upload's Rights waits for all four answers; its Rev
     step.getByText(PAYOUTS_NOTICE_COPY.canPublish, { exact: true }),
   ).toBeVisible();
   await expect(page.locator("[data-publish-blockers]")).toHaveCount(0);
+  // Nothing blocks, so Publish is on (P14a wires it).
   await expect(
     step.getByRole("button", { name: "Publish", exact: true }),
-  ).toBeDisabled();
+  ).toBeEnabled();
   await expect(page.getByRole("switch")).toHaveCount(0);
   await expect(
     prices.getByRole("link", { name: "Edit your rate card", exact: true }),

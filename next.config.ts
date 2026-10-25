@@ -44,9 +44,13 @@ const nextConfig: NextConfig = {
       { source: "/admin/:path*", headers: NOINDEX },
     ];
   },
-  // /@handle is served by /u/[handle] (02 §4.3; afterFiles, the array form). Never redirect /u/* to /@*.
+  // /@handle and /@handle/slug are served by /u/[handle] and /u/[handle]/[slug] (02 §4.3; afterFiles, the array form;
+  // the license page behind the second is P15). Never redirect /u/* to /@*.
   async rewrites() {
-    return [{ source: "/@:handle", destination: "/u/:handle" }];
+    return [
+      { source: "/@:handle", destination: "/u/:handle" },
+      { source: "/@:handle/:slug", destination: "/u/:handle/:slug" },
+    ];
   },
   // The dev storage route's signed URLs carry object keys, upload ids and signatures: keep them out of `next dev`'s
   // request log (P10a: never log them). Development only; production never serves the route (07 D51).

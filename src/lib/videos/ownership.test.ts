@@ -6,6 +6,7 @@ import {
   badgeText,
   ownerBadge,
   primaryVerifiedPosting,
+  publicBadge,
   type VerifiedBadgeInput,
   verifiedAs,
   verifiedUsernameDisplay,
@@ -288,19 +289,22 @@ describe('ownerBadge (the Review\'s "Buyers will see:"; 07 D70, D89)', () => {
   });
 
   it("reads the primary verified posting, with the other verified platforms for line 3", () => {
-    const badge = ownerBadge([
-      posting(0, {
-        platform: "instagram",
-        label: "Instagram",
-        verifiedUsername: "@maya.films",
-      }),
-      posting(1, { isSource: true }),
-      posting(2, {
-        platform: "tiktok",
-        label: "TikTok",
-        verification: "unverified",
-      }),
-    ]);
+    const badge = ownerBadge(
+      [
+        posting(0, {
+          platform: "instagram",
+          label: "Instagram",
+          verifiedUsername: "@maya.films",
+        }),
+        posting(1, { isSource: true }),
+        posting(2, {
+          platform: "tiktok",
+          label: "TikTok",
+          verification: "unverified",
+        }),
+      ],
+      "lg",
+    );
     expect(badge).toMatchObject({
       ownership: "verified_owner",
       provider: "mock",
@@ -312,13 +316,60 @@ describe('ownerBadge (the Review\'s "Buyers will see:"; 07 D70, D89)', () => {
   });
 
   it("is self-attested with no verified posting, saying so when one isn't verified", () => {
-    expect(ownerBadge([])).toEqual({
+    expect(ownerBadge([], "lg")).toEqual({
       size: "lg",
       ownership: "self_attested",
       hasUnverifiedPosting: false,
     });
     expect(
-      ownerBadge([posting(0, { verification: "unverified" })]),
+      ownerBadge([posting(0, { verification: "unverified" })], "lg"),
+    ).toMatchObject({ ownership: "self_attested", hasUnverifiedPosting: true });
+  });
+});
+
+describe("publicBadge (the badge buyers see; 07 D70, D89)", () => {
+  const verified = (label: string, platform: "mock" | "instagram") => ({
+    platform,
+    label,
+    verified: true,
+    verifiedUsername: platform === "mock" ? "@demo.creator" : "@maya.films",
+    linkedAt: "2026-10-01T12:00:00.000Z",
+    noLongerLinked: false,
+    url: null,
+    hostLabel: null,
+  });
+  const unverified = {
+    ...verified("TikTok", "instagram"),
+    platform: "tiktok" as const,
+    verified: false,
+    verifiedUsername: null,
+    linkedAt: null,
+  };
+
+  it("reads the primary posting at either size, line 3 naming the other verified ones", () => {
+    const demo = verified("Demo", "mock");
+    const postings = {
+      primary: demo,
+      postings: [demo, verified("Instagram", "instagram"), unverified],
+    };
+    expect(badgeText(publicBadge(postings, "sm"))).toEqual({
+      line1: "Verified · @demo.creator (demo account)",
+      line2: null,
+      line3: null,
+    });
+    expect(badgeText(publicBadge(postings, "lg")).line3).toBe(
+      "Also verified on Instagram",
+    );
+  });
+
+  it("is self-attested without a verified posting, saying so when one isn't verified", () => {
+    expect(publicBadge({ primary: null, postings: [] }, "sm")).toEqual({
+      size: "sm",
+      ownership: "self_attested",
+      hasUnverifiedPosting: false,
+    });
+    expect(
+      publicBadge({ primary: null, postings: [unverified] }, "lg"),
     ).toMatchObject({ ownership: "self_attested", hasUnverifiedPosting: true });
   });
 });

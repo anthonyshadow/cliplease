@@ -1,11 +1,10 @@
-import type { NextRequest } from "next/server";
 import { posterResponse } from "@/server/videos/poster";
 
-// The poster read (02 §4.2, §6.2): the owner or an admin gets the stored JPEG; everyone else, a bad id and a video with
-// no poster get the same 404. `?v=` is accepted and ignored. P14a adds the public branch.
+// The poster read (02 §4.2, §6.2): public once the video may be seen by anyone, else the owner or an admin; everyone
+// else, a bad id and a video with no poster get the same 404 (posterResponse). `?v=` is accepted and ignored.
 
 export async function GET(
-  _request: NextRequest,
+  _request: Request,
   ctx: RouteContext<"/api/media/posters/[videoId]">,
 ) {
   const { videoId } = await ctx.params;
