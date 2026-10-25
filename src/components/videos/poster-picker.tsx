@@ -16,7 +16,7 @@ import { editRowLabel, REVIEW_COPY } from "@/lib/videos/review";
  * or WebP ("Choose an image" / "Use a different image", origin creator_image). Shows the local preview at once and the
  * stored poster after a reload; the store keeps the stored cover's preview and origin for the tab's life, so the picker
  * itself needs no refresh when a cover finishes (the Review fetches its server-read parts again, RefreshOnCoverDone).
- * Works without a frame capture too; the Review's Cover image row reuses it (`inRow`).
+ * Works without a frame capture too; the Review's and the video page's Cover image rows reuse it (`inRow`).
  */
 export function PosterPicker({
   videoId,
@@ -24,7 +24,7 @@ export function PosterPicker({
   posterSrc,
   width,
   height,
-  inRow = false,
+  inRow,
 }: {
   videoId: string;
   title: string;
@@ -33,10 +33,10 @@ export function PosterPicker({
   width: number | null;
   height: number | null;
   /**
-   * The Review's Cover image row (05 callout 45): the row's label names it, and the frame's change button is the row's
-   * _Edit_ at its end, as Title and Link have.
+   * A Cover image row: the row's label names it, and the frame's button sits at its end: the Review's _Edit_, as Title
+   * and Link have (05 §6.5 callout 45), or the video page's "Use a different image" (05 §6.7 callout 5).
    */
-  inRow?: boolean;
+  inRow?: "edit" | "change";
 }) {
   const cover = useUploads().covers[videoId] ?? null;
   const input = useRef<HTMLInputElement>(null);
@@ -66,6 +66,7 @@ export function PosterPicker({
   );
 
   const choose = () => input.current?.click();
+  const edit = inRow === "edit";
   return (
     <section
       {...refocus}
@@ -109,10 +110,10 @@ export function PosterPicker({
             <Button
               variant="tertiary"
               size="sm"
-              aria-label={inRow ? editRowLabel(COVER_COPY.label) : undefined}
+              aria-label={edit ? editRowLabel(COVER_COPY.label) : undefined}
               onClick={choose}
             >
-              {inRow ? REVIEW_COPY.edit : COVER_COPY.change}
+              {edit ? REVIEW_COPY.edit : COVER_COPY.change}
             </Button>
           )}
         </div>

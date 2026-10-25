@@ -1,8 +1,9 @@
 "use server";
 
 import { refresh } from "next/cache";
-import { notFound, redirect } from "next/navigation";
+import { notFound, RedirectType, redirect } from "next/navigation";
 import { type ZodError, z } from "zod";
+import { CREATOR_NAV } from "@/components/layout/creator-nav";
 import { isOneOf, POSTING_PLATFORMS } from "@/lib/domain/values";
 import {
   POSTINGS_COPY,
@@ -62,8 +63,13 @@ import { mockEnabled } from "@/server/social/registry";
 import { confirmSameVideo, withdrawSameVideo } from "@/server/videos/edit";
 import {
   confirmSameVideoErrorCode,
+  VideoNotDraftError,
   VideoNotFoundError,
 } from "@/server/videos/errors";
+import {
+  deleteDraftVideo as deleteDraft,
+  unpublishVideo as unpublish,
+} from "@/server/videos/lifecycle";
 import {
   type PublishResult,
   publishVideo as publish,
@@ -74,7 +80,7 @@ import {
 } from "@/server/videos/queries";
 import { shareUrl } from "@/server/videos/visibility";
 
-// The Where posted step's Server Actions, and Review's Publish (02 §6.1; 07 D69): Continue (saveVideoPostings, which also stores the same-video
+// The Where posted step's Server Actions, Review's Publish and the video's Turn off and Delete draft (02 §6.1; 07 D69): Continue (saveVideoPostings, which also stores the same-video
 // tick or takes it back: no separate confirmSameVideo action, P11c Task 3; owner answer Q-83 a) and Check again
 // (recheckPosting). Thin: the form read (postingsFromFormData), the session gate, 02 §6.1's Zod (saveVideoPostingsInput),
 // the domain, and its refusals in 04 §11.10's words. Error shapes the step reads:
@@ -456,7 +462,7 @@ export async function recheckPosting(input: {
   return result;
 }
 
-const publishInput = z.object({ videoId: z.uuid() });
+const videoInput = z.object({ videoId: z.uuid() });
 
 /**
  * **Publish** on Review (02 §6.1; 07 D69, D74): the video live, then refresh(), which renders the success view in place
@@ -467,7 +473,7 @@ const publishInput = z.object({ videoId: z.uuid() });
 export async function publishVideo(input: {
   videoId: string;
 }): Promise<ActionResult<{ shareUrl: string }>> {
-  const parsed = publishInput.safeParse(input);
+  const parsed = videoInput.safeParse(input);
   if (!parsed.success) notFound();
   const { videoId } = parsed.data;
   const ctx = await requireCreator(videoStepHref(videoId, "review"));
@@ -485,4 +491,47 @@ export async function publishVideo(input: {
         data: { shareUrl: shareUrl(ctx.creator.handle, result.slug) },
       }
     : formError("publish_blocked", REVIEW_COPY.blockersTitle);
+}
+
+/**
+ * **Turn off** on the video page and the Videos Menu (02 §6.1; 01 J5.20): the video `unpublished`, then refresh(). A
+ * video that isn't live is fine again (no-op). Not the creator's video → 404.
+ */
+export async function unpublishVideo(input: {
+  videoId: string;
+}): Promise<ActionResult> {
+  const parsed = videoInput.safeParse(input);
+  if (!parsed.success) notFound();
+  const { videoId } = parsed.data;
+  const ctx = await requireCreator(videoHref(videoId));
+  try {
+    await unpublish(toActor(ctx), videoId);
+  } catch (error) {
+    if (!(error instanceof VideoNotFoundError)) throw error;
+    notFound();
+  }
+  refresh();
+  return { ok: true, data: undefined };
+}
+
+/**
+ * **Delete draft** in the Videos Menu's ConfirmSheet (02 §6.1; 01 J5.21): the draft and its files, then
+ * /dashboard/videos in place of this entry (a replace, so Back doesn't land on the list twice). A draft already gone is
+ * fine. A video past its draft (published in another tab) refuses with `video_not_draft` and refresh()es, so the card
+ * shows what it is now.
+ */
+export async function deleteDraftVideo(input: {
+  videoId: string;
+}): Promise<ActionResult> {
+  const parsed = videoInput.safeParse(input);
+  if (!parsed.success) notFound();
+  const ctx = await requireCreator(CREATOR_NAV.videos.href);
+  try {
+    await deleteDraft(toActor(ctx), parsed.data.videoId);
+  } catch (error) {
+    if (!(error instanceof VideoNotDraftError)) throw error;
+    refresh();
+    return formError("video_not_draft");
+  }
+  redirect(CREATOR_NAV.videos.href, RedirectType.replace);
 }

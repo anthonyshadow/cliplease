@@ -41,6 +41,7 @@ import {
   useUploads,
 } from "@/lib/upload/upload-store";
 import { cn } from "@/lib/utils";
+import { originalLine } from "@/lib/videos/video-page";
 import type { CreatorVideoDTO } from "@/server/videos/queries";
 import { PostSummary } from "./file-step-post-summary";
 import { PosterPicker } from "./poster-picker";
@@ -53,6 +54,7 @@ export type FileStepVideo = Pick<
   | "originalStatus"
   | "originalError"
   | "originalFilename"
+  | "originalBytes"
   | "durationMs"
   | "width"
   | "height"
@@ -134,22 +136,30 @@ function PausedBox({
  *
  * Continue is a link to Where posted once the original is ready, for both sources (07 D69). A Library video (`library`,
  * P11) renders as the two children of the page's TWO_COLUMN grid (owner answer Q-66 a): the provenance line, then the
- * step (01 J5.5's Notice, the upload, the cover picker and Continue).
+ * step (01 J5.5's Notice, the upload, the cover picker and Continue). On the video page (`replace`, P14b) it is the
+ * Original file section's Replace: the done row names the file with its duration and size (originalLine), and there is
+ * no cover picker (the page has its Cover image row) and no Continue.
  */
 export function FileStepUpload({
   video,
   nextHref,
+  replace,
   library,
   progress = null,
 }: {
   video: FileStepVideo;
-  /** Where Continue goes once the original is ready: `?step=postings`. */
-  nextHref: string;
   /** A Library video's lines: the page's two columns. Left out for a plain upload's one column. */
   library?: FileStepLibrary;
   /** The server's resume state when the row is 'uploading' (the upload id and bytes only). */
   progress?: OriginalUploadProgress;
-}) {
+} & (
+  | {
+      /** Where Continue goes once the original is ready: `?step=postings`. */
+      nextHref: string;
+      replace?: never;
+    }
+  | { replace: true; nextHref?: never }
+)) {
   const router = useRouter();
   const pathname = usePathname();
   const { originals, covers } = useUploads();
@@ -355,7 +365,13 @@ export function FileStepUpload({
     case "done":
       view = {
         kind: "done",
-        line: hintsLine(entry?.hints ?? video),
+        line: replace
+          ? originalLine({
+              ...(entry?.hints ?? video),
+              originalFilename: entry?.fileName ?? video.originalFilename,
+              originalBytes: entry?.size ?? video.originalBytes,
+            })
+          : hintsLine(entry?.hints ?? video),
         canReplace: !video.originalLocked,
       };
       break;
@@ -451,7 +467,7 @@ export function FileStepUpload({
   const width = entry?.hints?.width ?? video.width;
   const height = entry?.hints?.height ?? video.height;
   // Until the original is ready: Continue disabled, with the helper unless an upload is on its way.
-  const next = ready ? (
+  const next = !nextHref ? null : ready ? (
     <Button asChild className={PRIMARY_WIDTH}>
       <Link href={nextHref}>Continue</Link>
     </Button>
@@ -502,7 +518,7 @@ export function FileStepUpload({
       <p aria-live="polite" className="sr-only">
         {announcement}
       </p>
-      {showCover ? (
+      {showCover && !replace ? (
         <PosterPicker
           videoId={video.id}
           title={video.title}

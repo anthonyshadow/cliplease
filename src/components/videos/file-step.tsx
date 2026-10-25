@@ -14,13 +14,14 @@ import { BackLink } from "./back-link";
 import { FileStepUpload, type FileStepVideo } from "./file-step-upload";
 
 /** What the upload island reads of the video: no source post, tick or rights. */
-function uploadVideo(video: CreatorVideoDTO): FileStepVideo {
+export function uploadVideo(video: CreatorVideoDTO): FileStepVideo {
   return {
     id: video.id,
     title: video.title,
     originalStatus: video.originalStatus,
     originalError: video.originalError,
     originalFilename: video.originalFilename,
+    originalBytes: video.originalBytes,
     durationMs: video.durationMs,
     width: video.width,
     height: video.height,

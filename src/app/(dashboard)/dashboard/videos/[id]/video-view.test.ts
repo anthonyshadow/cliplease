@@ -69,15 +69,15 @@ describe("videoView", () => {
     expect(view("disabled", DONE, "review")).toEqual({ kind: "video" });
   });
 
-  it("past the draft: any other request, and a disabled video, show the video's header", () => {
-    expect(view("published", DONE, undefined)).toEqual({
-      kind: "video",
-    });
-    expect(view("unpublished", DONE, "rights")).toEqual({
-      kind: "video",
-    });
-    expect(view("disabled", DONE, "postings")).toEqual({
-      kind: "video",
-    });
+  it("past the draft: ?step=rights is the Rights form, live or off (the video page's Rights Edit)", () => {
+    expect(view("published", DONE, "rights")).toEqual({ kind: "rights" });
+    expect(view("unpublished", DONE, "rights")).toEqual({ kind: "rights" });
+  });
+
+  it("past the draft: any other request, and a disabled video's steps, show the video's page", () => {
+    expect(view("published", DONE, undefined)).toEqual({ kind: "video" });
+    expect(view("unpublished", DONE, "file")).toEqual({ kind: "video" });
+    expect(view("disabled", DONE, "postings")).toEqual({ kind: "video" });
+    expect(view("disabled", DONE, "rights")).toEqual({ kind: "video" });
   });
 });

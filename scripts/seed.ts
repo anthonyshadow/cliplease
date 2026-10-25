@@ -1,8 +1,11 @@
 // The one seed (03 §8.1, 07 D53, D88): `bun run db:seed` gives every ADMIN_EMAILS user role 'admin', or creates
-// seed_user_admin when none of them has signed in yet; `--demo` also adds creator @maya with a synced Demo account (P09).
+// seed_user_admin when none of them has signed in yet; `--demo` also adds creator @maya with a synced Demo account (P09)
+// and her published Library video "First snow" from the test fixtures (P14b).
 // It runs under `--conditions=react-server`, so the server guard import resolves to an empty module. tsx runs this file
 // as CommonJS: no top-level await. Env is loaded first and every module that reads it (the client, env.ts and the server
 // modules) is imported dynamically after it, because importing src/server/env.ts validates the environment.
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { loadEnvConfig } from "@next/env";
 import { and, eq, inArray, ne, or } from "drizzle-orm";
 import type { db as appDb } from "../src/db/client";
@@ -11,14 +14,21 @@ import {
   rateCard,
   rateOption,
   socialAccount,
+  socialPost,
   user,
+  video,
+  videoPosting,
 } from "../src/db/schema";
 import type { Currency } from "../src/lib/domain/values";
+import { LIBRARY_PATH } from "../src/lib/library/filter";
 import {
   DEFAULT_BASE_PRICE_CENTS,
   defaultRateOptions,
 } from "../src/lib/pricing/presets";
 import { DAY_MS, HOUR_MS } from "../src/lib/time";
+import { ORIGINAL_MIME, POSTER_MIME } from "../src/lib/upload/limits";
+import { creatorUrl, videoUrl } from "../src/lib/urls";
+import { verifiedAs } from "../src/lib/videos/ownership";
 import type { MockSocialScenario, PaymentsDriverName } from "../src/server/env";
 import type {
   ListPostsResult,
@@ -26,6 +36,8 @@ import type {
   SocialProfile,
   TokenSet,
 } from "../src/server/social/types";
+import type { ObjectStorage } from "../src/server/storage/index";
+import { originalKey, posterKey } from "../src/server/storage/keys";
 
 const SEED_ADMIN_ID = "seed_user_admin";
 const FALLBACK_ADMIN_EMAIL = "admin@example.com";
@@ -40,12 +52,38 @@ const MAYA = {
   accountId: "00000000-0000-4000-8000-000000000011",
   currency: "cad",
 } as const;
-const DEMO_PATHS = ["/@maya", "/dashboard/library"] as const;
+// Her published Library video V1 and its source posting (03 §8.1, 07 D53, D65): Demo post 01, from the fixtures.
+const V1 = {
+  id: "00000000-0000-4000-8000-000000000101",
+  postingId: "00000000-0000-4000-8000-000000000201",
+  post: "mock_post_c4180ab2_01",
+  slug: "first-snow",
+  title: "First snow",
+  fileName: "first-snow.mp4",
+  durationMs: 14_000,
+  width: 720,
+  height: 1280,
+} as const;
+const FIXTURES = {
+  original: "tests/fixtures/sample.mp4",
+  poster: "tests/fixtures/poster.jpg",
+} as const;
+const DEMO_PATHS = [
+  creatorUrl(MAYA.handle),
+  videoUrl(MAYA.handle, V1.slug),
+  LIBRARY_PATH,
+] as const;
 const START_OVER = "reset the dev database to start over (03 §8.1)";
 
 type Tx = Parameters<Parameters<typeof appDb.transaction>[0]>[0];
+type Reader = Pick<typeof appDb, "select">;
 
-export type SeedOptions = { appEnv: string | undefined; demo: boolean };
+export type SeedOptions = {
+  appEnv: string | undefined;
+  demo: boolean;
+  /** Where --demo stores V1's files: storage() unless a test gives its own driver. */
+  storage?: ObjectStorage;
+};
 /** What --demo added: all false and 0 when @maya was already seeded. */
 export type DemoResult = {
   userCreated: boolean;
@@ -53,7 +91,12 @@ export type DemoResult = {
   rateOptionsAdded: number;
   accountCreated: boolean;
   postsAdded: number;
+  /** V1 "First snow" was inserted, published. */
+  videoCreated: boolean;
+  /** V1's files stored by this run: 2 with a new V1, 0 once both are there. */
+  objectsUploaded: number;
 };
+type MayaResult = Omit<DemoResult, "videoCreated" | "objectsUploaded">;
 export type SeedResult = {
   promoted: number;
   created: boolean;
@@ -102,13 +145,17 @@ export function mayaPayoutColumns(driver: PaymentsDriverName) {
     : { stripeAccountId: null, payoutsStatus: "not_started" as const };
 }
 
-/** Maya's Demo account as the mock adapter reports it: read before the transaction, which then only writes. */
+/**
+ * Maya's Demo account as the mock adapter reports it, and V1's files: read before the transaction, which then only
+ * writes.
+ */
 type DemoSource = {
   externalAccountId: string;
   profile: SocialProfile;
   tokens: TokenSet;
   posts: SocialPost[];
   payments: PaymentsDriverName;
+  files: { original: Uint8Array; poster: Uint8Array };
 };
 
 async function readDemoSource(now: Date): Promise<DemoSource> {
@@ -139,12 +186,19 @@ async function readDemoSource(now: Date): Promise<DemoSource> {
     posts.push(...page.posts.filter(isKeptVideo));
     cursor = page.nextCursor;
   } while (cursor !== null);
+  // From the repo root, as `bun run db:seed` runs.
+  const [original, poster] = await Promise.all(
+    [FIXTURES.original, FIXTURES.poster].map((file) =>
+      readFile(path.join(process.cwd(), file)),
+    ),
+  );
   return {
     externalAccountId: mockAccountIdFor(MAYA.userId),
     profile: await mockProvider.getProfile(tokens.accessToken),
     tokens,
     posts,
     payments: env.PAYMENTS_DRIVER,
+    files: { original, poster },
   };
 }
 
@@ -289,7 +343,7 @@ async function seedMaya(
   tx: Tx,
   source: DemoSource,
   now: Date,
-): Promise<DemoResult> {
+): Promise<MayaResult> {
   const accountExists = await checkDemoKeys(tx, source.externalAccountId);
   const { profileColumns } = await import("../src/server/social/link");
   const { sealTokenColumns } = await import("../src/server/social/tokens");
@@ -371,15 +425,294 @@ async function seedMaya(
   return { ...added, accountCreated: true, postsAdded: posts.added };
 }
 
+/**
+ * V1's original status and stored keys, or null when V1 isn't there (`lock`: FOR UPDATE, in the transaction). Refuses a
+ * row that holds V1's id or @maya's slug but isn't V1: a clear refusal, never a raw unique violation (P04).
+ */
+async function readDemoVideo(exec: Reader, { lock = false } = {}) {
+  const query = exec
+    .select({
+      id: video.id,
+      creatorId: video.creatorId,
+      slug: video.slug,
+      originalStatus: video.originalStatus,
+      originalObjectKey: video.originalObjectKey,
+      posterObjectKey: video.posterObjectKey,
+    })
+    .from(video)
+    .where(
+      or(
+        eq(video.id, V1.id),
+        and(eq(video.creatorId, MAYA.creatorId), eq(video.slug, V1.slug)),
+      ),
+    );
+  const rows = await (lock ? query.for("update") : query);
+  if (
+    rows.some(
+      (r) =>
+        r.id !== V1.id || r.creatorId !== MAYA.creatorId || r.slug !== V1.slug,
+    )
+  ) {
+    throw new Error(
+      `--demo: video ${V1.id} or @${MAYA.handle}'s ${V1.slug} is another video: ${START_OVER}.`,
+    );
+  }
+  return rows[0] ?? null;
+}
+
+/** Refuses when post 01 is verified on another video, Maya's (a draft made from the Library) or another creator's. */
+async function refuseHeldPost(exec: Reader) {
+  const { assertPostingAvailable } = await import(
+    "../src/server/postings/ownership"
+  );
+  const { AlreadyLicensableElsewhereError, AlreadyOnYourVideoError } =
+    await import("../src/server/postings/errors");
+  try {
+    await assertPostingAvailable(exec, {
+      creatorId: MAYA.creatorId,
+      videoId: V1.id,
+      platform: "mock",
+      linkKey: V1.post,
+    });
+  } catch (error) {
+    if (
+      error instanceof AlreadyOnYourVideoError ||
+      error instanceof AlreadyLicensableElsewhereError
+    ) {
+      throw new Error(
+        `--demo: ${V1.post} is already licensable on another video: ${START_OVER}.`,
+      );
+    }
+    throw error;
+  }
+}
+
+/** What storeDemoObjects found and did: V1's keys as read before it stored anything, and the keys it stored. */
+type DemoObjects = {
+  /** null when V1 wasn't there. */
+  read: { original: string | null; poster: string | null } | null;
+  /** A file stored by this run, null when the stored one is kept. */
+  original: string | null;
+  poster: string | null;
+};
+
+/**
+ * V1's original and poster in `store` (07 D53): both for a new V1; for an existing one, a file whose object is gone is
+ * stored again, the original only while it is `ready` (an upload in progress or failed is the creator's own). Always
+ * under fresh keys (originalKey, posterKey), never over an existing one. Runs before the transaction (no storage call
+ * inside one, 07 D12), after the refusals that need no transaction; every key it stores is pushed to `stored`, so a
+ * later failure can delete them.
+ */
+async function storeDemoObjects(
+  exec: Reader,
+  store: ObjectStorage,
+  files: DemoSource["files"],
+  stored: string[],
+): Promise<DemoObjects> {
+  const row = await readDemoVideo(exec);
+  if (!row) await refuseHeldPost(exec);
+  const gone = async (key: string | null) =>
+    key === null || (await store.head(key)) === null;
+  const put = async (key: string, body: Uint8Array, contentType: string) => {
+    await store.putSmall(key, body, contentType);
+    stored.push(key);
+    return key;
+  };
+  const [originalGone, posterGone] = await Promise.all([
+    row ? row.originalStatus === "ready" && gone(row.originalObjectKey) : true,
+    row ? gone(row.posterObjectKey) : true,
+  ]);
+  const [original, poster] = await Promise.all([
+    originalGone
+      ? put(
+          originalKey(MAYA.creatorId, V1.id, "mp4"),
+          files.original,
+          ORIGINAL_MIME[0],
+        )
+      : null,
+    posterGone ? put(posterKey(V1.id), files.poster, POSTER_MIME) : null,
+  ]);
+  return {
+    read: row && {
+      original: row.originalObjectKey,
+      poster: row.posterObjectKey,
+    },
+    original,
+    poster,
+  };
+}
+
+/** The fixture original's columns (03 §8.1) at `key`. */
+const fixtureOriginal = (key: string, bytes: number) =>
+  ({
+    originalStatus: "ready",
+    originalObjectKey: key,
+    originalBytes: bytes,
+    originalMime: ORIGINAL_MIME[0],
+    originalFilename: V1.fileName,
+    durationMs: V1.durationMs,
+    width: V1.width,
+    height: V1.height,
+  }) as const;
+
+/**
+ * V1 (03 §8.1): inserted published, its steps done two days ago, under both payments drivers (publishing needs no
+ * payouts, 07 D74); an existing V1 only takes the files stored again (an original with the fixture's own columns). V1
+ * is read again under its row lock: changed since storeDemoObjects read it, the run refuses (and its files go). Its
+ * source posting …0201 is inserted when missing (by video and position), verified as createVideoFromPost writes it,
+ * then auditNewlyVerified and refreshVideoOwnership set `verified_owner` (07 D66). Nothing changes on a second run.
+ */
+async function seedDemoVideo(
+  tx: Tx,
+  objects: DemoObjects,
+  source: DemoSource,
+  now: Date,
+): Promise<boolean> {
+  const twoDaysAgo = new Date(now.getTime() - 2 * DAY_MS);
+  const row = await readDemoVideo(tx, { lock: true });
+  const { read } = objects;
+  const same =
+    row && read
+      ? row.originalObjectKey === read.original &&
+        row.posterObjectKey === read.poster
+      : !row && !read;
+  if (!same) {
+    throw new Error(
+      `--demo: ${V1.title} changed while the seed ran: run it again.`,
+    );
+  }
+  const bytes = source.files.original.byteLength;
+  if (row) {
+    if (objects.original || objects.poster) {
+      await tx
+        .update(video)
+        .set({
+          ...(objects.original
+            ? {
+                ...fixtureOriginal(objects.original, bytes),
+                originalUpdatedAt: now,
+              }
+            : {}),
+          ...(objects.poster ? { posterObjectKey: objects.poster } : {}),
+        })
+        .where(eq(video.id, V1.id));
+    }
+  } else {
+    if (!objects.original || !objects.poster) {
+      throw new Error("--demo: V1's files weren't stored.");
+    }
+    await refuseHeldPost(tx);
+    await tx.insert(video).values({
+      id: V1.id,
+      creatorId: MAYA.creatorId,
+      slug: V1.slug,
+      title: V1.title,
+      source: "library",
+      // refreshVideoOwnership below sets it from the posting (07 D66).
+      ownership: "self_attested",
+      status: "published",
+      publishedAt: twoDaysAgo,
+      ...fixtureOriginal(objects.original, bytes),
+      originalUpdatedAt: twoDaysAgo,
+      posterObjectKey: objects.poster,
+      posterOrigin: "frame_capture",
+      postingsConfirmedAt: twoDaysAgo,
+      sameVideoConfirmedAt: twoDaysAgo,
+      containsMusic: false,
+      identifiablePeople: false,
+      rightsAttestedAt: twoDaysAgo,
+      attestationVersion: "v1",
+      createdAt: twoDaysAgo,
+    });
+  }
+  const [posting] = await tx
+    .select({ id: videoPosting.id })
+    .from(videoPosting)
+    .where(and(eq(videoPosting.videoId, V1.id), eq(videoPosting.position, 0)));
+  if (!posting) await seedSourcePosting(tx, twoDaysAgo);
+  return !row;
+}
+
+/** V1's source posting …0201 on post 01 (03 §8.1); refuses unless the post is listed and the account connected. */
+async function seedSourcePosting(tx: Tx, verifiedAt: Date) {
+  const { auditNewlyVerified, refreshVideoOwnership } = await import(
+    "../src/server/postings/ownership"
+  );
+  const [post] = await tx
+    .select({
+      id: socialPost.id,
+      status: socialPost.status,
+      permalink: socialPost.permalink,
+      linkKey: socialPost.linkKey,
+    })
+    .from(socialPost)
+    .where(
+      and(
+        eq(socialPost.socialAccountId, MAYA.accountId),
+        eq(socialPost.providerPostId, V1.post),
+      ),
+    );
+  const [account] = await tx
+    .select({
+      status: socialAccount.status,
+      username: socialAccount.username,
+      displayName: socialAccount.displayName,
+      connectedAt: socialAccount.connectedAt,
+    })
+    .from(socialAccount)
+    .where(eq(socialAccount.id, MAYA.accountId));
+  const verifiedUsername = account ? verifiedAs(account) : null;
+  if (post?.status !== "available" || !account || !verifiedUsername) {
+    throw new Error(
+      `--demo: ${V1.post} isn't listed on Maya's connected Demo account: ${START_OVER}.`,
+    );
+  }
+  await tx
+    .insert(videoPosting)
+    .values({
+      id: V1.postingId,
+      videoId: V1.id,
+      creatorId: MAYA.creatorId,
+      platform: "mock",
+      url: post.permalink,
+      linkKey: post.linkKey,
+      verification: "verified",
+      unverifiedReason: null,
+      isSource: true,
+      position: 0,
+      socialAccountId: MAYA.accountId,
+      socialPostId: post.id,
+      verifiedUsername,
+      verifiedAccountLinkedAt: account.connectedAt,
+      verifiedAt,
+      checkedAt: verifiedAt,
+      showLink: true,
+      createdAt: verifiedAt,
+    })
+    .onConflictDoNothing({
+      target: [videoPosting.videoId, videoPosting.position],
+    });
+  await auditNewlyVerified(
+    tx,
+    { kind: "system", source: "seed" },
+    V1.id,
+    new Set(),
+  );
+  await refreshVideoOwnership(tx, V1.id);
+}
+
 const demoChanged = (d: DemoResult) =>
   d.userCreated ||
   d.profileCreated ||
   d.rateOptionsAdded > 0 ||
-  d.accountCreated;
+  d.accountCreated ||
+  d.videoCreated ||
+  d.objectsUploaded > 0;
 
 /**
- * The admin roles, plus @maya with `demo`, in one transaction. One `seed.applied` audit row (counts only) when something
- * changed, so a second run writes nothing. Throws on a refusal, writing nothing; never ends the pool (main does).
+ * The admin roles, plus @maya and V1 with `demo`, in one transaction, after V1's files are stored (storeDemoObjects).
+ * One `seed.applied` audit row (counts only) when something changed, so a second run writes nothing. Throws on a
+ * refusal, writing nothing and deleting the files this run stored; never ends the pool (main does).
  */
 export async function runSeed(options: SeedOptions): Promise<SeedResult> {
   const refusal = seedRefusal(options.appEnv);
@@ -388,39 +721,69 @@ export async function runSeed(options: SeedOptions): Promise<SeedResult> {
   const { writeAudit } = await import("../src/server/audit");
   const now = new Date();
   const source = options.demo ? await readDemoSource(now) : null;
-  return db.transaction(async (tx) => {
-    const admins = await seedAdmins(tx);
-    const demo = source ? await seedMaya(tx, source, now) : undefined;
-    const result: SeedResult = {
-      promoted: admins.promoted.length,
-      created: admins.created,
-      ...(demo ? { demo } : {}),
-    };
-    const changedId = admins.created
-      ? SEED_ADMIN_ID
-      : (admins.promoted[0] ??
-        (demo && demoChanged(demo) ? MAYA.userId : undefined));
-    if (changedId) {
-      await writeAudit(
-        tx,
-        { kind: "system", source: "seed" },
-        {
-          action: "seed.applied",
-          entityType: "user",
-          entityId: changedId,
-          data: result,
-        },
-      );
-    }
-    return result;
-  });
+  const store = source
+    ? (options.storage ??
+      (await import("../src/server/storage/index")).storage())
+    : null;
+  // V1's files stored by this run: deleted again when the run fails.
+  const stored: string[] = [];
+  try {
+    const objects =
+      source && store
+        ? await storeDemoObjects(db, store, source.files, stored)
+        : null;
+    return await db.transaction(async (tx) => {
+      const admins = await seedAdmins(tx);
+      const demo =
+        source && objects
+          ? {
+              ...(await seedMaya(tx, source, now)),
+              videoCreated: await seedDemoVideo(tx, objects, source, now),
+              objectsUploaded: stored.length,
+            }
+          : undefined;
+      const result: SeedResult = {
+        promoted: admins.promoted.length,
+        created: admins.created,
+        ...(demo ? { demo } : {}),
+      };
+      const changedId = admins.created
+        ? SEED_ADMIN_ID
+        : (admins.promoted[0] ??
+          (demo && demoChanged(demo) ? MAYA.userId : undefined));
+      if (changedId) {
+        await writeAudit(
+          tx,
+          { kind: "system", source: "seed" },
+          {
+            action: "seed.applied",
+            entityType: "user",
+            entityId: changedId,
+            data: result,
+          },
+        );
+      }
+      return result;
+    });
+  } catch (error) {
+    await Promise.all(
+      stored.map((key) => store?.delete(key).catch(() => undefined)),
+    );
+    throw error;
+  }
 }
 
 function demoSummary(d: DemoResult): string {
   if (!demoChanged(d)) return "@maya already seeded";
-  return d.accountCreated
-    ? `seeded @maya (${d.postsAdded} posts)`
-    : "seeded @maya (kept its Demo account)";
+  const parts = [
+    d.accountCreated ? `${d.postsAdded} posts` : "kept its Demo account",
+    d.videoCreated
+      ? `published ${V1.title}`
+      : d.objectsUploaded > 0
+        ? `stored ${V1.title}'s files again`
+        : "",
+  ].filter(Boolean);
+  return `seeded @maya (${parts.join(", ")})`;
 }
 
 function summary({ promoted, created, demo }: SeedResult): string {

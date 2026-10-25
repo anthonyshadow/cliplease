@@ -6,6 +6,7 @@ import {
   type BlockerRow,
   REVIEW_COPY,
 } from "@/lib/videos/review";
+import { FocusBlockersOnArrival } from "./focus-blockers-on-arrival";
 
 const ROW =
   "flex min-h-11 w-full items-center justify-between gap-3 py-2 text-callout text-ink";
@@ -17,7 +18,8 @@ const hrefOf = (row: BlockerRow) =>
 
 /**
  * "Before you can publish" (05 §6.5 callout 51): one navigational row per blocker, each going where it is fixed. A page
- * goes through the router; an anchor on this page and a connect (07 D37's start route) are plain links.
+ * goes through the router; an anchor on this page and a connect (07 D37's start route) are plain links. Opened at
+ * `#publish-blockers`, its heading takes the focus.
  */
 export function ReviewBlockers({ rows }: { rows: readonly BlockerRow[] }) {
   if (rows.length === 0) return null;
@@ -34,6 +36,7 @@ export function ReviewBlockers({ rows }: { rows: readonly BlockerRow[] }) {
       >
         {REVIEW_COPY.blockersTitle}
       </h2>
+      <FocusBlockersOnArrival />
       <ul className="flex flex-col divide-y divide-hairline">
         {rows.map((row) => {
           const content = (

@@ -9,6 +9,7 @@ import {
 const CHECKED_AT = new Date("2026-10-21T12:00:00.000Z");
 const FETCHED_AT = new Date("2026-10-20T08:30:00.000Z");
 const LINKED_AT = new Date("2026-10-01T09:00:00.000Z");
+const REMOVED_AT = new Date("2026-10-14T12:00:00.000Z");
 
 const VERIFIED_ROW: OwnerPostingRow = {
   id: "posting-1",
@@ -30,10 +31,11 @@ const VERIFIED_ROW: OwnerPostingRow = {
   thumbnailFetchedAt: FETCHED_AT,
   durationSec: 14,
   visibility: "unlisted",
+  removedAt: REMOVED_AT,
 };
 
 describe("toOwnerPosting", () => {
-  it("gives a verified posting its label, handle, thumbnail (with P11's ?v=), duration and visibility", () => {
+  it("gives a verified posting its label, handle, thumbnail (with P11's ?v=), duration, visibility and removal", () => {
     expect(toOwnerPosting(VERIFIED_ROW)).toEqual({
       id: "posting-1",
       platform: "mock",
@@ -48,13 +50,14 @@ describe("toOwnerPosting", () => {
       thumbnailSrc: `/api/library/thumbnails/post-1?v=${encodeURIComponent(FETCHED_AT.toISOString())}`,
       durationSec: 14,
       visibility: "unlisted",
+      removedAt: REMOVED_AT.toISOString(),
       showLink: true,
       checkedAt: CHECKED_AT.toISOString(),
       position: 0,
     });
   });
 
-  it("gives a released posting no handle, thumbnail, duration or visibility, though it keeps its post", () => {
+  it("gives a released posting no handle, thumbnail, duration, visibility or removal, though it keeps its post", () => {
     expect(
       toOwnerPosting({
         ...VERIFIED_ROW,
@@ -70,6 +73,7 @@ describe("toOwnerPosting", () => {
       thumbnailSrc: null,
       durationSec: null,
       visibility: null,
+      removedAt: null,
     });
   });
 

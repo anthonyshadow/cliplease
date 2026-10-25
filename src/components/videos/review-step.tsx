@@ -1,16 +1,12 @@
-import Link from "next/link";
 import { VerifiedOwnerBadge } from "@/components/license/verified-owner-badge";
 import { PricePreview } from "@/components/pricing/price-preview";
 import { Banner } from "@/components/ui/banner";
-import { Button } from "@/components/ui/button";
 import type { PayoutsStatus } from "@/lib/domain/values";
 import { COVER_COPY } from "@/lib/upload/messages";
 import { ownerBadge } from "@/lib/videos/ownership";
 import {
   COVER_IMAGE_ID,
   disabledLine,
-  editRowLabel,
-  postingSummaryLine,
   publishBlockerRows,
   REVIEW_COPY,
 } from "@/lib/videos/review";
@@ -26,6 +22,7 @@ import { ReviewBlockers } from "./review-blockers";
 import { ReviewDetails } from "./review-details";
 import { ReviewPayoutsNotice } from "./review-payouts-notice";
 import { VideoStepFrame } from "./video-step-frame";
+import { EditLink, PostingSummary } from "./where-posted-summary";
 
 /**
  * Step 4 · Review, `/dashboard/videos/<id>?step=review` (01 J5.16, J5.17; 05 §6.5 callouts 42–52; 07 D69, D74, D146,
@@ -60,11 +57,7 @@ export async function ReviewStep({
     publish.reconnectPlatforms,
   );
   return (
-    <VideoStepFrame
-      video={video}
-      step="review"
-      backHref={videoStepHref(video.id, "rights")}
-    >
+    <VideoStepFrame video={video} step="review">
       {publish.disabledReason ? (
         <Banner tone="error">{disabledLine(publish.disabledReason)}</Banner>
       ) : null}
@@ -89,35 +82,18 @@ export async function ReviewStep({
                 posterSrc={video.posterSrc}
                 width={video.width}
                 height={video.height}
-                inRow
+                inRow="edit"
               />
             ),
           },
           {
             label: REVIEW_COPY.wherePosted,
-            value:
-              postings.length > 0 ? (
-                <ul className="flex flex-col gap-1">
-                  {postings.map((posting) => (
-                    <li key={posting.id} className="wrap-anywhere">
-                      {postingSummaryLine(posting)}
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                REVIEW_COPY.notPosted
-              ),
+            value: <PostingSummary postings={postings} />,
             action: (
-              <Button
-                asChild
-                variant="tertiary"
-                size="sm"
-                aria-label={editRowLabel(REVIEW_COPY.wherePosted)}
-              >
-                <Link href={videoStepHref(video.id, "postings")}>
-                  {REVIEW_COPY.edit}
-                </Link>
-              </Button>
+              <EditLink
+                href={videoStepHref(video.id, "postings")}
+                row={REVIEW_COPY.wherePosted}
+              />
             ),
           },
           {

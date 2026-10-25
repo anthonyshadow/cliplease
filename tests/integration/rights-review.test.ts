@@ -12,7 +12,7 @@ import { creatorProfile, video, videoPosting } from "../../src/db/schema";
 import { GENERIC_ERROR_MESSAGE } from "../../src/lib/result";
 import { SLUG_COPY } from "../../src/lib/validation/video";
 import { RIGHTS_COPY, RIGHTS_LOCK_COPY } from "../../src/lib/videos/rights";
-import { videoStepHref } from "../../src/lib/videos/steps";
+import { videoHref, videoStepHref } from "../../src/lib/videos/steps";
 import { TITLE_COPY } from "../../src/lib/videos/title";
 import type { Actor } from "../../src/server/auth/actor";
 import { env } from "../../src/server/env";
@@ -418,6 +418,21 @@ describe("the Rights and Review Server Actions (02 §6.1)", () => {
     expect(await attestRightsAction(null, answers)).toEqual({
       ok: false,
       error: { code: "rights_locked", message: RIGHTS_LOCK_COPY.request },
+    });
+  });
+
+  it("attestRights on a video past its draft (the video page's Rights Edit): back to its page", async () => {
+    const owner = await signedInCreator();
+    const live = await readyUpload(owner.creatorId, {
+      status: "published",
+      publishedAt: new Date(),
+    });
+    await expect(
+      attestRightsAction(null, rightsForm(live.id, { containsMusic: "yes" })),
+    ).rejects.toMatchObject(redirectTo(videoHref(live.id)));
+    expect(await videoRow(live.id)).toMatchObject({
+      status: "published",
+      containsMusic: true,
     });
   });
 

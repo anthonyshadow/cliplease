@@ -24,7 +24,7 @@ import { VideoNotFoundError } from "../videos/errors";
 
 /**
  * The owner's read of postings matching `where` (over video_posting and its video), in position order: each with its
- * account's status and its post's image, length and visibility. listVideoPostings and getOwnerPosting share it.
+ * account's status and its post's image, length, visibility and removal. listVideoPostings and getOwnerPosting share it.
  */
 async function ownerPostingRows(where: SQL | undefined) {
   return db
@@ -48,6 +48,7 @@ async function ownerPostingRows(where: SQL | undefined) {
       thumbnailFetchedAt: socialPost.thumbnailFetchedAt,
       durationSec: socialPost.durationSec,
       visibility: socialPost.visibility,
+      removedAt: socialPost.removedAt,
     })
     .from(videoPosting)
     .innerJoin(video, eq(video.id, videoPosting.videoId))
@@ -149,6 +150,7 @@ export function toOwnerPosting(row: OwnerPostingRow): OwnerPostingDTO {
         : null,
     durationSec: verified ? row.durationSec : null,
     visibility: verified ? row.visibility : null,
+    removedAt: verified ? (row.removedAt?.toISOString() ?? null) : null,
     showLink: row.showLink,
     checkedAt: row.checkedAt?.toISOString() ?? null,
     position: row.position,

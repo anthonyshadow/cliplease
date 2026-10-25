@@ -3,9 +3,10 @@ import Link from "next/link";
 import { VIDEO_GRID, WIDE_COLUMN } from "@/components/layout/gutter";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
-import { CreatorVideoCard } from "@/components/videos/video-card";
+import { CreatorVideoCard } from "@/components/videos/creator-video-card";
 import { LIBRARY_PATH } from "@/lib/library/filter";
 import { NEW_VIDEO_PATH } from "@/lib/videos/steps";
+import { VIDEOS_TITLE_ID } from "@/lib/videos/video-page";
 import { requireCreator, toActor } from "@/server/auth/session";
 import { listCreatorVideos } from "@/server/videos/queries";
 
@@ -20,7 +21,8 @@ const uploadLink = (
 /**
  * S20 `/dashboard/videos` (05 §6.8; 04 §9.27; 07 D145, D146): the two-tone title with "Upload a file", then every video
  * as a card, drafts first, in the full app width (2 / 3 / 4 / 5 columns). With none, the empty state stands for the
- * page: "Videos. Nothing to license yet." with "Open Library" and "Upload a file" (04 §11.9).
+ * page: "Videos. Nothing to license yet." with "Open Library" and "Upload a file" (04 §11.9). Either title takes the focus
+ * when a deleted draft's card leaves (VIDEOS_TITLE_ID).
  */
 export default async function VideosPage() {
   const ctx = await requireCreator("/dashboard/videos");
@@ -30,6 +32,7 @@ export default async function VideosPage() {
       <div className={WIDE_COLUMN}>
         <EmptyState
           as="h1"
+          headingId={VIDEOS_TITLE_ID}
           title={
             <>
               Videos.{" "}
@@ -52,7 +55,11 @@ export default async function VideosPage() {
   return (
     <div className={WIDE_COLUMN}>
       <div className="flex flex-col gap-1">
-        <h1 className="text-title-1 text-ink">
+        <h1
+          id={VIDEOS_TITLE_ID}
+          tabIndex={-1}
+          className="text-title-1 text-ink outline-none"
+        >
           Videos. <span className="text-ink-2">Ready to license.</span>
         </h1>
         <div className="self-end">{uploadLink}</div>

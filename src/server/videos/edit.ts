@@ -2,6 +2,7 @@ import "server-only";
 import { and, eq } from "drizzle-orm";
 import { db } from "../../db/client";
 import { video } from "../../db/schema";
+import type { VideoStatus } from "../../lib/domain/values";
 import { POSTINGS_EDITABLE } from "../../lib/postings/form";
 import { isUuid } from "../../lib/validation/uuid";
 import { videoDetailsSchema } from "../../lib/validation/video";
@@ -127,7 +128,8 @@ async function lockEditableVideo(
  * is Yes, else none (P19d lets the creator turn either back on). Re-attesting overwrites all of it. Under the video row
  * lock, so it serializes with approve's lockVideoForLicensing (07 D110). Refusals, in this order: VideoNotFoundError,
  * VideoDisabledError, RightsLockedError('license') once a license exists, RightsLockedError('request') while a request is
- * checkout_pending or awaiting_approval (owner answer Q-96 a).
+ * checkout_pending or awaiting_approval (owner answer Q-96 a). Returns the video's status: a draft goes on to Review, a
+ * video past its draft back to its page (P14b).
  */
 export async function attestRights(
   a: Actor,
@@ -137,11 +139,11 @@ export async function attestRights(
     containsMusic: boolean;
     identifiablePeople: boolean;
   },
-): Promise<void> {
+): Promise<VideoStatus> {
   const { creatorId } = requireCreatorActor(a);
   if (!isUuid(i.videoId)) throw new VideoNotFoundError();
-  await db.transaction(async (tx) => {
-    await lockEditableVideo(tx, creatorId, i.videoId);
+  return db.transaction(async (tx) => {
+    const { status } = await lockEditableVideo(tx, creatorId, i.videoId);
     const [flags] = await tx
       .select(lockFlags(tx))
       .from(video)
@@ -158,6 +160,7 @@ export async function attestRights(
         disabledUses: i.containsMusic ? [...MUSIC_DISABLED_USES] : [],
       })
       .where(eq(video.id, i.videoId));
+    return status;
   });
 }
 

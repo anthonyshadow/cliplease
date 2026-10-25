@@ -15,10 +15,13 @@ import {
  * `footnote` `ink-2`, then "What does this mean?" opening the explainer Sheet (a bottom sheet below md, a dialog from
  * md, 07 D149). sm (cards, rows): a 16 px `ShieldCheck` and one `footnote` line, no link. Self-attested is weaker on
  * purpose: `UserRound` and `ink-2` throughout, its link at lg only too (05 §6.8 draws the sm cards without one). The icon
- * never stands alone, and the badge never sits over a thumbnail or poster.
+ * never stands alone, and the badge never sits over a thumbnail or poster. `showUnlinked`: badgeText's.
  */
-export function VerifiedOwnerBadge(props: BadgeInput) {
-  const { line1, line2, line3 } = badgeText(props);
+export function VerifiedOwnerBadge({
+  showUnlinked,
+  ...props
+}: BadgeInput & { showUnlinked?: boolean }) {
+  const { line1, line2, line3 } = badgeText(props, { showUnlinked });
   const lg = props.size === "lg";
   const verified = props.ownership === "verified_owner";
   const Icon = verified ? ShieldCheck : UserRound;

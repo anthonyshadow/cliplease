@@ -1,6 +1,9 @@
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { asc, count, eq, inArray } from "drizzle-orm";
 import type { PgTable } from "drizzle-orm/pg-core";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { runSeed } from "../../../scripts/seed";
 import { db } from "../../../src/db/client";
 import {
@@ -11,31 +14,85 @@ import {
   socialAccount,
   socialPost,
   user,
+  video,
+  videoPosting,
 } from "../../../src/db/schema";
 import { defaultRateOptions } from "../../../src/lib/pricing/presets";
 import { DAY_MS, HOUR_MS } from "../../../src/lib/time";
-import { decryptSecret } from "../../../src/server/crypto/token-cipher";
+import {
+  decryptSecret,
+  deriveSubkey,
+} from "../../../src/server/crypto/token-cipher";
+import { env } from "../../../src/server/env";
 import {
   accessTokenAad,
   refreshTokenAad,
 } from "../../../src/server/social/tokens";
+import {
+  createLocalStorage,
+  type LocalStorage,
+} from "../../../src/server/storage/local";
 import { resetDb } from "../../helpers/db";
 import {
   insertCreator,
   insertSocialAccount,
+  insertUploadVideo,
   insertUser,
 } from "../../helpers/factories";
+import { libraryDraft } from "../../helpers/library-videos";
+import {
+  expectOwnershipInvariant,
+  insertVerifiedElsewhere,
+} from "../../helpers/postings";
+import {
+  fixture,
+  listFiles,
+  originalKeyOf,
+  posterKeyOf,
+} from "../../helpers/uploads";
 
 // `bun run db:seed [--demo]` (03 §8.1, 07 D53, D88) with .env.test's ADMIN_EMAILS (e2e-admin@example.com,
-// e2e-admin-2@example.com), PAYMENTS_DRIVER=fake, the mock provider and its default scenario.
+// e2e-admin-2@example.com), PAYMENTS_DRIVER=fake, the mock provider and its default scenario. --demo stores V1's files
+// in a folder of this file's own: V1's ids are fixed, so the shared .data/storage would mix them with the dev seed's.
 beforeEach(resetDb);
 
+let root: string;
+let store: LocalStorage;
+beforeAll(async () => {
+  root = await mkdtemp(path.join(tmpdir(), "cliplease-seed-"));
+  store = createLocalStorage({
+    root,
+    appUrl: env.APP_URL,
+    subkey: deriveSubkey("local-storage-url"),
+  });
+});
+// Each test starts with no stored file.
+beforeEach(async () => {
+  await rm(root, { recursive: true, force: true });
+  await mkdir(root);
+});
+afterAll(() => rm(root, { recursive: true, force: true }));
+
 const seed = () => runSeed({ appEnv: "test", demo: false });
-const demoSeed = () => runSeed({ appEnv: "test", demo: true });
+const demoSeed = () => runSeed({ appEnv: "test", demo: true, storage: store });
 
 const MAYA_CREATOR = "00000000-0000-4000-8000-000000000001";
 const MAYA_ACCOUNT = "00000000-0000-4000-8000-000000000011";
 const MAYA_ACCT = "mock_acct_c4180ab2";
+const V1 = "00000000-0000-4000-8000-000000000101";
+const V1_POSTING = "00000000-0000-4000-8000-000000000201";
+const POST_01 = "mock_post_c4180ab2_01";
+
+/** Every file the seed stored in this test. */
+const files = () => listFiles(root);
+
+const fixtureSize = async (name: string) => (await fixture(name)).byteLength;
+
+/** A database --demo seeded once, then V1 deleted (its posting goes too): as P09's seed left dev. */
+async function seededWithoutV1() {
+  await demoSeed();
+  await db.delete(video).where(eq(video.id, V1));
+}
 
 async function rowCount(table: PgTable): Promise<number> {
   const [row] = await db.select({ value: count() }).from(table);
@@ -48,7 +105,10 @@ async function counts() {
     creators: await rowCount(creatorProfile),
     accounts: await rowCount(socialAccount),
     posts: await rowCount(socialPost),
+    videos: await rowCount(video),
+    postings: await rowCount(videoPosting),
     audits: await rowCount(auditEvent),
+    files: await files(),
   };
 }
 
@@ -67,6 +127,8 @@ async function demoRows() {
       .select()
       .from(socialPost)
       .orderBy(asc(socialPost.providerPostId)),
+    videos: await db.select().from(video),
+    postings: await db.select().from(videoPosting),
   };
 }
 
@@ -151,7 +213,7 @@ describe("db:seed", () => {
 });
 
 describe("db:seed --demo", () => {
-  it("seeds @maya with a synced Demo account, and a second run changes nothing", async () => {
+  it("seeds @maya with a synced Demo account and her published First snow, and a second run changes nothing", async () => {
     expect(await demoSeed()).toEqual({
       promoted: 0,
       created: true,
@@ -161,6 +223,8 @@ describe("db:seed --demo", () => {
         rateOptionsAdded: 10,
         accountCreated: true,
         postsAdded: 24,
+        videoCreated: true,
+        objectsUploaded: 2,
       },
     });
     const rows = await demoRows();
@@ -270,6 +334,70 @@ describe("db:seed --demo", () => {
       height: 1280,
     });
 
+    // V1 "First snow" (03 §8.1): published two days ago whatever the payments driver, from the fixtures.
+    const twoDaysAgo = new Date(t - 2 * DAY_MS);
+    expect(rows.videos).toEqual([
+      expect.objectContaining({
+        id: V1,
+        creatorId: MAYA_CREATOR,
+        slug: "first-snow",
+        title: "First snow",
+        source: "library",
+        ownership: "verified_owner",
+        status: "published",
+        publishedAt: twoDaysAgo,
+        originalStatus: "ready",
+        originalMime: "video/mp4",
+        originalFilename: "first-snow.mp4",
+        originalBytes: await fixtureSize("sample.mp4"),
+        durationMs: 14_000,
+        width: 720,
+        height: 1280,
+        posterOrigin: "frame_capture",
+        postingsConfirmedAt: twoDaysAgo,
+        sameVideoConfirmedAt: twoDaysAgo,
+        containsMusic: false,
+        identifiablePeople: false,
+        rightsAttestedAt: twoDaysAgo,
+        attestationVersion: "v1",
+        disabledUses: [],
+        basePriceOverrideCents: null,
+        originalUploadId: null,
+      }),
+    ]);
+    const [v1] = rows.videos;
+    expect(v1.originalObjectKey).toMatch(originalKeyOf(MAYA_CREATOR, V1));
+    expect(v1.posterObjectKey).toMatch(posterKeyOf(V1));
+    expect((await store.head(v1.originalObjectKey as string))?.size).toBe(
+      await fixtureSize("sample.mp4"),
+    );
+    expect((await store.head(v1.posterObjectKey as string))?.size).toBe(
+      await fixtureSize("poster.jpg"),
+    );
+    expect(rows.postings).toEqual([
+      expect.objectContaining({
+        id: V1_POSTING,
+        videoId: V1,
+        creatorId: MAYA_CREATOR,
+        platform: "mock",
+        url: `https://example.com/mock/${POST_01}`,
+        linkKey: POST_01,
+        verification: "verified",
+        unverifiedReason: null,
+        isSource: true,
+        position: 0,
+        socialAccountId: MAYA_ACCOUNT,
+        socialPostId: rows.posts[0].id,
+        verifiedUsername: "@demo.creator",
+        verifiedAccountLinkedAt: account.connectedAt,
+        verifiedAt: twoDaysAgo,
+        showLink: true,
+      }),
+    ]);
+    await expectOwnershipInvariant();
+    const stored = await files();
+    expect(stored).toHaveLength(2);
+
     const audits = await db.select().from(auditEvent);
     expect(audits).toHaveLength(1);
     expect(audits[0]).toMatchObject({
@@ -289,10 +417,114 @@ describe("db:seed --demo", () => {
         rateOptionsAdded: 0,
         accountCreated: false,
         postsAdded: 0,
+        videoCreated: false,
+        objectsUploaded: 0,
       },
     });
     expect(await demoRows()).toEqual(rows);
     expect(await db.select().from(auditEvent)).toEqual(audits);
+    expect(await files()).toEqual(stored);
+  });
+
+  it("stores a missing file again under a new key, and keeps the one still there", async () => {
+    await demoSeed();
+    const [before] = await db.select().from(video);
+    await store.delete(before.posterObjectKey as string);
+    expect((await demoSeed()).demo).toMatchObject({
+      videoCreated: false,
+      objectsUploaded: 1,
+    });
+    const [after] = await db.select().from(video);
+    expect(after.originalObjectKey).toBe(before.originalObjectKey);
+    expect(after.posterObjectKey).not.toBe(before.posterObjectKey);
+    expect(await store.head(after.posterObjectKey as string)).not.toBeNull();
+  });
+
+  // A Replace in progress (its key has no object yet) and one that failed (no key): the creator's own, never repaired.
+  it.each([
+    {
+      status: "uploading",
+      columns: { originalStatus: "uploading" },
+      dropObject: true,
+    },
+    {
+      status: "failed",
+      columns: {
+        originalStatus: "failed",
+        originalObjectKey: null,
+        originalBytes: null,
+        originalMime: null,
+      },
+      dropObject: false,
+    },
+  ] as const)(
+    "leaves an original that is $status to the creator, storing no fixture over it",
+    async ({ columns, dropObject }) => {
+      await demoSeed();
+      const [seeded] = await db.select().from(video);
+      await db
+        .update(video)
+        .set({ ...columns, status: "unpublished" })
+        .where(eq(video.id, V1));
+      if (dropObject) await store.delete(seeded.originalObjectKey as string);
+      const [before] = await db.select().from(video);
+      expect((await demoSeed()).demo).toMatchObject({ objectsUploaded: 0 });
+      expect(await db.select().from(video)).toEqual([before]);
+    },
+  );
+
+  it("adds First snow to a database seeded before it (the account already there)", async () => {
+    await seededWithoutV1();
+    expect((await demoSeed()).demo).toEqual({
+      userCreated: false,
+      profileCreated: false,
+      rateOptionsAdded: 0,
+      accountCreated: false,
+      postsAdded: 0,
+      videoCreated: true,
+      objectsUploaded: 2,
+    });
+    const rows = await demoRows();
+    expect(rows.videos).toEqual([
+      expect.objectContaining({ id: V1, ownership: "verified_owner" }),
+    ]);
+    expect(rows.postings).toEqual([
+      expect.objectContaining({ id: V1_POSTING, isSource: true }),
+    ]);
+  });
+
+  it.each([
+    [
+      "verified on another creator's video",
+      () => insertVerifiedElsewhere(POST_01),
+    ],
+    [
+      "verified on another of Maya's videos (a draft from her Library)",
+      () =>
+        libraryDraft(
+          { creatorId: MAYA_CREATOR },
+          { ready: false, post: { providerPostId: POST_01, linkKey: POST_01 } },
+        ),
+    ],
+  ])(
+    "refuses when post 01 is %s, writing and storing nothing",
+    async (_, arrange) => {
+      await seededWithoutV1();
+      await arrange();
+      const before = await counts();
+      await expect(demoSeed()).rejects.toThrow(
+        /mock_post_c4180ab2_01 is already licensable on another video: reset the dev database/,
+      );
+      expect(await counts()).toEqual(before);
+    },
+  );
+
+  it("refuses when @maya's first-snow is another video, storing nothing", async () => {
+    await seededWithoutV1();
+    await insertUploadVideo({ id: MAYA_CREATOR }, { slug: "first-snow" });
+    const before = await counts();
+    await expect(demoSeed()).rejects.toThrow(/first-snow is another video/);
+    expect(await counts()).toEqual(before);
   });
 
   it("names seed_user_maya in the audit row when only the demo changed", async () => {
@@ -328,6 +560,8 @@ describe("db:seed --demo", () => {
       rateOptionsAdded: 3,
       accountCreated: false,
       postsAdded: 0,
+      videoCreated: false,
+      objectsUploaded: 0,
     });
     const rows = await demoRows();
     expect(rows.rateCards).toEqual(seeded.rateCards);

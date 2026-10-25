@@ -10,11 +10,14 @@ export function EmptyState({
   description,
   actions,
   as: Heading = "h2",
+  headingId,
   className,
 }: {
   title: ReactNode;
   /** The title's heading level: h1 when the empty state is the whole page (the Inbox placeholder). */
   as?: "h1" | "h2";
+  /** The heading's id, for a page that moves the focus to its title (it then takes a programmatic focus). */
+  headingId?: string;
   description?: ReactNode;
   actions?: ReactNode;
   className?: string;
@@ -26,7 +29,13 @@ export function EmptyState({
         className,
       )}
     >
-      <Heading className="text-title-2 text-ink">{title}</Heading>
+      <Heading
+        id={headingId}
+        tabIndex={headingId ? -1 : undefined}
+        className="text-title-2 text-ink outline-none"
+      >
+        {title}
+      </Heading>
       {description ? (
         <p className="text-callout text-ink-2">{description}</p>
       ) : null}

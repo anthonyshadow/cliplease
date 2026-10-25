@@ -132,6 +132,16 @@ describe("badgeText (04 §9.19; 07 D43, D70, D89)", () => {
     ).toBeNull();
   });
 
+  it("sm on the video page (showUnlinked): ' · no longer linked' after a disconnect, nothing before", () => {
+    const sm = { ...maya, size: "sm" } as const;
+    expect(
+      badgeText({ ...sm, noLongerLinked: true }, { showUnlinked: true }).line1,
+    ).toBe("Verified · @maya.films · Instagram · no longer linked");
+    expect(badgeText(sm, { showUnlinked: true }).line1).toBe(
+      "Verified · @maya.films · Instagram",
+    );
+  });
+
   it("a YouTube channel without a handle reads its title, with no @", () => {
     const channel = {
       ...maya,

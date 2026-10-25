@@ -11,7 +11,7 @@ import {
 } from "../domain/values";
 import { POSTINGS_COPY } from "../postings/copy";
 import { postingPlatformLabel } from "../postings/labels";
-import { videoStepHref } from "./steps";
+import { videoHref, videoStepHref } from "./steps";
 
 /** 05 §6.5's labels; "Ready to publish" and "Not posted anywhere yet" are proposed copy (owner answer Q-98). */
 export const REVIEW_COPY = {
@@ -87,9 +87,10 @@ export type PublishBlocker = (typeof PUBLISH_BLOCKERS)[number];
 /** "Before you can publish"'s heading id: Publish refused by a blocker that appeared meanwhile moves the focus to it. */
 export const BLOCKERS_HEADING_ID = "publish-blockers";
 
-/** The Cover image and Link rows' ids, so a blocker row can jump to them. */
+/** The Cover image and Link rows' ids, and the video page's Original file section's, so a blocker row can jump to them. */
 export const COVER_IMAGE_ID = "cover-image";
 export const LINK_ROW_ID = "video-link";
+export const ORIGINAL_FILE_ID = "original-file";
 
 /**
  * A blocker's row: what to do and where it's done. A page of the app, an anchor on the Review, or a connect to start
@@ -103,22 +104,25 @@ export type BlockerRow = { key: string; label: string } & (
 /**
  * Each blocker's row (04 §11.10, 05 callout 51; the rest owner answer Q-98), in blocker order. `disabled_by_admin` has
  * no row: the Review shows its Banner instead. `reconnect_account` has one row per platform to reconnect, back to this
- * Review after the connect (07 D37, D66).
+ * Review after the connect (07 D37, D66). On the video page (Turn on, P14b) the file row jumps to its Original file
+ * section and a reconnect comes back to the page.
  */
 export function publishBlockerRows(
   blockers: readonly PublishBlocker[],
   videoId: string,
   reconnectPlatforms: readonly PostingPlatform[],
+  on: "review" | "video_page" = "review",
 ): BlockerRow[] {
   const page = (label: string, href: string) =>
     ({ kind: "page", label, href }) as const;
   const anchor = (label: string, id: string) =>
     ({ kind: "anchor", label, href: `#${id}` }) as const;
+  const attach = "Attach the original file";
   const rows = {
-    original_not_ready: page(
-      "Attach the original file",
-      videoStepHref(videoId, "file"),
-    ),
+    original_not_ready:
+      on === "review"
+        ? page(attach, videoStepHref(videoId, "file"))
+        : anchor(attach, ORIGINAL_FILE_ID),
     poster_required: anchor("Add a cover image for buyers", COVER_IMAGE_ID),
     postings_unconfirmed: page(
       "Say where it was posted",
@@ -152,7 +156,10 @@ export function publishBlockerRows(
           kind: "reconnect",
           label: `Reconnect ${postingPlatformLabel(platform, null)} to publish.`,
           platform,
-          returnTo: videoStepHref(videoId, "review"),
+          returnTo:
+            on === "review"
+              ? videoStepHref(videoId, "review")
+              : videoHref(videoId),
         }));
     }
     return [{ key: blocker, ...rows[blocker] }];

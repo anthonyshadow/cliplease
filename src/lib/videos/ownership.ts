@@ -100,9 +100,13 @@ const joinPlatforms = (names: readonly string[]) =>
  * longer linked"). sm: "Verified · @maya.films · Instagram", one line. A channel without a handle reads "Verified ·
  * {channel title} on YouTube" through the same template. Demo, at both sizes: "Verified · @demo.creator (demo account)",
  * lg keeping its line 2. lg's line 3, "Also verified on TikTok and YouTube", when other postings are verified too.
- * Self-attested: "Self-attested by the creator".
+ * Self-attested: "Self-attested by the creator". `showUnlinked` (the video page's sm, 05 §6.7 States): line 1 ends
+ * " · no longer linked" when the posting's account is disconnected.
  */
-export function badgeText(input: BadgeInput): BadgeText {
+export function badgeText(
+  input: BadgeInput,
+  { showUnlinked = false }: { showUnlinked?: boolean } = {},
+): BadgeText {
   if (input.ownership === "self_attested") {
     return { line1: BADGE_COPY.selfAttested, line2: null, line3: null };
   }
@@ -112,7 +116,14 @@ export function badgeText(input: BadgeInput): BadgeText {
   if (provider === "mock") line1 = `${verified} (demo account)`;
   else if (size === "lg") line1 = `${verified} on ${platformLabel}`;
   else line1 = `${verified} · ${platformLabel}`;
-  if (size === "sm") return { line1, line2: null, line3: null };
+  if (size === "sm") {
+    const unlinked = showUnlinked && input.noLongerLinked;
+    return {
+      line1: unlinked ? `${line1} · no longer linked` : line1,
+      line2: null,
+      line3: null,
+    };
+  }
   const linked = `Account linked ${formatPostDate(new Date(input.linkedAt))}`;
   const also = input.alsoVerifiedOn ?? [];
   return {

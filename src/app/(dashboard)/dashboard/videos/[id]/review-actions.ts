@@ -3,7 +3,7 @@
 import { refresh } from "next/cache";
 import { notFound, redirect } from "next/navigation";
 import { z } from "zod";
-import type { PayoutsStatus } from "@/lib/domain/values";
+import type { PayoutsStatus, VideoStatus } from "@/lib/domain/values";
 import {
   type ActionResult,
   fieldError,
@@ -14,7 +14,7 @@ import {
 import { isUuid } from "@/lib/validation/uuid";
 import { SLUG_COPY, videoDetailsSchema } from "@/lib/validation/video";
 import { RIGHTS_COPY, RIGHTS_LOCK_COPY } from "@/lib/videos/rights";
-import { videoStepHref } from "@/lib/videos/steps";
+import { videoHref, videoStepHref } from "@/lib/videos/steps";
 import { titleMessage } from "@/lib/videos/title";
 import { requireCreator, toActor } from "@/server/auth/session";
 import { refreshPayoutsStatus as readPayoutsStatus } from "@/server/creators/profile";
@@ -42,7 +42,10 @@ const rightsInput = z.object({
   identifiablePeople: z.enum(["yes", "no"]),
 });
 
-/** Rights → Continue (01 J5.13, J5.14): the answers stored, then Review. Locked answers say why (owner answer Q-96 a). */
+/**
+ * Rights → Continue (01 J5.13, J5.14): the answers stored, then Review for a draft and the video's page for a video past
+ * its draft (P14b's Rights _Edit_). Locked answers say why (owner answer Q-96 a).
+ */
 export async function attestRights(
   _previous: ActionResult | null,
   formData: FormData,
@@ -57,8 +60,9 @@ export async function attestRights(
   });
   if (!parsed.success) return formError("invalid_input", RIGHTS_COPY.answerAll);
   const ctx = await requireCreator(videoStepHref(videoId, "rights"));
+  let status: VideoStatus;
   try {
-    await attest(toActor(ctx), {
+    status = await attest(toActor(ctx), {
       videoId,
       ownsRights: true,
       containsMusic: parsed.data.containsMusic === "yes",
@@ -72,7 +76,9 @@ export async function attestRights(
     if (!(error instanceof VideoNotFoundError)) throw error;
     notFound();
   }
-  redirect(videoStepHref(videoId, "review"));
+  redirect(
+    status === "draft" ? videoStepHref(videoId, "review") : videoHref(videoId),
+  );
 }
 
 /** The details action's shape, checked before anything reads it (a Server Action takes any value). */
@@ -83,8 +89,9 @@ const detailsInput = z.object({
 });
 
 /**
- * The Review's Title and Link rows (02 §6.1; 07 D09, D23): the row being saved, then the page again. A refused title
- * reads as on the title page ("Add a title.", titleMessage); a refused link, its first message.
+ * The Title and Link rows of the Review and of the video page (02 §6.1; 07 D09, D23): the row being saved, then the
+ * page again. A refused title reads as on the title page ("Add a title.", titleMessage); a refused link, its first
+ * message.
  */
 export async function updateVideoDetails(input: {
   videoId: string;
@@ -109,7 +116,8 @@ export async function updateVideoDetails(input: {
       ? fieldErrors("invalid_input", fields)
       : formError("invalid_input");
   }
-  const ctx = await requireCreator(videoStepHref(videoId, "review"));
+  // Back to the video after a sign-in: a draft's Review, or the page of a video past its draft.
+  const ctx = await requireCreator(videoHref(videoId));
   try {
     await updateDetails(toActor(ctx), parsed.data);
   } catch (error) {

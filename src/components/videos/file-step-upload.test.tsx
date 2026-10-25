@@ -17,6 +17,7 @@ const AT_REST: FileStepVideo = {
   originalStatus: "none",
   originalError: null,
   originalFilename: null,
+  originalBytes: null,
   durationMs: null,
   width: null,
   height: null,

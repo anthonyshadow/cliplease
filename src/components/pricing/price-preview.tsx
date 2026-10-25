@@ -40,7 +40,7 @@ const percent = (bps: number) => `${bps / 100}%`;
 /**
  * 04 §9.29 PricePreview: a use, a term and a territory among the enabled options, and the line the buyer's quote gives
  * (01 J4.4; template 07 D98) from the same computeQuote the server runs, on every change. `readOnly` is the Review
- * step's and the video page's use (P13): the same picker over the video's prices, with "Edit your rate card".
+ * step's use (P13): the same picker over the video's prices, with "Edit your rate card".
  */
 export function PricePreview({
   options,

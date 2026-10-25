@@ -1,8 +1,9 @@
 import { expect, type Locator, type Page } from "@playwright/test";
-import { PUBLISHED_COPY } from "../../../src/lib/videos/review";
+import { PUBLISHED_COPY, REVIEW_COPY } from "../../../src/lib/videos/review";
+import { VIDEO_MENU_COPY } from "../../../src/lib/videos/video-page";
 import { signUpCreator } from "./creator";
 import { LIBRARY, libraryPostId, POST_01, tiles } from "./library";
-import { pressButton } from "./press";
+import { isServerAction, pressButton, requestEnded } from "./press";
 import {
   answerRights,
   attachSample,
@@ -18,6 +19,41 @@ import {
 /** Review's success view (05 §6.5 States "Success"), once Publish has run. */
 export const publishedView = (page: Page): Locator =>
   page.locator("[data-published-view]");
+
+/** The video page (S19, P14b): `[data-video-aside]` (poster, title, link) and `[data-video-sections]` inside. */
+export const videoPage = (page: Page): Locator =>
+  page.locator("[data-video-page]");
+
+/** Opens the card's Menu ("More for {title}") with the keyboard (04 §9.1); Edit takes the focus. */
+export async function openCardMenu(page: Page, title: string) {
+  await pressButton(page, VIDEO_MENU_COPY.more(title));
+  await expect(
+    page.getByRole("menuitem", { name: REVIEW_COPY.edit }),
+  ).toBeFocused();
+}
+
+/** Opens the draft card's Delete draft sheet from its Menu with the keyboard, and returns the sheet once it shows. */
+export async function openDeleteSheet(
+  page: Page,
+  title: string,
+): Promise<Locator> {
+  await openCardMenu(page, title);
+  await page
+    .getByRole("menuitem", { name: VIDEO_MENU_COPY.deleteDraft })
+    .press("Enter");
+  const sheet = page.getByRole("alertdialog", {
+    name: VIDEO_MENU_COPY.deleteTitle,
+  });
+  await expect(sheet).toBeVisible();
+  return sheet;
+}
+
+/** Chooses `item` in the open Menu with Enter and waits until its Server Action's request has closed. */
+export async function chooseMenuAction(page: Page, item: string) {
+  const closed = requestEnded(page, isServerAction);
+  await page.getByRole("menuitem", { name: item, exact: true }).press("Enter");
+  await closed;
+}
 
 /** A card on /dashboard/videos or /@handle, by its title. */
 export const videoCard = (page: Page, title: string | RegExp): Locator =>

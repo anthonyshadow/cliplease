@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, LoaderCircle, Upload } from "lucide-react";
+import { LoaderCircle, Upload } from "lucide-react";
 import {
   type DragEvent,
   Fragment,
@@ -22,6 +22,7 @@ import {
   uploadPercent,
 } from "@/lib/upload/messages";
 import { cn } from "@/lib/utils";
+import { DoneLine } from "./done-line";
 
 const ACCEPT = ORIGINAL_MIME.join(",");
 
@@ -260,15 +261,7 @@ export function UploadDropzone({
     body = (
       <Row className="flex-row items-center justify-between gap-3">
         {picker}
-        <p className="flex items-center gap-2 text-callout text-ink">
-          <Check
-            aria-hidden
-            size={16}
-            strokeWidth={2}
-            className="shrink-0 text-ink"
-          />
-          {view.line}
-        </p>
+        <DoneLine>{view.line}</DoneLine>
         {view.canReplace ? (
           <Button variant="tertiary" size="sm" onClick={pick}>
             {DROPZONE_COPY.replace}

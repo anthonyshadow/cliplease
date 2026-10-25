@@ -76,6 +76,31 @@ describe("publishBlockerRows (05 §6.5 callout 51; owner answer Q-98 a)", () => 
       ),
     ).toEqual(["Reconnect Demo to publish.", "Reconnect TikTok to publish."]);
   });
+
+  it("on the video page, jumps to its Original file section and reconnects back to the page (Turn on, P14b)", () => {
+    expect(
+      publishBlockerRows(
+        ["original_not_ready", "reconnect_account"],
+        ID,
+        ["mock"],
+        "video_page",
+      ),
+    ).toEqual([
+      {
+        key: "original_not_ready",
+        kind: "anchor",
+        label: "Attach the original file",
+        href: "#original-file",
+      },
+      {
+        key: "reconnect:mock",
+        kind: "reconnect",
+        label: "Reconnect Demo to publish.",
+        platform: "mock",
+        returnTo: `/dashboard/videos/${ID}`,
+      },
+    ]);
+  });
 });
 
 describe("editRowLabel", () => {

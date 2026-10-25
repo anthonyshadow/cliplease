@@ -16,6 +16,7 @@ export const creatorVideoFixture = (
   originalStatus: "none",
   originalError: null,
   originalFilename: null,
+  originalBytes: null,
   durationMs: null,
   width: null,
   height: null,

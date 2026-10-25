@@ -1,6 +1,6 @@
-// The Where-posted tests' shared fixtures (P11c): the Server Action mocks the form needs under jsdom, Radix's
-// ResizeObserver, and saved postings as listVideoPostings gives them. A test whose components read the mocks imports
-// this file first, as a bare import, so the mocks are in place before those components load.
+// The Where-posted and video page tests' shared fixtures (P11c, P14b): the video Server Action mocks the components need
+// under jsdom, Radix's ResizeObserver, and saved postings as listVideoPostings gives them. A test whose components read
+// the mocks imports this file first, as a bare import, so the mocks are in place before those components load.
 import { vi } from "vitest";
 import type { OwnerPostingDTO } from "@/lib/postings/types";
 import type { PostingsFormVideo } from "./postings-form";
@@ -8,6 +8,9 @@ import type { PostingsFormVideo } from "./postings-form";
 vi.mock("@/app/(dashboard)/dashboard/videos/[id]/actions", () => ({
   saveVideoPostings: vi.fn(),
   recheckPosting: vi.fn(),
+  publishVideo: vi.fn(),
+  unpublishVideo: vi.fn(),
+  deleteDraftVideo: vi.fn(),
 }));
 vi.mock("@/app/(dashboard)/dashboard/_actions/social", () => ({
   syncAccount: vi.fn(),
@@ -55,6 +58,7 @@ export function savedPosting(over: Partial<OwnerPostingDTO>): OwnerPostingDTO {
       "/api/library/thumbnails/00000000-0000-4000-8000-0000000000c2?v=1",
     durationSec: 38,
     visibility: "public",
+    removedAt: null,
     showLink: true,
     checkedAt: "2026-10-20T10:00:00.000Z",
     position: 1,

@@ -60,6 +60,14 @@ export class OriginalNotReadyError extends Error {
   }
 }
 
+/** Delete draft on a video past its draft (02 §5.6): only a `draft` can be deleted. */
+export class VideoNotDraftError extends Error {
+  constructor() {
+    super("video_not_draft");
+    this.name = "VideoNotDraftError";
+  }
+}
+
 /** An admin disabled the video: its details and answers can't change (02 §5.6). */
 export class VideoDisabledError extends Error {
   constructor() {

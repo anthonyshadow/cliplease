@@ -29,6 +29,7 @@ import {
   videoStepFacts,
   videoStepHref,
 } from "../../lib/videos/steps";
+import { offersShareLink } from "../../lib/videos/video-page";
 import { type Actor, requireCreatorActor } from "../auth/actor";
 import { postThumbnail } from "../library/queries";
 import { ownerPostingsByVideo } from "../postings/queries";
@@ -86,6 +87,8 @@ export type CreatorVideoDTO = VideoStepState & {
   rightsLock: RightsLock | null;
   originalError: string | null;
   originalFilename: string | null;
+  /** The original's size (the video page's "0.2 MB"), null until an original is attached. */
+  originalBytes: number | null;
   durationMs: number | null;
   width: number | null;
   height: number | null;
@@ -175,6 +178,7 @@ const videoForCreator = cache(
         identifiablePeople: video.identifiablePeople,
         originalError: video.originalError,
         originalFilename: video.originalFilename,
+        originalBytes: video.originalBytes,
         durationMs: video.durationMs,
         width: video.width,
         height: video.height,
@@ -215,6 +219,7 @@ const videoForCreator = cache(
       rightsLock: rightsLockOf(row),
       originalError: row.originalError,
       originalFilename: row.originalFilename,
+      originalBytes: row.originalBytes,
       durationMs: row.durationMs,
       width: row.width,
       height: row.height,
@@ -252,6 +257,32 @@ export async function getVideoStepFacts(
   return row ? stepFactsOf(row) : null;
 }
 
+/** 03 §7.4's counts of a video: requests waiting for approval, and licenses sold. */
+const requestCounts = {
+  pendingCount: db.$count(
+    licenseRequest,
+    and(
+      eq(licenseRequest.videoId, video.id),
+      eq(licenseRequest.status, "awaiting_approval"),
+    ),
+  ),
+  licenseCount: db.$count(license, eq(license.videoId, video.id)),
+};
+
+/** The creator's video's 03 §7.4 counts (the video page's Requests line), or null when it isn't the creator's. */
+export async function getRequestCounts(
+  a: Actor,
+  videoId: string,
+): Promise<{ pendingCount: number; licenseCount: number } | null> {
+  const { creatorId } = requireCreatorActor(a);
+  if (!isUuid(videoId)) return null;
+  const [row] = await db
+    .select(requestCounts)
+    .from(video)
+    .where(and(eq(video.id, videoId), eq(video.creatorId, creatorId)));
+  return row ?? null;
+}
+
 /** One card on /dashboard/videos (04 §9.27; 03 §7.4): no object key, creator id or upload id reaches it. */
 export type CreatorVideoCardDTO = {
   id: string;
@@ -267,9 +298,9 @@ export type CreatorVideoCardDTO = {
   currency: Currency;
   /** A draft's Continue: its first incomplete step. */
   continueHref: string | null;
-  /** A live video's link to share. */
+  /** The link to share while the video is Live or Off (as on its page); none for a draft or a disabled video. */
   shareUrl: string | null;
-  /** Requests awaiting approval and licenses (03 §7.4); the card shows neither (P14b's page does). */
+  /** Requests awaiting approval and licenses (03 §7.4's list query); the cards don't show them yet. */
   pendingCount: number;
   licenseCount: number;
 };
@@ -295,14 +326,7 @@ export async function listCreatorVideos(
         height: video.height,
         disabledUses: video.disabledUses,
         basePriceOverrideCents: video.basePriceOverrideCents,
-        pendingCount: db.$count(
-          licenseRequest,
-          and(
-            eq(licenseRequest.videoId, video.id),
-            eq(licenseRequest.status, "awaiting_approval"),
-          ),
-        ),
-        licenseCount: db.$count(license, eq(license.videoId, video.id)),
+        ...requestCounts,
       })
       .from(video)
       .where(eq(video.creatorId, creatorId))
@@ -336,8 +360,9 @@ export async function listCreatorVideos(
               firstIncompleteStep(videoStepFacts(stepFactsOf(row))),
             )
           : null,
-      shareUrl:
-        row.status === "published" ? shareUrl(creator.handle, row.slug) : null,
+      shareUrl: offersShareLink(row.status)
+        ? shareUrl(creator.handle, row.slug)
+        : null,
       pendingCount: row.pendingCount,
       licenseCount: row.licenseCount,
     }),

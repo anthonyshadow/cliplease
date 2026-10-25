@@ -1,8 +1,24 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import "./postings-fixtures";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { publishVideo } from "@/app/(dashboard)/dashboard/videos/[id]/actions";
 import type { CreatorVideoCardDTO } from "@/server/videos/queries";
-import { CreatorVideoCard, PublicVideoCard } from "./video-card";
+import { CreatorVideoCard } from "./creator-video-card";
+import { PublicVideoCard } from "./video-card";
+
+const push = vi.hoisted(() => vi.fn());
+vi.mock("next/navigation", async (actual) => ({
+  ...(await actual<typeof import("next/navigation")>()),
+  useRouter: () => ({ push, refresh: vi.fn() }),
+}));
 
 afterEach(cleanup);
 
@@ -80,6 +96,70 @@ describe("CreatorVideoCard (04 §9.27; 05 §6.8)", () => {
     const item = card({ ...LIVE, fromPriceCents: null, posterSrc: null });
     expect(within(item).queryByText(/^From /)).toBeNull();
     expect(within(item).queryByRole("img")).toBeNull();
+  });
+});
+
+describe("CreatorVideoCard's Menu (05 §6.8 callout 4)", () => {
+  /** Opens the card's "···" Menu by keyboard (Radix opens on keydown) and lists its items. */
+  function menuOf(item: HTMLElement) {
+    fireEvent.keyDown(
+      within(item).getByRole("button", { name: `More for ${LIVE.title}` }),
+      { key: "Enter" },
+    );
+    return screen.getAllByRole("menuitem").map((i) => i.textContent);
+  }
+
+  it("a live card: Copy link and the Menu beside the link, with Edit to its page and Turn off", () => {
+    const item = card(LIVE);
+    expect(menuOf(item)).toEqual(["Edit", "Turn off"]);
+    expect(
+      screen.getByRole("menuitem", { name: "Edit" }).getAttribute("href"),
+    ).toBe(`/dashboard/videos/${ID}`);
+  });
+
+  it("an Off card keeps Copy link and offers Turn on", () => {
+    const item = card({ ...LIVE, status: "unpublished" });
+    expect(within(item).getByText("Off")).toBeTruthy();
+    expect(
+      within(item).getByRole("button", { name: "Copy link" }),
+    ).toBeTruthy();
+    expect(menuOf(item)).toEqual(["Edit", "Turn on"]);
+  });
+
+  it("opens the video's page at its blockers when a blocker refuses Turn on", async () => {
+    vi.mocked(publishVideo).mockResolvedValue({
+      ok: false,
+      error: { code: "publish_blocked", message: "Before you can publish" },
+    });
+    menuOf(card({ ...LIVE, status: "unpublished" }));
+    fireEvent.keyDown(screen.getByRole("menuitem", { name: "Turn on" }), {
+      key: "Enter",
+    });
+    await waitFor(() =>
+      expect(push).toHaveBeenCalledWith(
+        `/dashboard/videos/${ID}#publish-blockers`,
+      ),
+    );
+  });
+
+  it("a draft offers Delete draft; a disabled video says so, with no Copy link and Edit only", () => {
+    expect(
+      menuOf(
+        card({
+          ...LIVE,
+          status: "draft",
+          shareUrl: null,
+          continueHref: `/dashboard/videos/${ID}?step=file`,
+        }),
+      ),
+    ).toEqual(["Edit", "Delete draft"]);
+    cleanup();
+    const item = card({ ...LIVE, status: "disabled", shareUrl: null });
+    expect(within(item).getByText("Disabled by ClipLease")).toBeTruthy();
+    expect(
+      within(item).queryByRole("button", { name: "Copy link" }),
+    ).toBeNull();
+    expect(menuOf(item)).toEqual(["Edit"]);
   });
 });
 

@@ -2,6 +2,7 @@ import { Notice } from "@/components/ui/notice";
 import { APP_NAME } from "@/lib/app-name";
 import { POSTINGS_COPY, postingResultCopy } from "@/lib/postings/copy";
 import type { OwnerPostingDTO } from "@/lib/postings/types";
+import { REVIEW_COPY } from "@/lib/videos/review";
 import {
   POSTING_ROW,
   PostingCardFrame,
@@ -22,7 +23,7 @@ const CONTEXT = {
  * D69): the Notice "Turn off to edit where it was posted." first, then one card per posting in position order with its
  * result (the source row as "{verified_username} on {Platform} · Verified · From your Library"). No chips, inputs,
  * Switches, actions, Stepper or Continue. A link is plain wrapping text, never a link element, an image or a frame (07 D67).
- * Server-renderable (no hooks); P14b embeds it on the live video page.
+ * None saved: "Not posted anywhere yet". Server-renderable (no hooks); P14b embeds it on the live video page.
  */
 export function PostingsReadOnly({
   postings,
@@ -32,6 +33,9 @@ export function PostingsReadOnly({
   return (
     <div data-postings-read-only className="flex min-w-0 flex-col gap-4">
       <Notice>{POSTINGS_COPY.locked}</Notice>
+      {postings.length === 0 ? (
+        <p className="text-callout text-ink">{REVIEW_COPY.notPosted}</p>
+      ) : null}
       {postings.map((posting) => (
         <PostingCardFrame
           key={posting.id}

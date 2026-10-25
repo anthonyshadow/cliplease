@@ -55,6 +55,7 @@ const posting = (over: Partial<OwnerPostingDTO> = {}): OwnerPostingDTO => ({
   thumbnailSrc: null,
   durationSec: null,
   visibility: null,
+  removedAt: null,
   showLink: true,
   checkedAt: null,
   position: 1,

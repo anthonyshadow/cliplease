@@ -11,7 +11,13 @@ import { errorName, logEvent } from "../log";
 import { contentDisposition } from "./content-disposition";
 import { MultipartError } from "./errors";
 import { storage } from "./index";
-import { originalKey, posterKey, posterKeyVideoId, posterPrefix } from "./keys";
+import {
+  originalKey,
+  originalPrefix,
+  posterKey,
+  posterKeyVideoId,
+  posterPrefix,
+} from "./keys";
 import {
   expectedPartSize,
   GET_URL_TTL_S,
@@ -212,6 +218,51 @@ const abortQuietly = (videoId: string, key: string, uploadId: string) =>
   quietly("uploads.abort_failed", videoId, () =>
     storage().abortMultipart({ key, uploadId }),
   );
+
+/** Deletes the objects under `prefix` (one ending in "/") that `keep` doesn't keep, best effort; logged as `event`. */
+const sweepQuietly = (
+  event: string,
+  videoId: string,
+  prefix: string,
+  keep: (o: { key: string; lastModified: Date }) => boolean = () => false,
+) =>
+  quietly(event, videoId, async () => {
+    const objects = await storage().list(prefix);
+    await Promise.all(
+      objects.filter((o) => !keep(o)).map((o) => storage().delete(o.key)),
+    );
+  });
+
+/**
+ * What a deleted draft stored (01 J5.21; 02 §5.6), after the commit that deleted its row: the open upload aborted, the
+ * original and the poster, then anything else in its two folders (an original an earlier Replace left, a poster PUT that
+ * never completed). Best effort, logged by video id and class. Called only with the columns of a row the caller just
+ * deleted, so no request can sweep another creator's folders.
+ */
+export async function removeVideoObjects(
+  creatorId: string,
+  videoId: string,
+  row: {
+    originalObjectKey: string | null;
+    originalUploadId: string | null;
+    posterObjectKey: string | null;
+  },
+) {
+  const { originalObjectKey: original, originalUploadId: uploadId } = row;
+  await Promise.all([
+    original && uploadId ? abortQuietly(videoId, original, uploadId) : null,
+    original ? deleteQuietly(videoId, original) : null,
+    row.posterObjectKey ? deleteQuietly(videoId, row.posterObjectKey) : null,
+  ]);
+  await Promise.all([
+    sweepQuietly(
+      "storage.sweep_failed",
+      videoId,
+      originalPrefix(creatorId, videoId),
+    ),
+    sweepQuietly("storage.sweep_failed", videoId, posterPrefix(videoId)),
+  ]);
+}
 
 /** The upload columns, all cleared (they are set together, 03 §3.6). */
 const NO_UPLOAD = {
@@ -545,19 +596,17 @@ async function startPoster(
 
 /**
  * Deletes the video's stray posters (STRAY_POSTER_AFTER_MS), every key but `keep`, the live poster, at each poster start
- * (a swap deletes the poster it replaces itself). Best-effort, so it never fails the start; nothing else sweeps posters/
- * (02 §5.9's lifecycle rule covers unfinished multipart uploads only).
+ * (a swap deletes the poster it replaces itself). Best-effort, so it never fails the start; only Delete draft
+ * (removeVideoObjects) sweeps posters/ otherwise (02 §5.9's lifecycle rule covers unfinished multipart uploads only).
  */
 async function sweepStrayPosters(videoId: string, keep: string | null) {
-  await quietly("uploads.poster_sweep_failed", videoId, async () => {
-    const before = Date.now() - STRAY_POSTER_AFTER_MS;
-    const objects = await storage().list(posterPrefix(videoId));
-    await Promise.all(
-      objects
-        .filter((o) => o.key !== keep && o.lastModified.getTime() < before)
-        .map((o) => storage().delete(o.key)),
-    );
-  });
+  const before = Date.now() - STRAY_POSTER_AFTER_MS;
+  await sweepQuietly(
+    "uploads.poster_sweep_failed",
+    videoId,
+    posterPrefix(videoId),
+    (o) => o.key === keep || o.lastModified.getTime() >= before,
+  );
 }
 
 /**

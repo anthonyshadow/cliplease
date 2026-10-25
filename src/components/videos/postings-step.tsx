@@ -7,7 +7,7 @@ import { READING_COLUMN } from "@/components/layout/gutter";
 import { Banner } from "@/components/ui/banner";
 import { POSTINGS_COPY } from "@/lib/postings/copy";
 import type { PostingsStepMode } from "@/lib/postings/form";
-import { videoHref, videoStepHref } from "@/lib/videos/steps";
+import { videoHref } from "@/lib/videos/steps";
 import type { Actor } from "@/server/auth/actor";
 import { listPostingAccountStates } from "@/server/library/queries";
 import { listVideoPostings } from "@/server/postings/queries";
@@ -67,15 +67,9 @@ export async function PostingsStep({
     listVideoPostings(actor, video.id),
     listPostingAccountStates(actor),
   ]);
-  const draft = video.status === "draft";
   const errorBanner = connectErrorBanner(connectError);
   return (
-    <VideoStepFrame
-      video={video}
-      step="postings"
-      backHref={draft ? videoStepHref(video.id, "file") : videoHref(video.id)}
-      stepper={draft}
-    >
+    <VideoStepFrame video={video} step="postings">
       <StripConnectParams />
       {errorBanner ? (
         <Banner tone={errorBanner.tone}>{errorBanner.message}</Banner>

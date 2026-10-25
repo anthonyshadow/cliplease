@@ -101,9 +101,10 @@ describe("ReviewDetails (05 §6.5 callouts 43–44; 07 D09, D23)", () => {
     expect(screen.queryByRole("textbox", { name: "Title" })).toBeNull();
   });
 
-  it("has no Edit for the link once published", () => {
+  it("reads the link as locked, with no Edit, once published (05 §6.7 callout 5)", () => {
     render(<ReviewDetails {...PROPS} slugLocked />);
-    expect(screen.getByText("/@maya/snow-day")).toBeTruthy();
+    expect(screen.getByText("/@maya/snow-day (locked)")).toBeTruthy();
+    expect(screen.queryByText("Can't change after you publish.")).toBeNull();
     expect(screen.queryByRole("button", { name: editName("link") })).toBeNull();
     expect(
       screen.getByRole("button", { name: editName("title") }),

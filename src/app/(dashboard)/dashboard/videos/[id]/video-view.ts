@@ -20,9 +20,9 @@ export type VideoView =
 /**
  * A draft goes through resolveStep: the requested step when every step before it is complete, else a redirect to the
  * first incomplete one; File, Where posted (editable, postingsStepMode), Rights and Review (P13). Past the draft,
- * ?step=postings is Where posted: editable while `unpublished`, read-only while `published` (05 frame 35); a published
- * video's Review is the success view, where Publish lands (P14a); everything else, and any `disabled` video, is the
- * video's header (P14a's minimal page, P14b's full one).
+ * ?step=postings is Where posted: editable while `unpublished`, read-only while `published` (05 frame 35); ?step=rights
+ * is the Rights form, the video page's Rights _Edit_ (P14b); a published video's Review is the success view, where
+ * Publish lands (P14a); everything else, and any `disabled` video, is the video's page (P14b).
  */
 export function videoView(
   video: { status: VideoStatus; facts: VideoStepFacts },
@@ -38,6 +38,9 @@ export function videoView(
   }
   if (requested === "postings" && video.status !== "disabled") {
     return { kind: "postings", mode: postingsStepMode(video.status) };
+  }
+  if (requested === "rights" && video.status !== "disabled") {
+    return { kind: "rights" };
   }
   if (requested === "review" && video.status === "published") {
     return { kind: "published" };

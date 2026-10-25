@@ -1,6 +1,7 @@
 // "From {price}" on a video's cards (04 §9.27; 07 D82, D97, D98). Pure.
 import type { EffectiveOptions } from "../../server/pricing/rate-card";
-import type { RateDimension } from "../domain/values";
+import type { Currency, RateDimension } from "../domain/values";
+import { formatMoney } from "../format";
 import { computeQuote } from "./compute-quote";
 import { PLATFORM_FEE_MIN_CENTS } from "./presets";
 
@@ -34,3 +35,7 @@ export function fromPriceCents(
   });
   return quote.ok ? quote.quote.licensePriceCents : null;
 }
+
+/** "From CA$150.00": fromPriceCents' price as the cards and the video page print it. */
+export const fromPriceText = (cents: number, currency: Currency) =>
+  `From ${formatMoney(cents, currency)}`;

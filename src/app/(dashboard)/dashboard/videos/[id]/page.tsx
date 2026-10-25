@@ -5,7 +5,7 @@ import { PostingsStep } from "@/components/videos/postings-step";
 import { PublishedView } from "@/components/videos/published-view";
 import { ReviewStep } from "@/components/videos/review-step";
 import { RightsStep } from "@/components/videos/rights-step";
-import { VideoHeader } from "@/components/videos/video-header";
+import { VideoPage as VideoPageContent } from "@/components/videos/video-page";
 import { isUuid } from "@/lib/validation/uuid";
 import { videoHref, videoStepFacts, videoStepHref } from "@/lib/videos/steps";
 import {
@@ -36,9 +36,9 @@ export async function generateMetadata({
  * /dashboard/videos/[id] (07 D39, D69): the creator's own video, else 404. A draft renders `?step=` when every step
  * before it is complete, otherwise it goes to the first incomplete one (a missing or unknown step too): File, then Where
  * posted (both sources), then Rights and Review. Past the draft, ?step=postings is Where posted, editable while
- * unpublished and read-only once published; a published video's Review is the success view Publish lands on; anything
- * else is the video's header (videoView). Review reads the payouts status as Settings does: again when back from payout
- * setup (?payouts=returned, owner answer Q-94 a), then goes to its plain address.
+ * unpublished and read-only once published; ?step=rights is the Rights form; a published video's Review is the success
+ * view Publish lands on; anything else is the video page (S19, videoView). Review reads the payouts status as Settings
+ * does: again when back from payout setup (?payouts=returned, owner answer Q-94 a), then goes to its plain address.
  */
 export default async function VideoPage({
   params,
@@ -106,7 +106,12 @@ export default async function VideoPage({
   }
   if (view.kind === "video") {
     return (
-      <VideoHeader actor={actor} video={video} handle={ctx.creator.handle} />
+      <VideoPageContent
+        actor={actor}
+        video={video}
+        handle={ctx.creator.handle}
+        platformFeeBps={env.PLATFORM_FEE_BPS}
+      />
     );
   }
   // The paused percent after a reload (P10c): only an unfinished upload has one.

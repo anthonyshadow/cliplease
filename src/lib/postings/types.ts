@@ -31,6 +31,8 @@ export type OwnerPostingDTO = {
   durationSec: number | null;
   /** Verified rows only: the post's visibility from its social_post row (P11c, additive: the D18 unlisted note). */
   visibility: SocialPostVisibility | null;
+  /** Verified rows only: when the platform removed the post, as ISO (01 J3.9's banner, P14b); null while it is there. */
+  removedAt: string | null;
   showLink: boolean;
   /** The last check, as ISO; null for a posting never checked (unverifiable, no link). */
   checkedAt: string | null;
