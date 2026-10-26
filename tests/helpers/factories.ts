@@ -38,7 +38,7 @@ import type {
   VideoPosting,
 } from "../../src/db/schema/types";
 import type { RateOptionKey } from "../../src/lib/domain/values";
-import { LICENSE_V1_VERSION } from "../../src/lib/legal/license-v1";
+import { LICENSE_V1_VERSION } from "../../src/lib/legal/license-v1-summary";
 import type { LicenseSnapshotV1 } from "../../src/lib/licensing/snapshot";
 import { defaultRateOptions } from "../../src/lib/pricing/presets";
 import { DAY_MS, HOUR_MS } from "../../src/lib/time";

@@ -3,10 +3,8 @@ import type { ReactNode } from "react";
 import { Banner } from "@/components/ui/banner";
 import { Button } from "@/components/ui/button";
 import { INLINE_LINK } from "@/components/ui/inline-link";
-import {
-  LICENSE_V1_UPDATED_LABEL,
-  LICENSE_V1_VERSION,
-} from "@/lib/legal/license-v1";
+import { LICENSE_V1_UPDATED_LABEL } from "@/lib/legal/license-v1";
+import { LICENSE_V1_VERSION } from "@/lib/legal/license-v1-summary";
 import {
   isLegalText,
   type LegalBlock,

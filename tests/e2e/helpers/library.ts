@@ -14,6 +14,10 @@ export const LIBRARY = "/dashboard/library";
 /** Post 01 (14 s, 1 Oct 2026), the newest Demo post (07 D53), by its caption. */
 export const POST_01 = /^He saw snow for the first time/;
 
+/** The creator's own Demo link to post 01 (P11b: built from the provider's post id only, unique per creator). */
+export const OWN_DEMO_LINK =
+  /^https:\/\/example\.com\/mock\/mock_post_[0-9a-f]{8}_01$/;
+
 /**
  * Waits for the Library page itself, not only its URL. The page streams in behind its loading.tsx, so the URL is there
  * while its data still loads; a goto, or going offline, then cancels that stream, and Next answers by loading the Library

@@ -22,10 +22,11 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className={inter.variable}>
-      {/* Below lg, a page with a TabBar keeps its last content clear of the fixed bar (04 §9.30). A word too long for its
-          line (an email, a handle, a name with no spaces) breaks instead of pushing the page sideways (07 D153); it
-          changes no box's size, so normal text looks the same. */}
-      <body className="wrap-break-word max-lg:has-[[data-tabbar]]:pb-[calc(var(--tabbar-h)+env(safe-area-inset-bottom))]">
+      {/* Below lg, a page with a TabBar or the license page's PriceBar keeps its last content clear of the fixed bar,
+          whose height globals.css sets as --bar-offset (04 §9.4, §9.30). A word too long for its line (an email, a
+          handle, a name with no spaces) breaks instead of pushing the page sideways (07 D153); it changes no box's
+          size, so normal text looks the same. */}
+      <body className="wrap-break-word max-lg:has-[[data-tabbar],[data-pricebar]]:pb-[calc(var(--bar-offset)+env(safe-area-inset-bottom))]">
         <Providers>
           {children}
           <Toaster />

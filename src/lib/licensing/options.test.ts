@@ -9,6 +9,7 @@ import {
 import {
   REGIONS,
   rateOptionLabel,
+  rateOptionOneLiner,
   TERM_OPTIONS,
   TERRITORY_OPTIONS,
   USE_OPTIONS,
@@ -42,5 +43,14 @@ describe("buyer labels (research/license.md §2, 07 D04)", () => {
       "Middle East & Africa",
       "Asia-Pacific",
     ]);
+  });
+});
+
+describe("one-liners (01 §4.1–§4.3)", () => {
+  it("give every option its sentence under the tile", () => {
+    for (const key of RATE_OPTION_KEYS) {
+      expect(rateOptionOneLiner(key)).toMatch(/^[A-Z].*\.$/);
+    }
+    expect(rateOptionOneLiner("worldwide")).toBe("Use it anywhere.");
   });
 });

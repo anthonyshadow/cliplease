@@ -2640,7 +2640,7 @@ describe("getPublicPostings (the buyer's DTOs, 07 D70)", () => {
     await removePost(post03.id);
     await publishVideo(await videoRow(videoId));
 
-    const verified = (url: string | null) => ({
+    const verified = (url: string | null, removed = false) => ({
       platform: "mock",
       label: "Demo",
       verified: true,
@@ -2649,6 +2649,8 @@ describe("getPublicPostings (the buyer's DTOs, 07 D70)", () => {
       noLongerLinked: false,
       url,
       hostLabel: null,
+      removed,
+      hasLink: true,
     });
     const unverified = (
       platform: string,
@@ -2664,6 +2666,8 @@ describe("getPublicPostings (the buyer's DTOs, 07 D70)", () => {
       noLongerLinked: false,
       url,
       hostLabel,
+      removed: false,
+      hasLink: url !== null,
     });
     const result = await getPublicPostings(videoId);
     expect(result).toStrictEqual({
@@ -2671,7 +2675,7 @@ describe("getPublicPostings (the buyer's DTOs, 07 D70)", () => {
       postings: [
         verified(post.permalink),
         verified(null), // show_link off
-        verified(null), // the post is removed
+        verified(null, true), // the post is removed (owner answer Q-112 a)
         unverified("facebook", "Facebook", FB_URL),
         unverified("other", "Vimeo", "https://www.vimeo.com/1", "vimeo.com"),
         unverified("tiktok", "TikTok", null),
@@ -2736,6 +2740,8 @@ describe("getPublicPostings (the buyer's DTOs, 07 D70)", () => {
       noLongerLinked: true,
       url: post.permalink,
       hostLabel: null,
+      removed: false,
+      hasLink: true,
     };
     expect(await getPublicPostings(upload.id)).toStrictEqual({
       primary: shown,

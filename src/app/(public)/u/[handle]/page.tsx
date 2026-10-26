@@ -4,7 +4,7 @@ import { VIDEO_GRID, WIDE_COLUMN } from "@/components/layout/gutter";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PublicVideoCard } from "@/components/videos/video-card";
 import { creatorUrl, videoUrl } from "@/lib/urls";
-import { HANDLE_RE } from "@/lib/validation/handle";
+import { handleFromParam } from "@/lib/validation/handle";
 import { getPublicCreator } from "@/server/creators/queries";
 import { listPublicVideos } from "@/server/videos/public";
 
@@ -13,16 +13,10 @@ import { listPublicVideos } from "@/server/videos/public";
  * 308 to the lowercase URL. The lowercase form is checked first, so the redirect can only point at a creator URL.
  */
 async function creatorFor(param: string) {
-  let decoded: string;
-  try {
-    decoded = decodeURIComponent(param);
-  } catch {
-    notFound();
-  }
-  const handle = decoded.toLowerCase();
-  if (!HANDLE_RE.test(handle)) notFound();
-  if (handle !== decoded) permanentRedirect(creatorUrl(handle));
-  const creator = await getPublicCreator(handle);
+  const route = handleFromParam(param);
+  if (!route) notFound();
+  if (route.mixedCase) permanentRedirect(creatorUrl(route.handle));
+  const creator = await getPublicCreator(route.handle);
   if (!creator) notFound();
   return creator;
 }

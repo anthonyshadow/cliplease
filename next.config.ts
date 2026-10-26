@@ -44,8 +44,8 @@ const nextConfig: NextConfig = {
       { source: "/admin/:path*", headers: NOINDEX },
     ];
   },
-  // /@handle and /@handle/slug are served by /u/[handle] and /u/[handle]/[slug] (02 §4.3; afterFiles, the array form;
-  // the license page behind the second is P15). Never redirect /u/* to /@*.
+  // /@handle and /@handle/slug are served by /u/[handle] and the license page /u/[handle]/[slug] (02 §4.3; afterFiles,
+  // the array form). Never redirect /u/* to /@*.
   async rewrites() {
     return [
       { source: "/@:handle", destination: "/u/:handle" },

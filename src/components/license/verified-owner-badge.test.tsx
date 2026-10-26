@@ -91,6 +91,22 @@ describe("VerifiedOwnerBadge (04 §9.19)", () => {
     ]);
   });
 
+  it("lg line 3 names the other verified platforms, and a YouTube channel title gets no @ (07 D43, D70)", () => {
+    render(
+      <VerifiedOwnerBadge
+        {...maya}
+        provider="youtube"
+        platformLabel="YouTube"
+        verifiedUsername="Maya Films"
+        alsoVerifiedOn={["TikTok", "Instagram"]}
+      />,
+    );
+    expect(screen.getByText("Verified · Maya Films on YouTube")).toBeTruthy();
+    expect(
+      screen.getByText("Also verified on TikTok and Instagram"),
+    ).toBeTruthy();
+  });
+
   it("sm: a 16 px ShieldCheck and one line, no link", () => {
     const { container } = render(<VerifiedOwnerBadge {...maya} size="sm" />);
     expect(icon("shield-check")).toBe("16");

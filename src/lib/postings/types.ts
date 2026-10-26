@@ -51,12 +51,19 @@ export type PublicPostingDTO = {
   /** Verified and its account is `disconnected` (OQ-14): "· no longer linked". */
   noLongerLinked: boolean;
   /**
-   * The stored canonical url when the creator shows it (`show_link`) and the row is unverified or its post isn't
-   * `removed`; else null.
+   * The stored canonical url when the creator shows it (`show_link`) and the row is unverified or its post wasn't
+   * removed; else null.
    */
   url: string | null;
   /** Other with a url: its hostname as text, without a leading "www." ("vimeo.com"). */
   hostLabel: string | null;
+  /** Verified, and the platform removed its post (01 J3.9): "Original post no longer available" (owner answer Q-112 a). */
+  removed: boolean;
+  /**
+   * The posting has a link, shown or not: a hidden one reads "{Platform} · Not verified" rather than "Also posted on
+   * {Platform}" (owner answer Q-112 a). Never the link itself.
+   */
+  hasLink: boolean;
 };
 
 /** A published video's postings: verified first, then the creator's order, and the badge's primary posting (07 D70). */

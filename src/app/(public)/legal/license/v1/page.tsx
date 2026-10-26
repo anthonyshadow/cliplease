@@ -1,14 +1,16 @@
 import type { Metadata } from "next";
 import { LegalPage } from "@/components/layout/legal-page";
 import {
-  fillLicenseV1,
-  LICENSE_V1_DISPLAY_TITLE,
   LICENSE_V1_NEUTRAL_VALUES,
   LICENSE_V1_SCHEDULE_A,
   LICENSE_V1_SECTIONS,
+} from "@/lib/legal/license-v1";
+import {
+  fillLicenseV1,
+  LICENSE_V1_DISPLAY_TITLE,
   LICENSE_V1_SUMMARY,
   type LicenseSummaryRow,
-} from "@/lib/legal/license-v1";
+} from "@/lib/legal/license-v1-summary";
 import { mapSections } from "@/lib/legal/types";
 
 export const metadata: Metadata = {

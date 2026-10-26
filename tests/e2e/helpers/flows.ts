@@ -77,10 +77,14 @@ export async function publish(
 
 /**
  * A fresh creator with fake payouts and Demo linked publishes Demo post 01 through the UI (File with sample.mp4 →
- * Where posted with the source and the same-video tick → Rights, four answers → Review → Publish) and stays on the
- * success view. Returns the creator's handle, the video's slug, the link to share and the video's id.
+ * Where posted with the source and the same-video tick → Rights, four answers (`rights`: No to both questions unless
+ * given) → Review → Publish) and stays on the success view. Returns the creator's handle, the video's slug, the link to
+ * share and the video's id.
  */
-export async function publishDemoVideo(page: Page): Promise<{
+export async function publishDemoVideo(
+  page: Page,
+  rights: Parameters<typeof answerRights>[1] = {},
+): Promise<{
   handle: string;
   slug: string;
   shareUrl: string;
@@ -102,7 +106,7 @@ export async function publishDemoVideo(page: Page): Promise<{
   await tick.focus();
   await tick.press("Space");
   await continueToRights(page, videoId);
-  await answerRights(page);
+  await answerRights(page, rights);
   await continueToReview(page, videoId);
   return { handle, videoId, ...(await publish(page)) };
 }

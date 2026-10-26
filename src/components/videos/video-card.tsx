@@ -53,8 +53,7 @@ export function CardText({
 
 /**
  * A card on the public /@handle grid (04 §9.27; 05 §4.6): no card surface, on `canvas`; the whole tile is one link to
- * the license page (P15; a plain <a> until it exists, so nothing prefetches a 404), no status and no hover on the
- * poster.
+ * the license page, a plain <a> so a grid of cards prefetches nothing; no status and no hover on the poster.
  */
 export function PublicVideoCard({
   video,

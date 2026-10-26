@@ -28,6 +28,9 @@ export const VIDEO_PAGE_COPY = {
   saved: "Saved.",
   /** After the Link on a video published once (07 D09). */
   locked: "(locked)",
+  /** 05 §6.7 callout 3: the buyer's license page, in a new tab (owner answer Q-116 a). */
+  viewLicensePage: "View license page ↗",
+  viewLicensePageLabel: "View license page (opens in a new tab)",
 } as const;
 
 /** 05 §6.7 callout 4: "1 waiting · 2 licenses" ("1 license" for one). */

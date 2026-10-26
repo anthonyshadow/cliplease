@@ -123,7 +123,7 @@ function publicRow(row: Partial<PublicPostingRow>): PublicPostingRow {
     showLink: true,
     position: 1,
     accountStatus: "connected",
-    postStatus: "available",
+    postRemovedAt: null,
     ...row,
   };
 }
@@ -178,6 +178,8 @@ describe("toPublicPostings", () => {
       noLongerLinked: false,
       url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
       hostLabel: null,
+      removed: false,
+      hasLink: true,
     });
     expect(
       toPublicPostings([publicRow({ accountStatus: "disconnected" })])
@@ -201,18 +203,27 @@ describe("toPublicPostings", () => {
     });
   });
 
-  it("gives the link only when shown, and not for a verified post that was removed", () => {
-    const url = (row: Partial<PublicPostingRow>) =>
-      toPublicPostings([publicRow(row)]).postings[0]?.url;
-    expect(url({ showLink: false })).toBeNull();
-    expect(url({ url: null })).toBeNull();
-    expect(url({ postStatus: "removed" })).toBeNull();
-    expect(url({ postStatus: "stale" })).toBe(
-      "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-    );
-    expect(url({ verification: "unverified", postStatus: "removed" })).toBe(
-      "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-    );
+  it("gives the link only when shown, and not for a verified post that was removed (a stale post kept its removal)", () => {
+    const posting = (row: Partial<PublicPostingRow>) =>
+      toPublicPostings([publicRow(row)]).postings[0];
+    const REMOVED = new Date("2026-10-14T12:00:00.000Z");
+    expect(posting({ showLink: false })).toMatchObject({
+      url: null,
+      hasLink: true,
+      removed: false,
+    });
+    expect(posting({ url: null })).toMatchObject({ url: null, hasLink: false });
+    expect(posting({ postRemovedAt: REMOVED })).toMatchObject({
+      url: null,
+      hasLink: true,
+      removed: true,
+    });
+    expect(
+      posting({ verification: "unverified", postRemovedAt: REMOVED }),
+    ).toMatchObject({
+      url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      removed: false,
+    });
   });
 
   it("labels an Other link by its host, without www., only when the link shows", () => {
@@ -224,7 +235,7 @@ describe("toPublicPostings", () => {
       verifiedUsername: null,
       verifiedAccountLinkedAt: null,
       accountStatus: null,
-      postStatus: null,
+      postRemovedAt: null,
     });
     expect(toPublicPostings([vimeo]).postings[0]).toMatchObject({
       label: "Vimeo",

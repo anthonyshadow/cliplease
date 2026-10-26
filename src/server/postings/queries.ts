@@ -172,7 +172,7 @@ export async function getPublicPostings(
 
 /**
  * Buyers' read of postings matching `where` (over video_posting and its video, published only), in position order, each
- * with its video's id and its account's and its post's status. getPublicPostings and publicPostingRowsByVideo share it.
+ * with its video's id, its account's status and when its post was removed (kept on a post scrubbed stale). getPublicPostings and publicPostingRowsByVideo share it.
  */
 async function publicPostingRows(where: SQL) {
   return db
@@ -188,7 +188,7 @@ async function publicPostingRows(where: SQL) {
       showLink: videoPosting.showLink,
       position: videoPosting.position,
       accountStatus: socialAccount.status,
-      postStatus: socialPost.status,
+      postRemovedAt: socialPost.removedAt,
     })
     .from(videoPosting)
     .innerJoin(
@@ -213,7 +213,7 @@ export async function publicPostingRowsByVideo(
   return Map.groupBy(rows, (row) => row.videoId);
 }
 
-/** A posting row with its account's and post's status, as getPublicPostings reads it. */
+/** A posting row with its account's status and its post's removal, as getPublicPostings reads it. */
 export type PublicPostingRow = Awaited<
   ReturnType<typeof publicPostingRows>
 >[number];
@@ -241,10 +241,8 @@ export function toPublicPostings(
 
 function toPublicPosting(row: PublicPostingRow): PublicPostingDTO {
   const verified = row.verification === "verified";
-  const url =
-    row.showLink && (!verified || row.postStatus !== "removed")
-      ? row.url
-      : null;
+  const removed = verified && row.postRemovedAt !== null;
+  const url = row.showLink && !removed ? row.url : null;
   return {
     platform: row.platform,
     label: postingPlatformLabel(row.platform, row.otherLabel),
@@ -259,5 +257,7 @@ function toPublicPosting(row: PublicPostingRow): PublicPostingDTO {
       row.platform === "other" && url !== null
         ? new URL(url).hostname.replace(/^www\./, "")
         : null,
+    removed,
+    hasLink: row.url !== null,
   };
 }

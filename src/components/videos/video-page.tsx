@@ -170,7 +170,20 @@ export function VideoPageView({
         {url ? (
           <>
             <CopyLinkField url={url} label={PUBLISHED_COPY.shareLink} />
-            <ShareButton url={url} />
+            {/* 05 §6.7 callout 3: Share… (where the browser can) and the buyer's page in a new tab (owner answer Q-116 a). */}
+            <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+              <ShareButton url={url} />
+              <Button asChild variant="link" size="sm">
+                <a
+                  href={url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  aria-label={VIDEO_PAGE_COPY.viewLicensePageLabel}
+                >
+                  {VIDEO_PAGE_COPY.viewLicensePage}
+                </a>
+              </Button>
+            </div>
           </>
         ) : null}
       </div>

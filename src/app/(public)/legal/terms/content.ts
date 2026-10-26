@@ -9,7 +9,7 @@ import {
   SUPPORT_EMAIL,
   VENUE,
 } from "@/lib/app-name";
-import { LICENSE_V1_DISPLAY_TITLE } from "@/lib/legal/license-v1";
+import { LICENSE_V1_DISPLAY_TITLE } from "@/lib/legal/license-v1-summary";
 import { type LegalSection, mailtoLink, urlLink } from "@/lib/legal/types";
 
 // The full service agreement (research/stripe-owner-answers.md §2.2).

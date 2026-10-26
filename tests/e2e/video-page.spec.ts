@@ -75,6 +75,15 @@ test("J5.19, J5.20, J6.1: the live video's page, Copy, Turn off and Turn on, fro
   ).toHaveCount(0);
   await expect(sections.getByText(VIDEO_PAGE_COPY.replaceLocked)).toBeVisible();
 
+  // View license page ↗ opens the buyer's page in a new tab (05 §6.7 callout 3; owner answer Q-116 a).
+  const licensePage = view.getByRole("link", {
+    name: VIDEO_PAGE_COPY.viewLicensePageLabel,
+    exact: true,
+  });
+  await expect(licensePage).toHaveText(VIDEO_PAGE_COPY.viewLicensePage);
+  await expect(licensePage).toHaveAttribute("href", shareUrl);
+  await expect(licensePage).toHaveAttribute("target", "_blank");
+
   // Copy (J6.1): "Copied" on the button, "Link copied" said politely, the link in the clipboard where it can be read.
   await view.getByRole("button", { name: "Copy", exact: true }).click();
   await expect(view.getByText("Link copied", { exact: true })).toHaveCount(1);

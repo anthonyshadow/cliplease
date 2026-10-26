@@ -28,13 +28,26 @@ export const VIDEO_GRID =
 
 /**
  * A two-column creator page (07 D146; 04 §5.2.4; 05 §1.6 S17): one centered max-w-reading column below lg, in the
- * Mobile order; from lg the two columns of 05 §6.5's Desktop frame in the max-w-app width, 5 + 7 of 12 with a 48 px gap
- * (the license page's split, 04 §5.2.3). `page` is the grid; its children place themselves with `span` (above both
- * columns: the back link, the Stepper), `side` (the video, left) and `main` (the step, right).
+ * Mobile order; from lg the two columns of 05 §6.5's Desktop frame in the max-w-app width, 5 + 7 of 12 with a 48 px gap.
+ * `page` is the grid; its children place themselves with `span` (above both columns: the back link, the Stepper), `side`
+ * (the video, left) and `main` (the step, right).
  */
 export const TWO_COLUMN = {
   page: "mx-auto grid w-full max-w-reading grid-cols-1 gap-6 py-6 lg:max-w-app lg:grid-cols-12 lg:items-start lg:gap-x-12 lg:py-12",
   span: "min-w-0 lg:col-span-12",
   side: "min-w-0 lg:col-span-5",
   main: "min-w-0 lg:col-span-7",
+} as const;
+
+/**
+ * The license page (07 D148; 04 §5.2.3; 05 §1.6 S01): one centered max-w-reading column below lg (Mobile, Tablet); from
+ * lg two columns in max-w-license (1056, not widened at XL), 12 of them with a 48 px gap: `side` (poster, ownership,
+ * postings, notices) in 1–5, `main` (options, summary, details) in 7–12. From lg the PriceBar is fixed under the NavBar,
+ * so the grid starts below it; `side` sticks 24 px under both bars and is capped at the window, scrolling inside itself
+ * when taller (its 4 px inset keeps focus rings inside the scroll box; SC 2.4.11).
+ */
+export const LICENSE_COLUMNS = {
+  page: "mx-auto grid w-full max-w-reading grid-cols-1 gap-8 py-6 lg:max-w-license lg:grid-cols-12 lg:items-start lg:gap-x-12 lg:pt-[calc(var(--pricebar-h)+1.5rem)] lg:pb-12",
+  side: "flex min-w-0 flex-col gap-6 lg:sticky lg:top-[calc(var(--nav-h)+var(--pricebar-h)+1.5rem)] lg:col-span-5 lg:-m-1 lg:max-h-[calc(100svh-var(--nav-h)-var(--pricebar-h)-3rem)] lg:overflow-y-auto lg:p-1",
+  main: "flex min-w-0 flex-col gap-8 lg:col-span-6 lg:col-start-7",
 } as const;

@@ -1,17 +1,19 @@
 import { describe, expect, it } from "vitest";
 import { APP_NAME } from "../app-name";
 import {
-  fillLicenseV1,
   LICENSE_V1_HEADER,
   LICENSE_V1_NEUTRAL_VALUES,
   LICENSE_V1_SCHEDULE_A,
   LICENSE_V1_SECTIONS,
+  LICENSE_V1_UPDATED_LABEL,
+} from "./license-v1";
+import {
+  fillLicenseV1,
   LICENSE_V1_SUMMARY,
   LICENSE_V1_TITLE,
-  LICENSE_V1_UPDATED_LABEL,
   LICENSE_V1_VERSION,
   licenseV1Tokens,
-} from "./license-v1";
+} from "./license-v1-summary";
 import { sectionStrings } from "./types";
 
 const pageStrings = [

@@ -11,6 +11,25 @@ export const SLUG_MAX_LENGTH = 60;
 export const isValidSlug = (slug: string) =>
   slug.length <= SLUG_MAX_LENGTH && SLUG_RE.test(slug);
 
+/**
+ * The handle a `/@{param}` URL names (02 §4.3): the param decoded and lowercased, and whether the URL needs the 308 to
+ * its lowercase form; null when it can't be a handle (it then 404s). For the license page and its 404 view.
+ */
+export function handleFromParam(
+  param: string,
+): { handle: string; mixedCase: boolean } | null {
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(param);
+  } catch {
+    return null;
+  }
+  const handle = decoded.toLowerCase();
+  return HANDLE_RE.test(handle)
+    ? { handle, mixedCase: handle !== decoded }
+    : null;
+}
+
 const HANDLE_MIN = 3;
 const HANDLE_MAX = 30;
 

@@ -1,4 +1,5 @@
 import { type ComponentProps, type ReactNode, useId } from "react";
+import { FadeText } from "@/components/ui/fade-text";
 import { cn } from "@/lib/utils";
 
 /**
@@ -43,28 +44,76 @@ export function OptionGroup({
 }
 
 /**
- * 04 §9.3 OptionTile: a `<label data-focus-within>` (the focus ring sits on the label) around a visually hidden native
- * radio and the title, `body` semibold (the license page adds the description and delta, P15). Selected: the ink
- * border and a 1 px inset ring, no layout shift; forced colors drop the ring (a box-shadow), so there it is a 4 px
- * `Highlight` border (04 §7). Disabled: `fill`, no border, the title `ink-3`.
+ * 04 §9.3 OptionTile: a box holding a `<label>` around a visually hidden native radio and the title, `body` semibold,
+ * then the license page's delta and description (P15). The label is stretched over the box, so a tap anywhere selects,
+ * and `picker` (the territory's select and "Which countries?") sits after it, above the stretch: a label can't hold
+ * other controls. The box's styles read its own radio only (`>label>input`), never the picker's options, and its focus
+ * ring shows only for the radio (globals.css `[data-option-tile]`). Selected: the ink border and a 1 px inset ring, no
+ * layout shift; forced colors drop the ring (a box-shadow), so there it is a 4 px `Highlight` border (04 §7). Disabled:
+ * `fill`, no border, the title `ink-3`, and `reason` in place of the description, read with the title (01 J7.4).
  */
 export function OptionTile({
   title,
+  description,
+  delta,
+  deltaPlacement = "beside",
+  reason,
+  picker,
   className,
   ...input
-}: Omit<ComponentProps<"input">, "type" | "title"> & { title: ReactNode }) {
+}: Omit<ComponentProps<"input">, "type" | "title"> & {
+  title: ReactNode;
+  /** The option's one-liner (01 §4.1–§4.3), `callout` `ink-2`. */
+  description?: ReactNode;
+  /** formatDelta's license-price difference (04 §9.3), cross-faded on change; kept but hidden on the selected tile. */
+  delta?: string | null;
+  /** `beside` the title (Use, Territory) or `below` it (Term's half-width tiles, 05 frame). */
+  deltaPlacement?: "beside" | "below";
+  /** Why the option is off: replaces the description. */
+  reason?: ReactNode;
+  picker?: ReactNode;
+}) {
+  const deltaText =
+    delta == null ? null : (
+      <FadeText
+        text={delta}
+        aria-hidden={input.checked || undefined}
+        className={cn(
+          "text-callout text-ink-2 tabular-nums",
+          deltaPlacement === "beside" && "shrink-0",
+          input.checked && "invisible",
+        )}
+      />
+    );
+  const detail = reason ?? description;
   return (
-    <label
-      data-focus-within
+    <div
+      data-option-tile
       className={cn(
-        "group flex min-h-16 cursor-pointer items-center rounded-md border border-hairline-strong bg-surface px-4 py-3.5 hover:border-ink-2 has-checked:border-ink has-checked:ring-1 has-checked:ring-ink has-checked:ring-inset forced-colors:has-checked:border-4 forced-colors:has-checked:border-[Highlight] has-disabled:cursor-not-allowed has-disabled:border-transparent has-disabled:bg-fill",
+        "relative flex flex-col rounded-md border border-hairline-strong bg-surface hover:border-ink-2 has-[>label>input:checked]:border-ink has-[>label>input:checked]:ring-1 has-[>label>input:checked]:ring-ink has-[>label>input:checked]:ring-inset forced-colors:has-[>label>input:checked]:border-4 forced-colors:has-[>label>input:checked]:border-[Highlight] has-[>label>input:disabled]:border-transparent has-[>label>input:disabled]:bg-fill",
         className,
       )}
     >
-      <input type="radio" className="sr-only" {...input} />
-      <span className="min-w-0 text-body font-semibold text-ink group-has-disabled:text-ink-3">
-        {title}
-      </span>
-    </label>
+      <label className="group/tile flex min-h-16 cursor-pointer items-center px-4 py-3.5 after:absolute after:inset-0 has-disabled:cursor-not-allowed">
+        <input type="radio" className="sr-only" {...input} />
+        <span className="flex min-w-0 flex-1 flex-col gap-1">
+          <span className="flex items-baseline justify-between gap-3">
+            <span className="min-w-0 text-body font-semibold text-ink group-has-disabled/tile:text-ink-3">
+              {title}
+            </span>
+            {deltaPlacement === "beside" ? deltaText : null}
+          </span>
+          {deltaPlacement === "below" ? deltaText : null}
+          {detail ? (
+            <span className="text-callout text-ink-2">{detail}</span>
+          ) : null}
+        </span>
+      </label>
+      {picker ? (
+        <div className="relative z-10 flex min-w-0 flex-col gap-3 px-4 pb-4">
+          {picker}
+        </div>
+      ) : null}
+    </div>
   );
 }

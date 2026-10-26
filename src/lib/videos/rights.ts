@@ -1,6 +1,7 @@
 // The Rights step (01 J5.13–J5.15; 05 §6.5 callouts 36–41; research/license.md §7): its words and the music rule. Pure.
 import type { UseKey } from "../domain/values";
 import { joinList } from "../format";
+import { PEOPLE_NOTICE } from "../licensing/license-page";
 import { rateOptionLabel } from "../licensing/options";
 
 /** Music Yes turns these uses off for the video (07 D39, D82); P19d lets the creator turn either back on. */
@@ -21,8 +22,7 @@ export const RIGHTS_COPY = {
   musicFootnote: `${joinList(MUSIC_DISABLED_USES.map(rateOptionLabel), "and")} will be off for this video.`,
   peopleQuestion:
     "Can anyone other than you be recognized in it, by face, voice or name?",
-  peopleNotice:
-    "Buyers will see: People in this video haven't signed releases. For ads, or anything that suggests they endorse you, get their permission first.",
+  peopleNotice: `Buyers will see: ${PEOPLE_NOTICE}`,
   answerAll: "Answer all four to continue.",
   yes: "Yes",
   no: "No",

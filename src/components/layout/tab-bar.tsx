@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { type ReactNode, useEffect } from "react";
+import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import {
   CREATOR_NAV,
@@ -21,6 +21,7 @@ import {
 } from "./creator-nav";
 import { MoreSheet } from "./more-sheet";
 import { CountPill } from "./nav-bar";
+import { useKeepFocusAboveBar } from "./use-keep-focus-above-bar";
 
 const TABS: readonly { key: CreatorNavKey; icon: LucideIcon }[] = [
   { key: "inbox", icon: Inbox },
@@ -44,34 +45,6 @@ function CurrentBar() {
       className="absolute top-0 left-1/2 h-0.5 w-6 -translate-x-1/2 rounded-full bg-ink forced-colors:bg-[CanvasText]"
     />
   );
-}
-
-/**
- * The root's scroll-padding-bottom (globals.css) keeps focus clear of the bar, but WebKit's focus scrolling can
- * still leave a field a few px under it. After each focus move, if something marked `data-covers-focus` (the bar, the
- * floating upload card) covers the focused element's bottom edge, scroll it clear (WCAG 2.2 SC 2.4.11). A sheet above
- * the bar, or the bar hidden at lg, covers nothing.
- */
-function useKeepFocusAboveBar() {
-  useEffect(() => {
-    const onFocusIn = (event: FocusEvent) => {
-      const target = event.target;
-      if (!(target instanceof Element)) return;
-      requestAnimationFrame(() => {
-        const rect = target.getBoundingClientRect();
-        const covering = document.elementFromPoint(
-          rect.left + rect.width / 2,
-          Math.min(rect.bottom, window.innerHeight) - 1,
-        );
-        const cover = covering?.closest("[data-covers-focus]");
-        if (cover && !cover.contains(target)) {
-          target.scrollIntoView({ block: "nearest" });
-        }
-      });
-    };
-    document.addEventListener("focusin", onFocusIn);
-    return () => document.removeEventListener("focusin", onFocusIn);
-  }, []);
 }
 
 /**

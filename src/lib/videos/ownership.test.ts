@@ -347,6 +347,8 @@ describe("publicBadge (the badge buyers see; 07 D70, D89)", () => {
     noLongerLinked: false,
     url: null,
     hostLabel: null,
+    removed: false,
+    hasLink: true,
   });
   const unverified = {
     ...verified("TikTok", "instagram"),

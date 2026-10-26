@@ -7,6 +7,7 @@ import { APP_NAME } from "../app-name";
 import {
   HANDLE_COPY,
   HANDLE_RE,
+  handleFromParam,
   handleProblem,
   handleProblemMessage,
   normalizeHandleInput,
@@ -133,4 +134,27 @@ describe("SLUG_RE", () => {
   it("caps slugs at 60 characters", () => {
     expect(SLUG_MAX_LENGTH).toBe(60);
   });
+});
+
+describe("handleFromParam (02 §4.3)", () => {
+  it("decodes and lowercases, flagging mixed case for the 308", () => {
+    expect(handleFromParam("maya")).toEqual({
+      handle: "maya",
+      mixedCase: false,
+    });
+    expect(handleFromParam("Maya.R")).toEqual({
+      handle: "maya.r",
+      mixedCase: true,
+    });
+    expect(handleFromParam("maya%5Fr")).toEqual({
+      handle: "maya_r",
+      mixedCase: false,
+    });
+  });
+  it.each(["ma", "maya..r", "%E0%A4%A", "-maya", "maya/x"])(
+    "is null for %j, which can't be a handle",
+    (param) => {
+      expect(handleFromParam(param)).toBeNull();
+    },
+  );
 });

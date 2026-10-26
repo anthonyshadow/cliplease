@@ -3,9 +3,11 @@ import { POSTINGS_COPY } from "../../src/lib/postings/copy";
 import { sourcePageHref, videoStepHref } from "../../src/lib/videos/steps";
 import { collectConsoleErrors } from "./helpers/console";
 import { signUpCreator } from "./helpers/creator";
+import { publish } from "./helpers/flows";
 import { expectAbove, expectLeftOf, viewportWidth } from "./helpers/layout";
 import {
   libraryPostId,
+  OWN_DEMO_LINK,
   POST_01,
   tiles,
   waitForLibrary,
@@ -23,10 +25,12 @@ import {
   waitInPage,
 } from "./helpers/press";
 import {
+  answerRights,
   attachSample,
   chipGroup,
   cleanCreatedVideos,
   continueToPostings,
+  continueToReview,
   continueToRights,
   createDraft,
   expectOneLine,
@@ -49,16 +53,14 @@ import {
 // copy, a client-blocked Continue), and sees each saved link's result in place; nothing is ever asked of a pasted host.
 // "I haven't posted it anywhere yet." completes the step with nothing chosen; nothing chosen at all says "Say where it
 // was posted". The states the e2e server can't reach (check failed, Reconnect, not found, released, private, unlisted,
-// the refusals, the read-only mode) are proven by the unit and [int] suites. P14a/P15 extend this spec to publish and the
-// buyer view. Controls are pressed with the keyboard: on the iPhone a click near the bottom can land on the fixed TabBar.
+// the refusals, the read-only mode) are proven by the unit and [int] suites. The upload's test goes on to publish and
+// the buyer's "Where it was posted" (P15). Controls are pressed with the keyboard: on the iPhone a click near the bottom
+// can land on the fixed TabBar.
 test.use({ reducedMotion: "reduce" });
 test.afterEach(cleanCreatedVideos);
 
 // Post 02 (38 s, 24 Sep 2026), the second newest Demo post (07 D53); post 01 is the helpers' POST_01.
 const POST_02 = /^Caught a wave at sunrise/;
-/** The creator's own Demo link to post 01 (P11b: built from the provider's post id only, unique per creator). */
-const OWN_DEMO_LINK =
-  /^https:\/\/example\.com\/mock\/mock_post_[0-9a-f]{8}_01$/;
 const IG_REEL = "https://www.instagram.com/reel/C0dEaBcDeF1/";
 const TIKTOK_SHORT = "https://vm.tiktok.com/ZMabc123/";
 const FB_REEL = "https://www.facebook.com/reel/1234567890123";
@@ -249,10 +251,11 @@ test("J5.10: post 02 (38 s) warns above the tick wherever the browser read the f
   expect(errors).toEqual([]);
 });
 
-test("J5.6, J5.22–J5.26: an upload's links: Move, the short-link copy, then each saved result in place, the tick, and Rights; no pasted host is asked", async ({
+test("J5.6, J5.22–J5.28: an upload's links: Move, the short-link copy, then each saved result in place, the tick, and Rights; published, the buyer sees every posting, verified first; no pasted host is asked", async ({
   page,
+  browser,
 }) => {
-  test.setTimeout(180_000);
+  test.setTimeout(240_000);
   const errors = collectConsoleErrors(page);
   const external = trackExternalRequests(page);
   await signUpCreator(page, { connectDemo: true, payouts: false });
@@ -418,9 +421,81 @@ test("J5.6, J5.22–J5.26: an upload's links: Move, the short-link copy, then ea
   await expect(tick).toBeChecked();
   await continueToRights(page, videoId);
 
-  // The page never asked another host for anything, least of all a pasted one (07 D67): only the e2e server.
+  // Published, a logged-out buyer's license page lists every posting, verified first (07 D70; owner answers Q-111 a,
+  // Q-117 a): the Demo row with its handle, then Instagram and Facebook "Not verified" with no handle, then the Other
+  // site by its hostname; each link the stored canonical url, opened apart from the page.
+  await answerRights(page);
+  await continueToReview(page, videoId);
+  const { shareUrl } = await publish(page);
+  const visitor = await browser.newContext();
+  const buyer = await visitor.newPage();
+  const buyerErrors = collectConsoleErrors(buyer);
+  const buyerExternal = trackExternalRequests(buyer);
+  await buyer.goto(shareUrl);
+  const rows = buyer
+    .getByRole("region", { name: "Where it was posted" })
+    .locator("[data-posting-row]");
+  await expect(rows).toHaveCount(4);
+  const expected = [
+    {
+      text: "@demo.creator on Demo",
+      pill: POSTINGS_COPY.verified,
+      link: "View post on Demo (opens in a new tab)",
+      href: OWN_DEMO_LINK,
+    },
+    {
+      text: "Instagram",
+      pill: POSTINGS_COPY.notVerified,
+      link: "View post on Instagram (opens in a new tab)",
+      href: IG_REEL,
+    },
+    {
+      text: "Facebook",
+      pill: POSTINGS_COPY.notVerified,
+      link: "View post on Facebook (opens in a new tab)",
+      href: FB_REEL,
+    },
+    {
+      text: "Vimeo",
+      pill: null,
+      link: "vimeo.com (opens in a new tab)",
+      href: VIMEO,
+    },
+  ];
+  for (const [index, row] of expected.entries()) {
+    const item = rows.nth(index);
+    await expect(item.getByText(row.text, { exact: true })).toBeVisible();
+    if (row.pill) {
+      await expect(item.getByText(row.pill, { exact: true })).toBeVisible();
+    }
+    const link = item.getByRole("link", { name: row.link, exact: true });
+    await expect(link).toHaveAttribute("href", row.href);
+    await expect(link).toHaveAttribute("target", "_blank");
+    await expect(link).toHaveAttribute(
+      "rel",
+      "nofollow ugc noopener noreferrer",
+    );
+  }
+  await expect(rows.nth(3).getByRole("link")).toHaveText("vimeo.com ↗");
+  // An unverified row never names an account (07 D70).
+  for (const index of [1, 2, 3]) {
+    await expect(rows.nth(index)).not.toContainText("@");
+  }
+  await expect(buyer.locator("iframe")).toHaveCount(0);
+  // This creator has no payouts: buyers still get the prices and the request, and read nothing about payouts (07 D74).
+  const bar = buyer.locator("[data-pricebar]");
+  await expect(bar.locator("[data-price-lines]")).toHaveText(
+    "License CA$150.00 · Service fee CA$15.00",
+  );
+  await expect(bar.getByRole("button")).toHaveText("Choose a country");
+  expect(await buyer.locator("body").innerText()).not.toMatch(/payout/i);
+  await visitor.close();
+
+  // Neither page asked another host for anything, least of all a pasted one (07 D67): only the e2e server.
   expect(external).toEqual([]);
+  expect(buyerExternal).toEqual([]);
   expect(errors).toEqual([]);
+  expect(buyerErrors).toEqual([]);
 });
 
 test("J5.29: nothing chosen says where; “I haven't posted it anywhere yet.” disables the chips and goes to Rights", async ({
