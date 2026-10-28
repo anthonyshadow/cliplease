@@ -48,17 +48,29 @@ export function PublicShell({
   );
 }
 
-/** A one-message page body: the 404 and the error views (05 §10), and /r's states. `children` follow the title. */
+/**
+ * A one-message page body: the 404 and the error views (05 §10), and /r's states. `children` follow the title; `icon`
+ * (decorative, aria-hidden) leads it, so the heading's name stays the title. A long word (a handle) wraps.
+ */
 export function MessageBody({
   title,
+  icon,
   children,
 }: {
   title: string;
+  icon?: ReactNode;
   children?: ReactNode;
 }) {
   return (
     <div className="mx-auto flex max-w-reading flex-col items-start gap-4 py-6 lg:py-12">
-      <h1 className="text-title-1 text-ink">{title}</h1>
+      <h1 className="text-title-1 text-ink wrap-anywhere">
+        {icon ? (
+          <span aria-hidden className="mr-2 inline-flex align-middle">
+            {icon}
+          </span>
+        ) : null}
+        {title}
+      </h1>
       {children}
     </div>
   );

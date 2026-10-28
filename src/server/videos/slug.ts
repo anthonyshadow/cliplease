@@ -1,14 +1,12 @@
 import "server-only";
 import { and, eq, like } from "drizzle-orm";
-import type { db } from "../../db/client";
+import type { Tx } from "../../db/client";
 import { video } from "../../db/schema";
 import type { NewVideo } from "../../db/schema/types";
 import { slugFromTitle, withSlugSuffix } from "../../lib/videos/slug";
 
 // A video's slug is unique per creator (video_creator_slug_uidx; 01 J5.12). Shared by createVideoFromUpload and P11's
 // createVideoFromPost.
-
-type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 // Room for a 7-digit suffix: every candidate starts with this much of the base.
 const LONGEST_SUFFIX = "-9999999";

@@ -610,6 +610,7 @@ describe("the buyer's pages: the fake checkout and /r (05 §4.3, §10; owner ans
     expect(checkout).toMatchObject({
       id: row.id,
       status: "checkout_pending",
+      sessionId: `cs_fake_${row.id}`,
       title: live.title,
       scope: "Paid social ads · 1 year · Worldwide",
       currency: "cad",
@@ -626,6 +627,10 @@ describe("the buyer's pages: the fake checkout and /r (05 §4.3, §10; owner ans
     expect(hashBuyerToken(token)).toBe(row.buyerTokenHash);
     expect(await getBuyerRequest(row.id, token)).toEqual({
       status: "checkout_pending",
+      statusReason: null,
+      amountTotalCents: DEMO_TOTAL,
+      currency: "cad",
+      expiresAt: null,
       handle: creator.handle,
       slug: live.slug,
     });

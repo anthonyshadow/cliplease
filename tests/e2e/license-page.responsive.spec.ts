@@ -1,6 +1,8 @@
 import { expect, type Locator, test } from "@playwright/test";
+import { formatMoney } from "../../src/lib/format";
 import { CHECKOUT_COPY } from "../../src/lib/licensing/checkout-copy";
 import { LICENSE_PAGE_COPY } from "../../src/lib/licensing/license-page";
+import { REQUEST_STATUS_COPY } from "../../src/lib/licensing/request-status";
 import { BADGE_COPY } from "../../src/lib/videos/ownership";
 import {
   chooseDemoSelection,
@@ -8,7 +10,9 @@ import {
   fillDetails,
   holdServerActions,
   hydrated,
+  openSuccessUrl,
   requestButton,
+  requestDemoLicense,
   requestWithStaleTotal,
 } from "./helpers/buyer";
 import { collectConsoleErrors } from "./helpers/console";
@@ -39,7 +43,8 @@ import { cleanCreatedVideos } from "./helpers/videos";
 // explainer and Which countries? bottom sheets below 768 and dialogs from 768; the bar last in the DOM. On
 // chromium-desktop at 1280 × 720 the sticky column fits under both bars and its last "View post" can be focused in view.
 // P16a: a refusal's banner across the form's column, the pending button in its bar, and the fake checkout and /r as one
-// centered reading column (07 D145, D148).
+// centered reading column (07 D145, D148). P16b: the fake checkout's three buttons (Pay full width below 768), and /r
+// finishing checkout and waiting for the creator, a handle long enough to need wrapping at 320 px.
 test.use({ reducedMotion: "reduce" });
 test.afterEach(cleanCreatedVideos);
 
@@ -252,6 +257,75 @@ test("G.6, 07 D145, D148: the license page's banner and pending states, the fake
   await atEveryWidth(buyer, testInfo, ({ width }) =>
     expectReadingPage(buyer, width),
   );
+
+  await context.close();
+  expect(errors).toEqual([]);
+});
+
+test("G.6, 07 D145, D149: the fake checkout's three buttons, and /r finishing checkout and waiting, at every tier", async ({
+  page,
+  browser,
+  baseURL,
+}, testInfo) => {
+  test.setTimeout(600_000);
+  const { shareUrl, handle } = await publishDemoVideo(page);
+  const context = await browser.newContext({ baseURL });
+  const buyer = await context.newPage();
+  const errors = collectConsoleErrors(buyer);
+  const requestId = await requestDemoLicense(buyer, shareUrl);
+  const checkoutUrl = buyer.url();
+
+  // Pay, Cancel and Let it expire in the column, one under another, each a 44 px target; Pay spans it below 768.
+  const column = buyer.locator("main .max-w-reading");
+  const button = (name: string) => buyer.getByRole("button", { name });
+  const pay = button(CHECKOUT_COPY.pay(formatMoney(173250, "cad")));
+  const cancel = button(CHECKOUT_COPY.cancel);
+  const expire = button(CHECKOUT_COPY.letItExpire);
+  await atEveryWidth(buyer, testInfo, async ({ width }) => {
+    await expectPageFrame(buyer, width, { banner: false });
+    await expectReadingColumn(buyer);
+    for (const control of [pay, cancel, expire]) {
+      await expectTouchTarget(control);
+      await expectInside(control, column);
+    }
+    await expectAbove(pay, cancel);
+    await expectAbove(cancel, expire);
+    if (width < TIERS.tablet) {
+      await expectFullWidth(pay, column);
+    } else {
+      const [own, outer] = await Promise.all([boxOf(pay), boxOf(column)]);
+      expect(own.right - own.left).toBeLessThan(outer.right - outer.left);
+    }
+  });
+
+  // Finishing checkout (Stripe's success URL before its event): the spinner's heading in the reading column.
+  await openSuccessUrl(buyer, requestId);
+  const heading = buyer.getByRole("heading", { level: 1 });
+  await expect(heading).toHaveAccessibleName(
+    REQUEST_STATUS_COPY.finishingTitle,
+  );
+  await atEveryWidth(buyer, testInfo, ({ width }) =>
+    expectReadingPage(buyer, width),
+  );
+  // It stops checking 30 s after it opened, the body in the spinner's place: leaving earlier could cut a refresh off.
+  await expect(
+    buyer.getByText(REQUEST_STATUS_COPY.finishingBody, { exact: true }),
+  ).toBeVisible({ timeout: 35_000 });
+  await expect(heading.locator("svg")).toHaveCount(0);
+
+  // Waiting for @handle, its deadline shown: the handle wraps rather than push the page sideways.
+  await buyer.goto(checkoutUrl);
+  await pressAndSettle(buyer, CHECKOUT_COPY.pay(formatMoney(173250, "cad")));
+  await expect(heading).toHaveAccessibleName(
+    REQUEST_STATUS_COPY.waitingTitle(handle),
+  );
+  await expect(buyer.getByText(/^Your card has a hold of /)).toContainText(
+    "has until",
+  );
+  await atEveryWidth(buyer, testInfo, async ({ width }) => {
+    await expectReadingPage(buyer, width);
+    await expectInside(heading, buyer.locator("main .max-w-reading").first());
+  });
 
   await context.close();
   expect(errors).toEqual([]);

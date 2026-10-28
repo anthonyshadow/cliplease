@@ -26,3 +26,6 @@ pool.on("error", (error) => {
 });
 
 export const db = drizzle({ client: pool, schema });
+
+/** A transaction's handle, as db.transaction passes it: code that must run inside one (a FOR UPDATE lock) takes this. */
+export type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];

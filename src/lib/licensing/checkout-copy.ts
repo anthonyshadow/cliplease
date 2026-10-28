@@ -10,5 +10,9 @@ export const CHECKOUT_COPY = {
   license: "License",
   serviceFee: `${APP_NAME} service fee`,
   total: "Total",
+  /** `total` is formatMoney's: "Pay CA$1,732.50". */
+  pay: (total: string) => `Pay ${total}`,
   cancel: "Cancel",
+  /** 02 §5.8, 07 D35: the session ends unpaid. */
+  letItExpire: "Let it expire",
 } as const;

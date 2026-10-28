@@ -1,5 +1,11 @@
 import { expect, type Page, type Route } from "@playwright/test";
-import { isServerAction, pressLocator, requestEnded } from "./press";
+import { CHECKOUT_COPY } from "../../../src/lib/licensing/checkout-copy";
+import {
+  isServerAction,
+  pressAndSettle,
+  pressLocator,
+  requestEnded,
+} from "./press";
 
 // A buyer on the license page (S01, 05 §4.1): its choices, "Your details" and the PriceBar's button.
 
@@ -68,4 +74,35 @@ export async function holdServerActions(page: Page) {
     resolve();
     await page.unroute("**/*", hold);
   };
+}
+
+/**
+ * Opens `shareUrl` as a buyer, asks for the demo selection with valid details and the terms ticked, and lands on the
+ * fake checkout. Returns the new request's id.
+ */
+export async function requestDemoLicense(page: Page, shareUrl: string) {
+  await page.goto(shareUrl);
+  await hydrated(page);
+  await chooseDemoSelection(page);
+  await fillDetails(page);
+  const terms = page.getByRole("checkbox");
+  await terms.focus();
+  await terms.press("Space");
+  await pressLocator(requestButton(page));
+  await page.waitForURL(FAKE_CHECKOUT_URL);
+  return page.url().split("/").at(-1) ?? "";
+}
+
+/**
+ * From the fake checkout of `requestId`, opens Stripe's success URL before its event comes (02 §8.3): Cancel leads to
+ * the buyer's /r link, and the fake session's id takes the place of `checkout=canceled`.
+ */
+export async function openSuccessUrl(page: Page, requestId: string) {
+  await pressAndSettle(page, CHECKOUT_COPY.cancel);
+  await expect(page).toHaveURL(/&checkout=canceled$/);
+  await page.goto(
+    page
+      .url()
+      .replace("&checkout=canceled", `&session_id=cs_fake_${requestId}`),
+  );
 }

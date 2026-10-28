@@ -1,10 +1,11 @@
 import { expect, type Page, test } from "@playwright/test";
 import { APP_NAME } from "../../src/lib/app-name";
-import { formatDelta, formatMoney } from "../../src/lib/format";
+import { formatDeadline, formatDelta, formatMoney } from "../../src/lib/format";
 import { CHECKOUT_COPY } from "../../src/lib/licensing/checkout-copy";
 import { DETAILS_COPY } from "../../src/lib/licensing/details";
 import { LICENSE_PAGE_COPY } from "../../src/lib/licensing/license-page";
 import { REQUEST_STATUS_COPY } from "../../src/lib/licensing/request-status";
+import { HOUR_MS } from "../../src/lib/time";
 import { BADGE_COPY } from "../../src/lib/videos/ownership";
 import { OBJECT_KEY } from "../helpers/object-key";
 import {
@@ -13,8 +14,10 @@ import {
   fillDetails,
   holdServerActions,
   hydrated,
+  openSuccessUrl,
   radio,
   requestButton,
+  requestDemoLicense,
   requestWithStaleTotal,
 } from "./helpers/buyer";
 import { collectConsoleErrors, type ExpectedFailure } from "./helpers/console";
@@ -32,7 +35,8 @@ import { cleanCreatedVideos } from "./helpers/videos";
 // metadata, the 308 for a mixed-case handle and the 404. A music video's Paid social ads and TV / broadcast are off,
 // and only a tap (not a key) on One country or One region moves focus into its select (owner answer Q-113 a). P16a: the
 // button submits; checked on press, a total the server didn't quote, the pending state, the fake checkout's amounts,
-// and Cancel to /r with its headers and its dead link. Radios are chosen with the keyboard (focus, Space): on the
+// and Cancel to /r with its headers and its dead link. P16b: Pay holds the card and /r waits for the creator, also on a
+// page still finishing checkout; Let it expire ends checkout. Radios are chosen with the keyboard (focus, Space): on the
 // iPhone a click near the bottom can land on the fixed bar.
 test.use({ reducedMotion: "reduce" });
 test.afterEach(cleanCreatedVideos);
@@ -455,6 +459,98 @@ test("J7.7–J7.13: Request license validates on press, prices on the server, op
   ).toBeVisible();
   await expect(buyer.locator("main").getByRole("link")).toHaveCount(0);
   await expect(buyer).toHaveTitle(APP_NAME);
+
+  await context.close();
+  expect(errors).toEqual([]);
+});
+
+test("J7.8, J7.13, J7.14: Pay holds the card and /r waits for the creator, also on a page still finishing checkout; Let it expire ends checkout", async ({
+  page,
+  browser,
+  baseURL,
+}) => {
+  test.setTimeout(240_000);
+  const { handle, slug, shareUrl } = await publishDemoVideo(page);
+  const timezoneId = "America/Toronto";
+  const context = await browser.newContext({
+    baseURL,
+    viewport: { width: 390, height: 844 },
+    timezoneId,
+  });
+  const buyer = await context.newPage();
+  const errors = collectConsoleErrors(buyer);
+  const COPY = REQUEST_STATUS_COPY;
+  const pay = CHECKOUT_COPY.pay(cad(173250));
+
+  // The fake checkout's three buttons (02 §5.8; 07 D35).
+  const requestId = await requestDemoLicense(buyer, shareUrl);
+  const checkoutUrl = buyer.url();
+  await expect(buyer.locator("main").getByRole("button")).toHaveText([
+    pay,
+    CHECKOUT_COPY.cancel,
+    CHECKOUT_COPY.letItExpire,
+  ]);
+
+  // Back from Checkout before its event (Stripe's success URL): "Finishing checkout…", still checking (02 §8.3).
+  await openSuccessUrl(buyer, requestId);
+  const heading = buyer.getByRole("heading", { level: 1 });
+  await expect(heading).toHaveAccessibleName(COPY.finishingTitle);
+  await expect(heading.locator("svg")).toHaveCount(1);
+  await expect(buyer.getByText(COPY.finishingBody)).toHaveCount(0);
+
+  // Pay in another tab: it lands on the success URL waiting for the creator, and the checking page follows (J7.14).
+  const checkout = await context.newPage();
+  const checkoutErrors = collectConsoleErrors(checkout);
+  await checkout.goto(checkoutUrl);
+  const paidFrom = Date.now();
+  await pressAndSettle(checkout, pay);
+  const paidBy = Date.now();
+  await expect(checkout).toHaveURL(
+    new RegExp(
+      `/r/${requestId}\\?t=[A-Za-z0-9_-]{43}&session_id=cs_fake_${requestId}$`,
+    ),
+  );
+  const waiting = COPY.waitingTitle(handle);
+  await expect(
+    checkout.getByRole("heading", { level: 1, name: waiting }),
+  ).toBeVisible();
+  await expect(heading).toHaveAccessibleName(waiting, { timeout: 10_000 });
+  await expect(heading.locator("svg")).toHaveCount(0);
+  await expect(buyer).toHaveTitle(`${waiting} · ${APP_NAME}`);
+
+  // A hold, not a charge, with the deadline 72 h out in the viewer's zone (01 §4.8, J7.8).
+  const bodies = [paidFrom, paidBy].map((t) =>
+    COPY.waitingBody(
+      handle,
+      cad(173250),
+      formatDeadline(new Date(t + 72 * HOUR_MS), timezoneId),
+    ),
+  );
+  for (const tab of [buyer, checkout]) {
+    const body = tab.getByText(/^Your card has a hold of /);
+    await expect(body).toContainText("has until");
+    expect(bodies).toContain(await body.textContent());
+  }
+
+  // The return is idempotent: a reload shows the same.
+  await checkout.reload();
+  await expect(
+    checkout.getByRole("heading", { level: 1, name: waiting }),
+  ).toBeVisible();
+  await checkout.close();
+  expect(checkoutErrors).toEqual([]);
+
+  // Let it expire, on a new request: checkout not completed, nothing charged, and the way back (07 D27).
+  await requestDemoLicense(buyer, shareUrl);
+  await pressAndSettle(buyer, CHECKOUT_COPY.letItExpire);
+  await expect(buyer).toHaveURL(/\/r\/[0-9a-f-]{36}\?t=[A-Za-z0-9_-]{43}$/);
+  await expect(heading).toHaveAccessibleName(COPY.canceledTitle);
+  await expect(
+    buyer.getByText(COPY.canceledBody, { exact: true }),
+  ).toBeVisible();
+  await expect(
+    buyer.getByRole("link", { name: COPY.backToLicense }),
+  ).toHaveAttribute("href", `/@${handle}/${slug}`);
 
   await context.close();
   expect(errors).toEqual([]);

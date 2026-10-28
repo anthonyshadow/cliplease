@@ -8,6 +8,7 @@ import {
   USE_KEYS,
   VERIFIABLE_POSTING_PLATFORMS,
 } from "../../lib/domain/values";
+import { HOLD_SAFETY_MARGIN_HOURS } from "../../lib/payments/expires-at";
 import { ORIGINAL_MIME } from "../../lib/upload/limits";
 
 // The CHECKs that copy a values.ts tuple as literals (07 D04: values.ts is the only place tuples are declared), read from
@@ -92,4 +93,10 @@ describe("CHECK literals that copy values.ts tuples (07 D04)", () => {
       ).toEqual(sorted(tuple));
     },
   );
+
+  it("license_request_hold_margin keeps the deadline's margin", () => {
+    expect(checkBody("license_request_hold_margin")).toContain(
+      `interval '${HOLD_SAFETY_MARGIN_HOURS} hours'`,
+    );
+  });
 });

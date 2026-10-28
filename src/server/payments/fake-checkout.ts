@@ -1,4 +1,5 @@
 import "server-only";
+import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { db } from "@/db/client";
 import { licenseRequest, video } from "@/db/schema";
@@ -8,12 +9,15 @@ import { requestStatusPath } from "@/lib/urls";
 import { isUuid } from "@/lib/validation/uuid";
 import { type Env, env, isDevAppEnv } from "../env";
 import { revealBuyerToken } from "../tokens/buyer-token";
+import type { PaymentsEvent } from "./driver";
+import { onWebhookEvent } from "./events";
 
 // The dev fake checkout, /dev/fake-checkout/[requestId] (05 §10 S28; 02 §6.1; 07 D35): the fake driver's checkout URL.
 // It answers only with PAYMENTS_DRIVER=fake and APP_ENV development or test (07 D51), never by NODE_ENV: e2e runs
 // `next build && next start`. Stripe keeps a session's success and cancel URLs, which carry the buyer's key; the
 // stateless fake driver can't, so this module rebuilds them from the row's sealed copy (owner answer Q-118 a). The page
-// and its actions reach a request only through openFakeCheckout, behind the guard.
+// and its actions reach a request only through openFakeCheckout, behind the guard. Pay and Let it expire send the events
+// Stripe would, through the webhook's own path (07 D35).
 
 /** The fake checkout serves only the fake driver in development and test. */
 export function isFakeCheckoutEnabled(
@@ -26,6 +30,8 @@ export function isFakeCheckoutEnabled(
 export type FakeCheckout = {
   id: string;
   status: LicenseRequestStatus;
+  /** The session the request stored: `cs_fake_<id>`. */
+  sessionId: string;
   title: string;
   scope: string;
   currency: Currency;
@@ -69,6 +75,7 @@ export async function openFakeCheckout(
   return {
     id: row.id,
     status: row.status,
+    sessionId: row.sessionId,
     title: row.title,
     scope: scopeLabel(row),
     currency: row.currency,
@@ -77,4 +84,36 @@ export async function openFakeCheckout(
     amountTotalCents: row.amountTotalCents,
     returnPath: (extra) => requestStatusPath(row.id, token, extra),
   };
+}
+
+/** A new fake event's id and origin: test mode, from this app. */
+const fakeEventBase = () => ({
+  id: `evt_fake_${randomUUID()}`,
+  livemode: false,
+  appUrl: env.APP_URL,
+});
+
+/** Pay: the buyer paid, so Stripe reports the session completed (02 §5.8), from the request's own account. */
+export async function payFakeCheckout(checkout: FakeCheckout): Promise<void> {
+  const event: PaymentsEvent = {
+    ...fakeEventBase(),
+    type: "checkout.session.completed",
+    sessionId: checkout.sessionId,
+    requestId: checkout.id,
+    paymentIntentId: `pi_fake_${checkout.id}`,
+  };
+  await onWebhookEvent(event, checkout.currency);
+}
+
+/** Let it expire: the session ended unpaid (02 §5.8). */
+export async function expireFakeCheckout(
+  checkout: FakeCheckout,
+): Promise<void> {
+  const event: PaymentsEvent = {
+    ...fakeEventBase(),
+    type: "checkout.session.expired",
+    sessionId: checkout.sessionId,
+    requestId: checkout.id,
+  };
+  await onWebhookEvent(event, checkout.currency);
 }

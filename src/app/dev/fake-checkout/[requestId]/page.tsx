@@ -3,11 +3,16 @@ import { notFound, redirect } from "next/navigation";
 import { READING_COLUMN, SHELL_MAIN } from "@/components/layout/gutter";
 import { Banner } from "@/components/ui/banner";
 import { Button } from "@/components/ui/button";
+import { PRIMARY_WIDTH, TERTIARY } from "@/components/ui/primary-width";
 import { formatMoney } from "@/lib/format";
 import { CHECKOUT_COPY } from "@/lib/licensing/checkout-copy";
 import { cn } from "@/lib/utils";
 import { openFakeCheckout } from "@/server/payments/fake-checkout";
-import { fakeCheckoutCancel } from "./actions";
+import {
+  fakeCheckoutCancel,
+  fakeCheckoutExpire,
+  fakeCheckoutPay,
+} from "./actions";
 
 const COPY = CHECKOUT_COPY;
 
@@ -18,8 +23,9 @@ export const metadata: Metadata = {
 
 /**
  * S28, the fake driver's checkout (05 §10; 07 D35), development and test only: the request's snapshot laid out like
- * Stripe's two line items, and Cancel (P16b adds Pay and Let it expire). 05 §10 draws no NavBar, so the page brings its
- * own <main> in the reading column. A request past checkout goes to its /r page.
+ * Stripe's two line items, then Pay, Cancel and Let it expire (02 §5.8). 05 §10 draws no NavBar, so the page brings its
+ * own <main> in the reading column. A request past checkout goes to its /r page. Like Stripe's, the buttons show no
+ * pending label: each answers with a redirect.
  */
 export default async function FakeCheckoutPage({
   params,
@@ -60,11 +66,28 @@ export default async function FakeCheckoutPage({
             </div>
           ))}
         </dl>
-        <form action={fakeCheckoutCancel.bind(null, checkout.id)}>
-          <Button type="submit" variant="secondary">
-            {COPY.cancel}
-          </Button>
-        </form>
+        <div className="flex flex-col gap-3">
+          <form
+            action={fakeCheckoutPay.bind(null, checkout.id)}
+            className="flex flex-col"
+          >
+            <Button type="submit" className={PRIMARY_WIDTH}>
+              {COPY.pay(
+                formatMoney(checkout.amountTotalCents, checkout.currency),
+              )}
+            </Button>
+          </form>
+          <form action={fakeCheckoutCancel.bind(null, checkout.id)}>
+            <Button type="submit" variant="secondary">
+              {COPY.cancel}
+            </Button>
+          </form>
+          <form action={fakeCheckoutExpire.bind(null, checkout.id)}>
+            <Button type="submit" variant="tertiary" className={TERTIARY}>
+              {COPY.letItExpire}
+            </Button>
+          </form>
+        </div>
       </div>
     </main>
   );

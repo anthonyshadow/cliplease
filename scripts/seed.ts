@@ -8,7 +8,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { loadEnvConfig } from "@next/env";
 import { and, eq, inArray, ne, or } from "drizzle-orm";
-import type { db as appDb } from "../src/db/client";
+import type { db as appDb, Tx } from "../src/db/client";
 import {
   creatorProfile,
   rateCard,
@@ -75,7 +75,6 @@ const DEMO_PATHS = [
 ] as const;
 const START_OVER = "reset the dev database to start over (03 §8.1)";
 
-type Tx = Parameters<Parameters<typeof appDb.transaction>[0]>[0];
 type Reader = Pick<typeof appDb, "select">;
 
 export type SeedOptions = {

@@ -1,7 +1,7 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { and, eq, isNull, sql } from "drizzle-orm";
-import { db } from "@/db/client";
+import { db, type Tx } from "@/db/client";
 import { creatorProfile, licenseRequest, video } from "@/db/schema";
 import type { LicenseRequest } from "@/db/schema/types";
 import type { SocialProviderId } from "@/lib/domain/values";
@@ -10,15 +10,31 @@ import {
   feeTerms,
   scopeLabel,
 } from "@/lib/licensing/selection";
+import type { LicenseRequestEvent } from "@/lib/licensing/transitions";
+import {
+  approvalWindowOf,
+  computeExpiresAt,
+  HOLD_TOO_SHORT_MS,
+} from "@/lib/payments/expires-at";
 import { computeQuote } from "@/lib/pricing/compute-quote";
 import type { StartCheckoutInput } from "@/lib/validation/checkout";
 import { normalizeEmail } from "@/lib/validation/email";
 import { normalizeTimeZone } from "@/lib/validation/time-zone";
 import { writeAudit } from "../audit";
+import type { Actor } from "../auth/actor";
 import { enabledCurrencies, env } from "../env";
 import { errorName, logEvent } from "../log";
-import { createCheckout, retrieveCheckout } from "../payments";
-import { CHECKOUT_SESSION_TTL_MINUTES } from "../payments/driver";
+import {
+  type CancelReason,
+  cancel,
+  createCheckout,
+  getAuthorization,
+  retrieveCheckout,
+} from "../payments";
+import {
+  type Authorization,
+  CHECKOUT_SESSION_TTL_MINUTES,
+} from "../payments/driver";
 import { CurrencyNotEnabledError } from "../payments/registry";
 import {
   effectiveOptions,
@@ -27,17 +43,24 @@ import {
 } from "../pricing/rate-card";
 import type { RequestContext } from "../request-context";
 import { enabledPlatforms } from "../social/registry";
-import { generateBuyerToken } from "../tokens/buyer-token";
+import { findRequestForBuyer, generateBuyerToken } from "../tokens/buyer-token";
 import {
   isPubliclyAvailable,
   postingPlatformsColumn,
 } from "../videos/visibility";
+import { authorizationMismatches } from "./authorization";
+import {
+  applyTransition,
+  ignoredEvent,
+  type TransitionResult,
+  unchangedResult,
+} from "./state-machine";
 
-// A buyer's license request (02 §5.7; 03 §5.1 T1; 06 §6; 07 D24, D31, D74, D79, D81, D82, D84, D94, D95): priced by the
-// server, saved once per form submission, then handed to Checkout. Payouts are not checked: buyers can pay before the
-// creator sets them up (07 D74). The video lock and availability check (07 D110) arrive with P19f, whose tables they
-// read (owner answer Q-122 a); until then P16b re-checks that the video is published when the hold is authorized. No
-// status ever changes here: the state machine is P16b's.
+// A buyer's license request (02 §5.7, §8.1, §8.3; 03 §5.1 T1–T3; 06 §6; 07 D24, D27, D31, D32, D74, D79, D81, D82,
+// D84, D94, D95): priced by the server, saved once per form submission, handed to Checkout, then authorized when the
+// card is held. Payouts are not checked: buyers can pay before the creator sets them up (07 D74). The video lock and
+// availability check (07 D110) arrive with P19f, whose tables they read (owner answer Q-122 a); until then
+// markAuthorized re-checks that the video is published. Statuses change only through applyTransition.
 
 export type CreateLicenseRequestResult =
   | { ok: true; checkoutUrl: string }
@@ -287,4 +310,209 @@ async function resubmitted(
   return session.status === "open" && session.url
     ? { ok: true, checkoutUrl: session.url }
     : { ok: false, reason: "already_submitted" };
+}
+
+/**
+ * T2 or T3 (02 §8.1 row 1; 03 T2, T3; 07 D27, D28, D32): a request in checkout whose card is held becomes
+ * awaiting_approval, or abandoned when the hold, the video or the time it leaves is wrong. Stripe is read first, the
+ * decision is one short transaction, and an abandoned hold is released after the commit. Anything else changes
+ * nothing: another status (a webhook's late or second event is audited), no session or PaymentIntent, a session of
+ * another request, a PaymentIntent not held. `platforms`: the enabled social platforms (tests pass their own).
+ */
+export async function markAuthorized(
+  requestId: string,
+  actor: Actor,
+  platforms: readonly SocialProviderId[] = enabledPlatforms(),
+): Promise<TransitionResult> {
+  const [row] = await db
+    .select()
+    .from(licenseRequest)
+    .where(eq(licenseRequest.id, requestId));
+  if (!row) throw new Error("markAuthorized: unknown request");
+  const unchanged = unchangedResult(row);
+  if (row.status !== "checkout_pending") {
+    if (actor.kind === "system" && actor.source === "webhook") {
+      await writeAudit(
+        db,
+        actor,
+        ignoredEvent(row.id, row.status, "authorized"),
+      );
+    }
+    return unchanged;
+  }
+  if (!row.stripeCheckoutSessionId) return unchanged;
+  const session = await retrieveCheckout(
+    row.currency,
+    row.stripeCheckoutSessionId,
+  );
+  if (session.requestId !== row.id || !session.paymentIntentId) {
+    return unchanged;
+  }
+  const auth = await getAuthorization(row.currency, session.paymentIntentId);
+  if (auth.status === "succeeded") {
+    // Charged before any approval (07 D32): recorded only, until P18 and P25 reconcile it (owner answer Q-123 a).
+    await writeAudit(
+      db,
+      actor,
+      ignoredEvent(row.id, row.status, "authorized", { piStatus: auth.status }),
+    );
+    return unchanged;
+  }
+  if (auth.status !== "requires_capture") return unchanged;
+  const { result, reason } = await decideAuthorization(
+    row,
+    auth,
+    session.currency,
+    actor,
+    platforms,
+  );
+  if (result.changed && reason) await releaseHold(result.row, reason, actor);
+  return result;
+}
+
+/** Why a held card is let go before approval (07 D27): each is the abandon event, its status_reason and the cancel's. */
+type AbandonReason = Extract<CancelReason, LicenseRequestEvent>;
+
+/**
+ * After an abandon commits (07 D24, D27): cancels the hold, keyed by the attempt that abandon counted, so a retry sends
+ * the same key. A cancel that fails or throws is audited; the hold then lapses at capture_before, uncharged.
+ */
+async function releaseHold(
+  row: LicenseRequest,
+  reason: AbandonReason,
+  actor: Actor,
+): Promise<void> {
+  if (!row.stripePaymentIntentId) return;
+  let failure: { kind: string; code: string } | null;
+  try {
+    const outcome = await cancel(
+      row.currency,
+      row.id,
+      row.stripePaymentIntentId,
+      reason,
+      row.stripeAttempt,
+    );
+    failure = outcome.ok ? null : outcome;
+  } catch (error) {
+    // Stripe may or may not have canceled it.
+    failure = { kind: "ambiguous", code: errorName(error) };
+  }
+  if (!failure) return;
+  await writeAudit(db, actor, {
+    action: "license_request.cancel_failed",
+    entityType: "license_request",
+    entityId: row.id,
+    data: { reason, kind: failure.kind, code: failure.code },
+  });
+}
+
+/**
+ * The buyer is back from Checkout (02 §8.3), maybe before the webhook: with their own link and the session it stored,
+ * once Stripe calls that session complete (owner answer Q-119 a) and the card is held, markAuthorized runs as the
+ * webhook's would. Anything else changes nothing, and the page shows the stored status.
+ */
+export async function reconcileCheckoutReturn(
+  requestId: string,
+  token: string,
+  sessionId: string,
+): Promise<void> {
+  const row = await findRequestForBuyer(requestId, token);
+  if (
+    row?.status !== "checkout_pending" ||
+    row.stripeCheckoutSessionId !== sessionId
+  ) {
+    return;
+  }
+  const session = await retrieveCheckout(row.currency, sessionId);
+  if (
+    session.status !== "complete" ||
+    session.requestId !== row.id ||
+    !session.paymentIntentId
+  ) {
+    return;
+  }
+  const auth = await getAuthorization(row.currency, session.paymentIntentId);
+  if (auth.status !== "requires_capture") return;
+  await markAuthorized(row.id, { kind: "system", source: "return_url" });
+}
+
+/** The video can still be licensed (07 D27): published, and not hidden by a mock posting (07 D51). */
+async function videoAvailable(
+  tx: Tx,
+  videoId: string,
+  platforms: readonly SocialProviderId[],
+): Promise<boolean> {
+  const [row] = await tx
+    .select({ status: video.status, postingPlatforms: postingPlatformsColumn })
+    .from(video)
+    .where(eq(video.id, videoId));
+  return row !== undefined && isPubliclyAvailable(row, platforms);
+}
+
+/**
+ * T2 or T3 in one short transaction (02 §8.1 row 1; 07 D32, D81): the asserts, then the video, then the hold's length:
+ * at least an hour to approve (03 T2), from the request's own window. The first that fails abandons the request,
+ * naming the asserts that failed; all passing authorizes it. P19f locks the video here, before applyTransition.
+ */
+async function decideAuthorization(
+  row: LicenseRequest,
+  auth: Authorization,
+  sessionCurrency: string | null,
+  actor: Actor,
+  platforms: readonly SocialProviderId[],
+): Promise<{ result: TransitionResult; reason: AbandonReason | null }> {
+  const mismatches = authorizationMismatches(row, auth, sessionCurrency);
+  const now = new Date();
+  // The deadline counts from the instant stored as authorized_at.
+  const authorizedAt = auth.authorizedAt ?? now;
+  const expiresAt = computeExpiresAt({
+    authorizedAt,
+    captureBefore: auth.captureBefore,
+    approvalWindowHours: approvalWindowOf(row.approvalWindowHours),
+  });
+  const ids = {
+    stripePaymentIntentId: auth.paymentIntentId,
+    stripeChargeId: auth.chargeId,
+  };
+  return db.transaction(async (tx) => {
+    let reason: AbandonReason | null = null;
+    if (mismatches.length > 0) reason = "amount_mismatch";
+    else if (!(await videoAvailable(tx, row.videoId, platforms))) {
+      reason = "video_unavailable";
+    } else if (expiresAt.getTime() < now.getTime() + HOLD_TOO_SHORT_MS) {
+      reason = "hold_too_short";
+    }
+    if (!reason) {
+      const patch = {
+        ...ids,
+        authorizedAt,
+        captureBefore: auth.captureBefore,
+        expiresAt,
+      };
+      const result = await applyTransition(
+        tx,
+        row.id,
+        "authorized",
+        patch,
+        actor,
+      );
+      return { result, reason };
+    }
+    const patch = {
+      ...ids,
+      abandonedAt: now,
+      statusReason: reason,
+      incrementStripeAttempt: true,
+    };
+    const result = await applyTransition(tx, row.id, reason, patch, actor);
+    if (result.changed && mismatches.length > 0) {
+      await writeAudit(tx, actor, {
+        action: "license_request.amount_mismatch",
+        entityType: "license_request",
+        entityId: row.id,
+        data: { fields: mismatches },
+      });
+    }
+    return { result, reason };
+  });
 }
