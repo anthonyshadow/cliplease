@@ -1,24 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DETAILS_COPY } from "../licensing/details";
 import { StartCheckoutSchema } from "./checkout";
-
-// The demo request (05 §4.1; 07 D99): Paid social ads · 1 year · Worldwide on @maya's First snow.
-const DEMO = {
-  videoId: "00000000-0000-4000-8000-000000000101",
-  useKey: "paid_social",
-  termKey: "y1",
-  territoryKey: "worldwide",
-  territoryCode: null,
-  licenseeName: "Daily Laughs Media LLC",
-  contactName: "Sam Lee",
-  buyerEmail: "sam@dailylaughs.com",
-  intendedUse: "@dailylaughs on Instagram",
-  acceptTerms: true,
-  termsVersion: "v1",
-  submissionId: "3f6b2c1e-8d4a-4f7b-9c2e-1a5d6e7f8a9b",
-  expectedTotalCents: 173250,
-  timeZone: "America/Toronto",
-} as const;
+import { DEMO_REQUEST as DEMO } from "./checkout-fixtures";
 
 /** The first issue of `change` applied to the demo request: [path, message], or null when it parses. */
 function issue(change: Record<string, unknown>) {
@@ -53,6 +36,15 @@ describe("StartCheckoutSchema (02 §5.7; P15)", () => {
       "contactName",
       DETAILS_COPY.nameLong,
     ]);
+  });
+
+  it("trims the email before checking it; normalizeEmail stores it lowercased (07 D126)", () => {
+    expect(
+      StartCheckoutSchema.parse({
+        ...DEMO,
+        buyerEmail: "  Ana.Buyer@Studio.COM ",
+      }).buyerEmail,
+    ).toBe("Ana.Buyer@Studio.COM");
   });
 
   it("refuses a 201-character use, a bad email and unticked terms, in the docs' words", () => {

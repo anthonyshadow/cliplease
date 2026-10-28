@@ -18,11 +18,14 @@ export const DETAILS_COPY = {
   chooseRegion: "Choose a region.",
 } as const;
 
-export type DetailsField =
-  | "licenseeName"
-  | "contactName"
-  | "buyerEmail"
-  | "intendedUse";
+/** "Your details": the four fields the buyer types, in the page's order. */
+export const DETAILS_FIELDS = [
+  "licenseeName",
+  "contactName",
+  "buyerEmail",
+  "intendedUse",
+] as const;
+export type DetailsField = (typeof DETAILS_FIELDS)[number];
 
 /**
  * Zod 4's default `z.email()` pattern (zod/v4/core regexes `email`), copied so the page checks exactly what the server
@@ -52,4 +55,30 @@ export function detailsFieldError(
       : DETAILS_COPY.nameEmpty;
   }
   return text.length > NAME_MAX ? DETAILS_COPY.nameLong : null;
+}
+
+/** Everything on the page that can carry an error, in the page's order: the territory's select, the four fields, the terms box. */
+export const FORM_FIELDS = [
+  "territoryCode",
+  ...DETAILS_FIELDS,
+  "acceptTerms",
+] as const;
+export type FormField = (typeof FORM_FIELDS)[number];
+
+export type FormErrors = Partial<Record<FormField, string>>;
+
+/**
+ * The press-time check (05 §4.1 "Submit"): every field, typed in or not, and the terms box, with the blur check's rules.
+ * Empty when the form can go to the server.
+ */
+export function detailsErrors(
+  values: Record<DetailsField, string> & { acceptTerms: boolean },
+): FormErrors {
+  const errors: FormErrors = {};
+  for (const field of DETAILS_FIELDS) {
+    const error = detailsFieldError(field, values[field]);
+    if (error) errors[field] = error;
+  }
+  if (!values.acceptTerms) errors.acceptTerms = DETAILS_COPY.terms;
+  return errors;
 }

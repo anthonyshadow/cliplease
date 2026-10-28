@@ -1,16 +1,28 @@
 import { expect, type Page, test } from "@playwright/test";
 import { APP_NAME } from "../../src/lib/app-name";
 import { formatDelta, formatMoney } from "../../src/lib/format";
+import { CHECKOUT_COPY } from "../../src/lib/licensing/checkout-copy";
 import { DETAILS_COPY } from "../../src/lib/licensing/details";
 import { LICENSE_PAGE_COPY } from "../../src/lib/licensing/license-page";
+import { REQUEST_STATUS_COPY } from "../../src/lib/licensing/request-status";
 import { BADGE_COPY } from "../../src/lib/videos/ownership";
 import { OBJECT_KEY } from "../helpers/object-key";
-import { collectConsoleErrors } from "./helpers/console";
+import {
+  chooseDemoSelection,
+  FAKE_CHECKOUT_URL,
+  fillDetails,
+  holdServerActions,
+  hydrated,
+  radio,
+  requestButton,
+  requestWithStaleTotal,
+} from "./helpers/buyer";
+import { collectConsoleErrors, type ExpectedFailure } from "./helpers/console";
 import { publishDemoVideo } from "./helpers/flows";
 import { boxOf } from "./helpers/layout";
 import { OWN_DEMO_LINK } from "./helpers/library";
-import { trackExternalRequests } from "./helpers/network";
-import { pressLocator } from "./helpers/press";
+import { trackExternalRequests, trackServerActions } from "./helpers/network";
+import { pressAndSettle, pressLink, pressLocator } from "./helpers/press";
 import { cleanCreatedVideos } from "./helpers/videos";
 
 // The license page, J6–J7 part 1 (P15; 05 §4.1; 07 D03, D70, D72, D79, D94, D98) on chromium-desktop and webkit-iphone.
@@ -18,30 +30,18 @@ import { cleanCreatedVideos } from "./helpers/videos";
 // buyer at 390 × 844 opens its link: the poster, the badge, "Where it was posted", the first-load choice and prices,
 // Paid social ads · 1 year · Worldwide at the D79 golden, the currency lines, no cookies and no other host; the
 // metadata, the 308 for a mixed-case handle and the 404. A music video's Paid social ads and TV / broadcast are off,
-// and only a tap (not a key) on One country or One region moves focus into its select (owner answer Q-113 a).
-// Radios are chosen with the keyboard (focus, Space): on the iPhone a click near the bottom can land on the fixed bar.
+// and only a tap (not a key) on One country or One region moves focus into its select (owner answer Q-113 a). P16a: the
+// button submits; checked on press, a total the server didn't quote, the pending state, the fake checkout's amounts,
+// and Cancel to /r with its headers and its dead link. Radios are chosen with the keyboard (focus, Space): on the
+// iPhone a click near the bottom can land on the fixed bar.
 test.use({ reducedMotion: "reduce" });
 test.afterEach(cleanCreatedVideos);
 
 const cad = (cents: number) => formatMoney(cents, "cad");
 const REL = "nofollow ugc noopener noreferrer";
 
-const radio = (page: Page, group: string, key: string) =>
-  page.locator(`input[name="${group}"][value="${key}"]`);
 const tile = (page: Page, group: string, key: string) =>
   page.locator("[data-option-tile]").filter({ has: radio(page, group, key) });
-
-/** Checks a radio from the keyboard. */
-async function choose(page: Page, group: string, key: string) {
-  const input = radio(page, group, key);
-  await input.focus();
-  await input.press("Space");
-  await expect(input).toBeChecked();
-}
-
-/** The page has hydrated: the hidden timeZone is filled after mount. */
-const hydrated = (page: Page) =>
-  expect(page.locator('input[name="timeZone"]')).not.toHaveValue("");
 
 test("J6.4, J7.1–J7.6, J7.20, J7.21: a logged-out buyer sees the video, who owns it and where it was posted, and the live price", async ({
   page,
@@ -149,25 +149,23 @@ test("J6.4, J7.1–J7.6, J7.20, J7.21: a logged-out buyer sees the video, who ow
   const bar = buyer.locator("[data-pricebar]");
   const lines = bar.locator("[data-price-lines]");
   const total = bar.locator("[data-price-total]");
-  const button = bar.getByRole("button");
+  const button = requestButton(buyer);
   await expect(lines).toHaveText(
     `License ${cad(15000)} · Service fee ${cad(1500)}`,
   );
   await expect(total).toContainText(`Total ${cad(16500)}`);
-  await expect(button).toHaveText("Choose a country");
-  await expect(button).toBeDisabled();
+  await expect(button).toHaveAccessibleName("Choose a country");
+  await expect(button).toBeEnabled();
   await expect(bar.getByRole("status")).toHaveText("");
 
   // Paid social ads · 1 year · Worldwide (07 D79): the golden, the button and the Organic tile's license-price delta.
-  await choose(buyer, "use", "paid_social");
-  await choose(buyer, "term", "y1");
-  await choose(buyer, "territory", "worldwide");
+  await chooseDemoSelection(buyer);
   await expect(lines).toHaveText(
     `License ${cad(157500)} · Service fee ${cad(15750)}`,
   );
   await expect(total).toContainText(`Total ${cad(173250)}`);
-  await expect(button).toHaveText(`Request license · ${cad(173250)}`);
-  await expect(button).toBeDisabled();
+  await expect(button).toHaveAccessibleName(`Request license · ${cad(173250)}`);
+  await expect(button).toBeEnabled();
   await expect(bar.getByRole("status")).toHaveText(`Total ${cad(173250)}`);
   await expect(tile(buyer, "use", "organic_social")).toContainText(
     formatDelta(-105000, "cad"),
@@ -288,9 +286,7 @@ test("J7.4, J5.14: a music video's Paid social ads and TV / broadcast are off wi
   const region = radio(buyer, "territory", "region");
   await expect(region).toBeChecked();
   await expect(region).toBeFocused();
-  await expect(buyer.locator("[data-pricebar]").getByRole("button")).toHaveText(
-    "Choose a region",
-  );
+  await expect(requestButton(buyer)).toHaveAccessibleName("Choose a region");
   await region.press("Tab");
   await expect(buyer.getByLabel("Region", { exact: true })).toBeFocused();
   await buyer
@@ -328,6 +324,137 @@ test("J7.4, J5.14: a music video's Paid social ads and TV / broadcast are off wi
   await tile(buyer, "territory", "country").locator("label").click();
   await expect(radio(buyer, "territory", "country")).toBeChecked();
   await expect(buyer.getByLabel("Country", { exact: true })).toBeFocused();
+
+  await context.close();
+  expect(errors).toEqual([]);
+});
+
+test("J7.7–J7.13: Request license validates on press, prices on the server, opens the fake checkout with the request's amounts, and Cancel shows nothing was charged", async ({
+  page,
+  browser,
+  baseURL,
+}) => {
+  test.setTimeout(240_000);
+  const { handle, slug, shareUrl } = await publishDemoVideo(page);
+  const context = await browser.newContext({
+    baseURL,
+    viewport: { width: 390, height: 844 },
+  });
+  const buyer = await context.newPage();
+  const expected: ExpectedFailure[] = [];
+  const errors = collectConsoleErrors(buyer, expected);
+  await buyer.goto(shareUrl);
+  await hydrated(buyer);
+  const title =
+    (await buyer.getByRole("heading", { level: 1 }).textContent()) ?? "";
+  const button = requestButton(buyer);
+
+  // While it asks for a country, pressing it moves focus to the select (05 §4.1 Submit).
+  await pressLocator(button);
+  await expect(buyer.getByLabel("Country", { exact: true })).toBeFocused();
+
+  // Checked on press: the unticked terms take focus, with their inline error.
+  await chooseDemoSelection(buyer);
+  await fillDetails(buyer);
+  const terms = buyer.getByRole("checkbox");
+  await pressLocator(button);
+  await expect(terms).toBeFocused();
+  await expect(
+    buyer.getByText(DETAILS_COPY.terms, { exact: true }),
+  ).toBeVisible();
+  await terms.press("Space");
+  await expect(terms).toBeChecked();
+
+  // A total the server didn't quote (07 D31): no checkout, and the banner with the server's total takes focus.
+  const expectedTotal = buyer.locator('input[name="expectedTotalCents"]');
+  await requestWithStaleTotal(buyer);
+  const notice = buyer.locator("[data-license-notice]");
+  await expect(notice).toHaveText(LICENSE_PAGE_COPY.pricesChanged(cad(173250)));
+  await expect(notice).toBeFocused();
+  await expect(expectedTotal).toHaveValue("173250");
+  await expect(buyer).toHaveURL(new RegExp(`/@${handle}/${slug}$`));
+
+  // Pending (05 §4.1): "Starting checkout…", busy, the column inert, and a second press sends nothing more.
+  const actions = trackServerActions(buyer);
+  const release = await holdServerActions(buyer);
+  await pressLocator(button);
+  await expect(button).toHaveAttribute("aria-busy", "true");
+  await expect(button).toHaveAccessibleName(LICENSE_PAGE_COPY.startingCheckout);
+  await expect(buyer.locator("[inert] #license-form")).toHaveCount(1);
+  await button.press("Enter");
+  await release();
+
+  // The fake checkout shows the request's own snapshot (07 D35, D95, D98).
+  await buyer.waitForURL(FAKE_CHECKOUT_URL);
+  expect(actions).toHaveLength(1);
+  const requestId = buyer.url().split("/").at(-1) ?? "";
+  await expect(buyer).toHaveTitle(`${CHECKOUT_COPY.fakeTitle} · ${APP_NAME}`);
+  const main = buyer.locator("main");
+  await expect(
+    main.getByText(CHECKOUT_COPY.fakeBanner, { exact: true }),
+  ).toBeVisible();
+  await expect(buyer.getByRole("heading", { level: 1 })).toHaveText(title);
+  await expect(
+    main.getByText("Paid social ads · 1 year · Worldwide", { exact: true }),
+  ).toBeVisible();
+  await expect(main.locator("dl > div")).toHaveText([
+    `${CHECKOUT_COPY.license}${cad(157500)}`,
+    `${CHECKOUT_COPY.serviceFee}${cad(15750)}`,
+    `${CHECKOUT_COPY.total}${cad(173250)}`,
+  ]);
+
+  // Cancel returns to /r as Stripe's cancel_url would: nothing was charged, and the way back (01 §4.8, J7.13).
+  await pressAndSettle(buyer, CHECKOUT_COPY.cancel);
+  await expect(buyer).toHaveURL(
+    new RegExp(`/r/${requestId}\\?t=[A-Za-z0-9_-]{43}&checkout=canceled$`),
+  );
+  const COPY = REQUEST_STATUS_COPY;
+  await expect(
+    buyer.getByRole("heading", { level: 1, name: COPY.canceledTitle }),
+  ).toBeVisible();
+  await expect(
+    buyer.getByText(COPY.canceledBody, { exact: true }),
+  ).toBeVisible();
+  await expect(buyer).toHaveTitle(`${COPY.canceledTitle} · ${APP_NAME}`);
+  await expect(buyer.locator('meta[name="referrer"]')).toHaveAttribute(
+    "content",
+    "no-referrer",
+  );
+  await expect(
+    buyer.getByRole("link", { name: COPY.backToLicense }),
+  ).toHaveAttribute("href", `/@${handle}/${slug}`);
+
+  // A hard load gets the buyer-token headers (02 §4.6, §9.5).
+  const statusUrl = buyer.url();
+  const hard = await context.request.get(statusUrl);
+  expect(hard.status()).toBe(200);
+  expect(hard.headers()["referrer-policy"]).toBe("no-referrer");
+  expect(hard.headers()["x-robots-tag"]).toBe("noindex, nofollow");
+
+  // Back to the license page, which starts a fresh request.
+  await pressLink(buyer, COPY.backToLicense);
+  await expect(buyer).toHaveURL(new RegExp(`/@${handle}/${slug}$`));
+  await hydrated(buyer);
+
+  // Without checkout=canceled the pending request is still finishing checkout.
+  await buyer.goto(statusUrl.replace("&checkout=canceled", ""));
+  await expect(
+    buyer.getByRole("heading", { level: 1, name: COPY.finishingTitle }),
+  ).toBeVisible();
+  await expect(
+    buyer.getByText(COPY.finishingBody, { exact: true }),
+  ).toBeVisible();
+
+  // The right id with a wrong key is the dead link: a 404 with no hint that the request exists.
+  expected.push({ status: 404, pathname: `/r/${requestId}` });
+  const dead = await buyer.goto(`/r/${requestId}?t=${"A".repeat(43)}`);
+  expect(dead?.status()).toBe(404);
+  expect(dead?.headers()["referrer-policy"]).toBe("no-referrer");
+  await expect(
+    buyer.getByRole("heading", { level: 1, name: COPY.deadLink }),
+  ).toBeVisible();
+  await expect(buyer.locator("main").getByRole("link")).toHaveCount(0);
+  await expect(buyer).toHaveTitle(APP_NAME);
 
   await context.close();
   expect(errors).toEqual([]);

@@ -48,6 +48,9 @@ export type MoneyCallFailure = {
   code: string;
 };
 
+/** How long a Checkout Session stays open (07 §2.3; Stripe allows 30 min – 24 h). The request's checkout_expires_at. */
+export const CHECKOUT_SESSION_TTL_MINUTES = 60;
+
 export type CreateCheckoutInput = {
   currency: Currency; // = license_request.currency; must equal the driver's currency
   requestId: string;

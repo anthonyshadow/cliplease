@@ -43,9 +43,15 @@ const fields = z.object({
   territoryCode: z.string().max(40).nullable(),
   licenseeName: name(DETAILS_COPY.licenseeEmpty),
   contactName: name(DETAILS_COPY.nameEmpty),
+  // Trimmed first, as the page's blur check does: the stored form is normalizeEmail's.
   buyerEmail: z
-    .email({ pattern: EMAIL_RE, error: DETAILS_COPY.email })
-    .max(EMAIL_MAX, { error: DETAILS_COPY.email }),
+    .string()
+    .trim()
+    .pipe(
+      z
+        .email({ pattern: EMAIL_RE, error: DETAILS_COPY.email })
+        .max(EMAIL_MAX, { error: DETAILS_COPY.email }),
+    ),
   intendedUse: z
     .string()
     .transform(tidyText)

@@ -5,10 +5,12 @@ import type { RateOptionKey, UseKey } from "../domain/values";
 import { formatDelta } from "../format";
 import { fromPriceCents } from "../pricing/from-price";
 import {
+  chosenMultipliers,
   defaultSelection,
   licenseDeltaCents,
   offeredOptions,
   quoteFor,
+  repairSelection,
   type Selection,
   scopeLabel,
   territoryInSentence,
@@ -250,6 +252,65 @@ describe("defaultSelection (01 J7.1)", () => {
     expect(fromPriceCents(none, FEE)).toBeNull();
     expect(defaultSelection(options(), FEE)).not.toBeNull();
     expect(fromPriceCents(options(), FEE)).not.toBeNull();
+  });
+});
+
+describe("chosenMultipliers", () => {
+  it("gives the three multipliers a request snapshots, or null for an option the buyer can't pick", () => {
+    expect(chosenMultipliers(options(), PAID_YEAR_WORLD)).toEqual({
+      useBps: 30000,
+      termBps: 20000,
+      territoryBps: 17500,
+    });
+    expect(
+      chosenMultipliers(options(card({}, ["paid_social"])), PAID_YEAR_WORLD),
+    ).toBeNull();
+  });
+});
+
+describe("repairSelection (01 J7.10: an option gone after a refresh)", () => {
+  it("keeps a choice that is still offered and fits", () => {
+    expect(repairSelection(options(), PAID_YEAR_WORLD, FEE)).toEqual({
+      selection: PAID_YEAR_WORLD,
+      gone: [],
+    });
+  });
+
+  it("moves a group whose option the creator turned off, or the music rule took, to its first offered option", () => {
+    const moved = { ...PAID_YEAR_WORLD, use: "organic_social" };
+    expect(
+      repairSelection(options(card({}, ["paid_social"])), PAID_YEAR_WORLD, FEE),
+    ).toEqual({ selection: moved, gone: ["use"] });
+    expect(
+      repairSelection(
+        options(card(), { disabledUses: ["paid_social"] }),
+        PAID_YEAR_WORLD,
+        FEE,
+      ),
+    ).toEqual({ selection: moved, gone: ["use"] });
+  });
+
+  it("drops the code with the territory it belonged to", () => {
+    const region: Selection = {
+      ...PAID_YEAR_WORLD,
+      territory: "region",
+      territoryCode: "europe",
+    };
+    expect(repairSelection(options(card({}, ["region"])), region, FEE)).toEqual(
+      {
+        selection: { ...region, territory: "country", territoryCode: null },
+        gone: ["territory"],
+      },
+    );
+  });
+
+  it("falls back to the first load's choice when the choice no longer fits under the cap", () => {
+    const big = options(card({ paid_social: 100000, y1: 100000 }), {
+      basePriceOverrideCents: 1_000_000,
+    });
+    const repaired = repairSelection(big, PAID_YEAR_WORLD, FEE);
+    expect(repaired.selection).toEqual(defaultSelection(big, FEE));
+    expect(repaired.gone).toEqual(["use", "term", "territory"]);
   });
 });
 

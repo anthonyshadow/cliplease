@@ -30,11 +30,13 @@ export function isPubliclyAvailable(
 
 /**
  * A select column for a query over `video`: the platforms of every posting of the row's video (verified or not), as
- * isPubliclyAvailable reads them. Text, so node-postgres parses the array (it has no parser for an enum array).
+ * isPubliclyAvailable reads them. Text, so node-postgres parses the array (it has no parser for an enum array). The
+ * names are written out: in a query over `video` alone Drizzle leaves its columns unqualified, and the subquery's "id"
+ * would then be the posting's own (P16a).
  */
 export const postingPlatformsColumn = sql<
   PostingPlatform[]
->`array(select ${videoPosting.platform}::text from ${videoPosting} where ${videoPosting.videoId} = ${video.id})`;
+>`array(select p.platform::text from ${videoPosting} p where p.video_id = ${video}.id)`;
 
 /**
  * The poster's URL (07 D19): `/api/media/posters/<id>?v=<first 8 hex of sha256(key)>`, the `?v=` changing with the

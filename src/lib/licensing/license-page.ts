@@ -68,6 +68,14 @@ export const LICENSE_PAGE_COPY = {
   license: (amount: string) => `License ${amount}`,
   serviceFee: (amount: string) => `Service fee ${amount}`,
   total: (total: string) => `Total ${total}`,
+  startingCheckout: "Starting checkout…",
+  /** 01 J7.10; 05 §4.1 States. */
+  pricesChanged: (total: string) =>
+    `Prices changed since you opened this page. New total ${total}.`,
+  optionGone: "That option isn't available anymore. Choose another.",
+  /** 02 §5.7; 07 D31. */
+  alreadySubmitted:
+    "This request was already sent. Check your email or reload the page.",
   request: (total: string) => `Request license · ${total}`,
   pricesIn: (currency: Currency) => `Prices in ${currencyLabel(currency)}.`,
   holdLead: (handle: string) =>

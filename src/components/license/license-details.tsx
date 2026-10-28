@@ -1,6 +1,6 @@
 "use client";
 
-import { type FocusEvent, type ReactNode, useRef, useState } from "react";
+import { type FocusEvent, type ReactNode, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { NativeCheckbox } from "@/components/ui/checkbox";
 import { INLINE_LINK } from "@/components/ui/inline-link";
@@ -14,6 +14,8 @@ import {
 import {
   type DetailsField,
   detailsFieldError,
+  type FormErrors,
+  type FormField,
   INTENDED_USE_MAX,
 } from "@/lib/licensing/details";
 import { LICENSE_PAGE_COPY } from "@/lib/licensing/license-page";
@@ -27,7 +29,7 @@ export type LicenseFormValues = {
   useKey: string;
   termKey: string;
   territoryKey: string;
-  /** "" while none is chosen (and for Worldwide); P16a reads "" as null. */
+  /** "" while none is chosen (and for Worldwide); startCheckout reads "" as null. */
   territoryCode: string;
   submissionId: string;
   expectedTotalCents: number;
@@ -59,21 +61,26 @@ function LegalLink({ href, children }: { href: string; children: ReactNode }) {
 
 /**
  * 01 J7.5; 04 §11.2; 05 §4.1 callouts 13–14: "Your details. For the license.", the four fields, the terms checkbox and
- * the hidden inputs, as `#license-form` (the PriceBar's button submits it). The option tiles sit outside it, so each
- * choice is posted once, by its hidden input. A field shows its error on blur once the buyer has typed in it (an
- * untouched field stays quiet while tabbing past), with the server schema's rules and words (owner answer Q-109 a), and
- * after the tap that blurred it has landed (useAfterPress). No action until P16a: submitting does nothing.
+ * the hidden inputs, as `#license-form` (the PriceBar's button submits it; the page runs startCheckout with it). The
+ * option tiles sit outside it, so each choice is posted once, by its hidden input. A field shows its error on blur once
+ * the buyer has typed in it (an untouched field stays quiet while tabbing past), with the server schema's rules and
+ * words (owner answer Q-109 a), and after the tap that blurred it has landed (useAfterPress); the page checks every
+ * field on press. The errors are the page's, so the press, the server and a blur all write to one place.
  */
 export function LicenseDetails({
   handle,
   values,
+  errors,
+  onError,
+  onSubmit,
 }: {
   handle: string;
   values: LicenseFormValues;
+  errors: FormErrors;
+  /** A field's message (undefined: none) after a blur or a fix. */
+  onError: (field: FormField, message: string | undefined) => void;
+  onSubmit: (form: HTMLFormElement) => void;
 }) {
-  const [errors, setErrors] = useState<Partial<Record<DetailsField, string>>>(
-    {},
-  );
   // Read only by the handlers below, so a ref: typing re-renders nothing.
   const typed = useRef(new Set<DetailsField>());
   const afterPress = useAfterPress();
@@ -86,7 +93,7 @@ export function LicenseDetails({
     onBlur: (event: FocusEvent<HTMLInputElement | HTMLTextAreaElement>) => {
       if (!typed.current.has(name)) return;
       const error = detailsFieldError(name, event.target.value) ?? undefined;
-      afterPress(() => setErrors((current) => ({ ...current, [name]: error })));
+      afterPress(() => onError(name, error));
     },
   });
   return (
@@ -94,7 +101,10 @@ export function LicenseDetails({
       id={LICENSE_FORM_ID}
       method="post"
       noValidate
-      onSubmit={(event) => event.preventDefault()}
+      onSubmit={(event) => {
+        event.preventDefault();
+        onSubmit(event.currentTarget);
+      }}
       className="flex flex-col gap-6"
     >
       <h2 className="text-title-2 text-ink">
@@ -135,6 +145,10 @@ export function LicenseDetails({
       <NativeCheckbox
         name="acceptTerms"
         required
+        error={errors.acceptTerms}
+        onChange={(event) => {
+          if (event.target.checked) onError("acceptTerms", undefined);
+        }}
         label={
           <>
             {"I agree to the "}

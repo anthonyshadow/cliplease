@@ -487,7 +487,9 @@ test("J5.6, J5.22–J5.28: an upload's links: Move, the short-link copy, then ea
   await expect(bar.locator("[data-price-lines]")).toHaveText(
     "License CA$150.00 · Service fee CA$15.00",
   );
-  await expect(bar.getByRole("button")).toHaveText("Choose a country");
+  await expect(bar.getByRole("button")).toHaveAccessibleName(
+    "Choose a country",
+  );
   expect(await buyer.locator("body").innerText()).not.toMatch(/payout/i);
   await visitor.close();
 

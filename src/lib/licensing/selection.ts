@@ -29,7 +29,10 @@ type Keys = { use: UseKey; term: TermKey; territory: TerritoryKey };
 /** The service fee's terms: the server's PLATFORM_FEE_BPS and the currency's floor (07 D79, D97). */
 export type FeeTerms = { platformFeeBps: number; platformFeeMinCents: number };
 
-const feeTerms = (options: EffectiveOptions, feeBps: number): FeeTerms => ({
+export const feeTerms = (
+  options: EffectiveOptions,
+  feeBps: number,
+): FeeTerms => ({
   platformFeeBps: feeBps,
   platformFeeMinCents: PLATFORM_FEE_MIN_CENTS[options.currency],
 });
@@ -43,6 +46,19 @@ function offered<G extends RateDimension>(
   return options[group].find((o) => o.key === key && o.enabled);
 }
 
+/** The multipliers `selection` is priced with (what a request snapshots), or null when one of its options isn't offered. */
+export function chosenMultipliers(
+  options: EffectiveOptions,
+  selection: Selection,
+): { useBps: number; termBps: number; territoryBps: number } | null {
+  const use = offered(options, "use", selection.use);
+  const term = offered(options, "term", selection.term);
+  const territory = offered(options, "territory", selection.territory);
+  return use && term && territory
+    ? { useBps: use.bps, termBps: term.bps, territoryBps: territory.bps }
+    : null;
+}
+
 /**
  * The quote for `selection` (computeQuote over the effective base, incl. a video's own base, 07 D82, D97), or null when
  * one of its options isn't offered. The territory code never changes the price: "One country" is priced before a
@@ -53,16 +69,12 @@ export function quoteFor(
   selection: Selection,
   fees: FeeTerms,
 ): QuoteResult | null {
-  const use = offered(options, "use", selection.use);
-  const term = offered(options, "term", selection.term);
-  const territory = offered(options, "territory", selection.territory);
-  if (!use || !term || !territory) return null;
+  const multipliers = chosenMultipliers(options, selection);
+  if (!multipliers) return null;
   return computeQuote({
     currency: options.currency,
     basePriceCents: options.basePriceCents,
-    useBps: use.bps,
-    termBps: term.bps,
-    territoryBps: territory.bps,
+    ...multipliers,
     ...fees,
   });
 }
@@ -155,6 +167,37 @@ export function defaultSelection(
     }
   }
   return null;
+}
+
+const GROUPS = ["use", "term", "territory"] as const;
+
+/**
+ * `selection` again once the options changed under it (the page refreshed after an option_disabled, 01 J7.10): each
+ * group whose option is gone moves to its first offered option; if that doesn't fit under the cap, the first load's
+ * choice. `gone` names the groups that moved ("That option isn't available anymore."); none when it still fits.
+ */
+export function repairSelection(
+  options: EffectiveOptions,
+  selection: Selection,
+  feeBps: number,
+): { selection: Selection; gone: RateDimension[] } {
+  if (licenseCents(options, selection, feeBps) !== null) {
+    return { selection, gone: [] };
+  }
+  let next = selection;
+  for (const group of GROUPS) {
+    if (offered(options, group, next[group])) continue;
+    const first = options[group].find((o) => o.enabled);
+    if (first) next = withOption(next, group, first.key as Keys[typeof group]);
+  }
+  if (licenseCents(options, next, feeBps) === null) {
+    // The loader 404s a video where nothing fits, so the first load's choice exists whenever this page renders.
+    next = defaultSelection(options, feeBps) ?? next;
+  }
+  return {
+    selection: next,
+    gone: GROUPS.filter((group) => next[group] !== selection[group]),
+  };
 }
 
 /**

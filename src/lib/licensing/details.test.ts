@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { DETAILS_COPY, detailsFieldError, EMAIL_RE } from "./details";
+import {
+  DETAILS_COPY,
+  detailsErrors,
+  detailsFieldError,
+  EMAIL_RE,
+} from "./details";
 
 describe("detailsFieldError (the form's blur checks; owner answer Q-109 a)", () => {
   it("asks for each name, then keeps it to 120 characters after tidying", () => {
@@ -48,5 +53,34 @@ describe("detailsFieldError (the form's blur checks; owner answer Q-109 a)", () 
     for (const email of [...typos, ...good]) {
       expect(EMAIL_RE.test(email)).toBe(server.safeParse(email).success);
     }
+  });
+});
+
+describe("detailsErrors (the press-time check)", () => {
+  const filled = {
+    licenseeName: "Daily Laughs Media LLC",
+    contactName: "Sam Lee",
+    buyerEmail: "sam@dailylaughs.com",
+    intendedUse: "",
+    acceptTerms: true,
+  };
+
+  it("passes a filled form, the use left empty", () => {
+    expect(detailsErrors(filled)).toEqual({});
+  });
+
+  it("names every field that needs fixing, the terms box included", () => {
+    expect(
+      detailsErrors({
+        ...filled,
+        licenseeName: " ",
+        buyerEmail: "sam@",
+        acceptTerms: false,
+      }),
+    ).toEqual({
+      licenseeName: DETAILS_COPY.licenseeEmpty,
+      buyerEmail: DETAILS_COPY.email,
+      acceptTerms: DETAILS_COPY.terms,
+    });
   });
 });

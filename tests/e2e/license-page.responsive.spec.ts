@@ -1,20 +1,35 @@
-import { expect, test } from "@playwright/test";
+import { expect, type Locator, test } from "@playwright/test";
+import { CHECKOUT_COPY } from "../../src/lib/licensing/checkout-copy";
 import { LICENSE_PAGE_COPY } from "../../src/lib/licensing/license-page";
 import { BADGE_COPY } from "../../src/lib/videos/ownership";
+import {
+  chooseDemoSelection,
+  FAKE_CHECKOUT_URL,
+  fillDetails,
+  holdServerActions,
+  hydrated,
+  requestButton,
+  requestWithStaleTotal,
+} from "./helpers/buyer";
 import { collectConsoleErrors } from "./helpers/console";
 import { publishDemoVideo } from "./helpers/flows";
 import {
   atEveryWidth,
   boxOf,
   expectAbove,
+  expectInside,
   expectLeftOf,
   expectNoHorizontalScroll,
+  expectPageFrame,
+  expectReadingColumn,
+  expectReadingPage,
   expectSheetForm,
+  expectTouchTarget,
   expectWithinCap,
   TIERS,
   tierAt,
 } from "./helpers/layout";
-import { pressLocator } from "./helpers/press";
+import { pressAndSettle, pressLocator } from "./helpers/press";
 import { cleanCreatedVideos } from "./helpers/videos";
 
 // G.6 for the license page (P15; 05 §1.6 S01; 07 D145–D149, D153, D154) on all four projects, logged out at each
@@ -23,8 +38,17 @@ import { cleanCreatedVideos } from "./helpers/videos";
 // XL) with the bar under the NavBar; Term 2 × 2 at every tier; "Your name" and "Email" side by side from 768; the badge
 // explainer and Which countries? bottom sheets below 768 and dialogs from 768; the bar last in the DOM. On
 // chromium-desktop at 1280 × 720 the sticky column fits under both bars and its last "View post" can be focused in view.
+// P16a: a refusal's banner across the form's column, the pending button in its bar, and the fake checkout and /r as one
+// centered reading column (07 D145, D148).
 test.use({ reducedMotion: "reduce" });
 test.afterEach(cleanCreatedVideos);
+
+/** `box` spans `column` from edge to edge, within 1 px. */
+async function expectFullWidth(box: Locator, column: Locator) {
+  const [a, b] = await Promise.all([boxOf(box), boxOf(column)]);
+  expect(Math.abs(a.left - b.left)).toBeLessThanOrEqual(1);
+  expect(Math.abs(a.right - b.right)).toBeLessThanOrEqual(1);
+}
 
 test("G.6, 07 D148: the license page at every tier, and its sticky column at 1280 × 720", async ({
   page,
@@ -37,7 +61,7 @@ test("G.6, 07 D148: the license page at every tier, and its sticky column at 128
   const buyer = await context.newPage();
   const errors = collectConsoleErrors(buyer);
   await buyer.goto(shareUrl);
-  await expect(buyer.locator('input[name="timeZone"]')).not.toHaveValue("");
+  await hydrated(buyer);
 
   const side = buyer.locator("[data-license-side]");
   const columns = side.locator("..");
@@ -159,6 +183,75 @@ test("G.6, 07 D148: the license page at every tier, and its sticky column at 128
     });
     console.log(`P15 sticky column at 1280 × 720: ${measured}`);
   }
+
+  await context.close();
+  expect(errors).toEqual([]);
+});
+
+test("G.6, 07 D145, D148: the license page's banner and pending states, the fake checkout and /r at every tier", async ({
+  page,
+  browser,
+  baseURL,
+}, testInfo) => {
+  test.setTimeout(600_000);
+  const { shareUrl } = await publishDemoVideo(page);
+  const context = await browser.newContext({ baseURL });
+  const buyer = await context.newPage();
+  const errors = collectConsoleErrors(buyer);
+  await buyer.goto(shareUrl);
+  await hydrated(buyer);
+  await chooseDemoSelection(buyer);
+  await fillDetails(buyer);
+  const terms = buyer.getByRole("checkbox");
+  await terms.focus();
+  await terms.press("Space");
+  const bar = buyer.locator("[data-pricebar]");
+  const button = requestButton(buyer);
+
+  // A refusal's banner sits above "Your details" across the form's column (a total the server didn't quote).
+  await requestWithStaleTotal(buyer);
+  const notice = buyer.locator("[data-license-notice]");
+  await expect(notice).toBeVisible();
+  await atEveryWidth(buyer, testInfo, async () => {
+    await expectNoHorizontalScroll(buyer);
+    await expectFullWidth(notice, notice.locator(".."));
+  });
+
+  // Pending: "Starting checkout…" keeps P15's placement, at the bottom below 1024 and under the NavBar from 1024.
+  const release = await holdServerActions(buyer);
+  await pressLocator(button);
+  await expect(button).toHaveAttribute("aria-busy", "true");
+  await atEveryWidth(buyer, testInfo, async ({ width }) => {
+    await expectNoHorizontalScroll(buyer);
+    await expectInside(button, bar);
+    const barBox = await boxOf(bar);
+    if (width < TIERS.desktop) {
+      const innerHeight = await buyer.evaluate(() => window.innerHeight);
+      expect(Math.abs(barBox.bottom - innerHeight)).toBeLessThanOrEqual(1);
+    } else {
+      const navBox = await boxOf(buyer.getByRole("banner"));
+      expect(Math.abs(barBox.top - navBox.bottom)).toBeLessThanOrEqual(1);
+    }
+  });
+  await release();
+
+  // The fake checkout: no NavBar, one centered reading column, its warning across it.
+  await buyer.waitForURL(FAKE_CHECKOUT_URL);
+  const column = buyer.locator("main .max-w-reading");
+  const cancel = buyer.getByRole("button", { name: CHECKOUT_COPY.cancel });
+  await atEveryWidth(buyer, testInfo, async ({ width }) => {
+    await expectPageFrame(buyer, width, { banner: false });
+    await expectReadingColumn(buyer);
+    await expectFullWidth(column.locator(":scope > :first-child"), column);
+    await expectTouchTarget(cancel);
+  });
+
+  // /r: the public NavBar and one centered reading column.
+  await pressAndSettle(buyer, CHECKOUT_COPY.cancel);
+  await expect(buyer).toHaveURL(/&checkout=canceled$/);
+  await atEveryWidth(buyer, testInfo, ({ width }) =>
+    expectReadingPage(buyer, width),
+  );
 
   await context.close();
   expect(errors).toEqual([]);

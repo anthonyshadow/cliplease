@@ -1,16 +1,19 @@
 import { type ComponentProps, type ReactNode, useId } from "react";
 import { FadeText } from "@/components/ui/fade-text";
+import { FieldMessages, fieldIds } from "@/components/ui/text-field";
 import { cn } from "@/lib/utils";
 
 /**
  * 04 §9.3 OptionGroup: a `<fieldset>` whose `<legend>` is `title-2`, an optional `help` line under it (05 §6.5 draws
  * the music question's on its own line; `callout` ink-2, the group's description), then its OptionTiles. The tiles hold
  * native radios, so arrow keys, form posting and no-JS work for free; no Radix RadioGroup. The Rights step's two
- * questions are its first use (owner answer Q-97 a); the license page reuses it (P15).
+ * questions are its first use (owner answer Q-97 a); the license page reuses it (P15). `error`: a line under the tiles,
+ * as a field's (the license page's "That option isn't available anymore.", P16a).
  */
 export function OptionGroup({
   legend,
   help,
+  error,
   className,
   children,
   "aria-describedby": describedBy,
@@ -18,15 +21,22 @@ export function OptionGroup({
 }: Omit<ComponentProps<"fieldset">, "children"> & {
   legend: ReactNode;
   help?: ReactNode;
+  error?: ReactNode;
   children: ReactNode;
 }) {
   const helpId = useId();
+  const groupId = useId();
   return (
     <fieldset
       {...props}
       aria-describedby={
-        [help ? helpId : null, describedBy].filter(Boolean).join(" ") ||
-        undefined
+        [
+          help ? helpId : null,
+          error ? fieldIds(groupId).error : null,
+          describedBy,
+        ]
+          .filter(Boolean)
+          .join(" ") || undefined
       }
       className={cn("flex min-w-0 flex-col", className)}
     >
@@ -39,6 +49,11 @@ export function OptionGroup({
         </p>
       ) : null}
       {children}
+      {error ? (
+        <div className="mt-2">
+          <FieldMessages id={groupId} error={error} />
+        </div>
+      ) : null}
     </fieldset>
   );
 }

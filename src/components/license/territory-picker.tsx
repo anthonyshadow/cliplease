@@ -19,10 +19,13 @@ export const TERRITORY_SELECT_ID = "territory-code";
 export function TerritorySelect({
   territory,
   code,
+  error,
   onChange,
 }: {
   territory: "country" | "region";
   code: string | null;
+  /** The server's "Choose a country." when none reached it. */
+  error?: string;
   onChange: (code: string | null) => void;
 }) {
   const words = LICENSE_PAGE_COPY[territory];
@@ -36,6 +39,7 @@ export function TerritorySelect({
       label={words.label}
       // Required for the request (04 §9.3); outside the form, so it only tells assistive tech.
       required
+      error={error}
       value={code ?? ""}
       onChange={(event) => onChange(event.target.value || null)}
     >

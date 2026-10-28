@@ -28,12 +28,18 @@ export function PriceBar({
   title,
   handle,
   chooseTerritory,
+  ready,
+  pending,
 }: {
   quote: Quote;
   title: string;
   handle: string;
   /** One country or One region with nothing chosen yet: the button says so. */
   chooseTerritory: "country" | "region" | null;
+  /** The page has hydrated: before that a press would post the form to the page itself, so the button stays off. */
+  ready: boolean;
+  /** startCheckout is running: "Starting checkout…", and a second tap does nothing. */
+  pending: boolean;
 }) {
   useKeepFocusAboveBar();
   const bar = useRef<HTMLDivElement>(null);
@@ -86,12 +92,14 @@ export function PriceBar({
             <FadeText text={LICENSE_PAGE_COPY.total(total)} />
           </p>
         </div>
-        {/* Disabled until P16a wires the request: a disabled default button also stops Enter in a field from submitting
-            the form (no action yet, so it would GET the details into the URL). */}
+        {/* Off until hydration (a disabled default button also stops Enter in a field from submitting). While no
+            country or region is chosen it asks for one: the form's submit focuses the select (04 §9.3). */}
         <Button
           type="submit"
           form={LICENSE_FORM_ID}
-          disabled
+          disabled={!ready}
+          loading={pending}
+          loadingLabel={LICENSE_PAGE_COPY.startingCheckout}
           className="w-full lg:hit-44 lg:h-9 lg:w-auto lg:min-w-0 lg:px-4 lg:text-callout"
         >
           {chooseTerritory

@@ -48,13 +48,13 @@ export function PublicShell({
   );
 }
 
-/** A one-message page body: the 404 and the error views (05 §10). */
+/** A one-message page body: the 404 and the error views (05 §10), and /r's states. `children` follow the title. */
 export function MessageBody({
   title,
   children,
 }: {
   title: string;
-  children: ReactNode;
+  children?: ReactNode;
 }) {
   return (
     <div className="mx-auto flex max-w-reading flex-col items-start gap-4 py-6 lg:py-12">

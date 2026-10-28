@@ -4,6 +4,11 @@ import type { NextConfig } from "next";
 // config load (typegen included) need a complete env. Build and start with the same APP_ENV.
 const isProduction = process.env.APP_ENV === "production";
 const NOINDEX = [{ key: "X-Robots-Tag", value: "noindex, nofollow" }];
+// Buyer-token pages (02 §9.5): the key is in the URL, so no referrer leaves them.
+const BUYER_TOKEN = [
+  ...NOINDEX,
+  { key: "Referrer-Policy", value: "no-referrer" },
+];
 
 const nextConfig: NextConfig = {
   cacheComponents: false,
@@ -15,7 +20,8 @@ const nextConfig: NextConfig = {
       },
     },
   },
-  // 02 §4.6. The /r, /l, /api/licenses and /verify rows come with their pages (P17, P20); CSP is [H2].
+  // 02 §4.6. When two rules set one key the later wins, so the buyer-token rows follow /(.*). The /verify (P20) and
+  // /licenses, /api/my (P20b) rows come with their pages; CSP is [H2].
   async headers() {
     return [
       {
@@ -42,6 +48,9 @@ const nextConfig: NextConfig = {
       { source: "/dashboard/:path*", headers: NOINDEX },
       { source: "/onboarding", headers: NOINDEX },
       { source: "/admin/:path*", headers: NOINDEX },
+      { source: "/r/:path*", headers: BUYER_TOKEN },
+      { source: "/l/:path*", headers: BUYER_TOKEN },
+      { source: "/api/licenses/:path*", headers: BUYER_TOKEN },
     ];
   },
   // /@handle and /@handle/slug are served by /u/[handle] and the license page /u/[handle]/[slug] (02 §4.3; afterFiles,
@@ -52,10 +61,12 @@ const nextConfig: NextConfig = {
       { source: "/@:handle/:slug", destination: "/u/:handle/:slug" },
     ];
   },
-  // The dev storage route's signed URLs carry object keys, upload ids and signatures: keep them out of `next dev`'s
-  // request log (P10a: never log them). Development only; production never serves the route (07 D51).
+  // The dev storage route's signed URLs carry object keys, upload ids and signatures, and buyer links their key: keep
+  // them out of `next dev`'s request log (P10a, P16a: never log them).
   logging: {
-    incomingRequests: { ignore: [/\/api\/dev\/storage\//] },
+    incomingRequests: {
+      ignore: [/\/api\/dev\/storage\//, /^\/(?:r|l|api\/licenses)\//],
+    },
   },
   experimental: {
     serverActions: {

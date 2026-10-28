@@ -18,6 +18,18 @@ import { effectiveOptions } from "@/server/pricing/rate-card";
 import { rateCardFixture } from "@/server/pricing/rate-card-fixtures";
 import { LicensePageClient } from "./license-page-client";
 
+const mocks = vi.hoisted(() => ({
+  refresh: vi.fn(),
+  startCheckout: vi.fn(),
+}));
+vi.mock("next/navigation", async (actual) => ({
+  ...(await actual<typeof import("next/navigation")>()),
+  useRouter: () => ({ refresh: mocks.refresh }),
+}));
+vi.mock("@/app/(public)/u/[handle]/[slug]/actions", () => ({
+  startCheckout: mocks.startCheckout,
+}));
+
 beforeAll(() => {
   // jsdom has neither; the PriceBar measures itself and keeps focus clear of itself.
   document.elementFromPoint ??= () => null;
@@ -29,6 +41,8 @@ beforeAll(() => {
 });
 afterEach(() => {
   cleanup();
+  mocks.refresh.mockReset();
+  mocks.startCheckout.mockReset();
   vi.useRealTimers();
 });
 
@@ -84,6 +98,9 @@ const bar = () => document.querySelector<HTMLElement>("[data-pricebar]");
 const hidden = (name: string) =>
   document.querySelector<HTMLInputElement>(`input[type=hidden][name=${name}]`)
     ?.value;
+/** The PriceBar's button by the name it has now (the loading label is aria-hidden until it is pending). */
+const barButton = (name: string) =>
+  within(bar() as HTMLElement).getByRole("button", { name });
 const choose = (group: string, value: string) =>
   fireEvent.click(radio(group, value));
 
@@ -101,10 +118,11 @@ describe("LicensePageClient (01 J7; 05 §4.1)", () => {
     expect(priceBar.querySelector("[data-price-total]")?.textContent).toContain(
       "Total CA$165.00",
     );
-    const button = within(priceBar).getByRole("button");
-    expect(button.textContent).toBe("Choose a country");
-    expect(button).toHaveProperty("disabled", true);
-    expect(button.getAttribute("form")).toBe("license-form");
+    // Enabled once the page has hydrated (a press before that would post the form to the page itself).
+    expect(barButton("Choose a country")).toHaveProperty("disabled", false);
+    expect(barButton("Choose a country").getAttribute("form")).toBe(
+      "license-form",
+    );
     expect(hidden("expectedTotalCents")).toBe("16500");
     expect(hidden("submissionId")).toBe(SUBMISSION_ID);
     expect(hidden("territoryCode")).toBe("");
@@ -123,9 +141,7 @@ describe("LicensePageClient (01 J7; 05 §4.1)", () => {
     expect(
       priceBar?.querySelector("[data-price-total]")?.textContent,
     ).toContain("Total CA$1,732.50");
-    expect(
-      within(priceBar as HTMLElement).getByRole("button").textContent,
-    ).toBe("Request license · CA$1,732.50");
+    barButton("Request license · CA$1,732.50");
     expect(hidden("expectedTotalCents")).toBe("173250");
     expect(hidden("useKey")).toBe("paid_social");
     expect(hidden("termKey")).toBe("y1");
@@ -180,9 +196,7 @@ describe("LicensePageClient (01 J7; 05 §4.1)", () => {
     expect(country.options[0]?.textContent).toBe("Choose a country");
     fireEvent.change(country, { target: { value: "US" } });
     expect(hidden("territoryCode")).toBe("US");
-    expect(within(bar() as HTMLElement).getByRole("button").textContent).toBe(
-      "Request license · CA$165.00",
-    );
+    barButton("Request license · CA$165.00");
     expect(
       screen.getByRole("heading", {
         name: "License summary · Organic social repost · 30 days · United States",
@@ -196,9 +210,7 @@ describe("LicensePageClient (01 J7; 05 §4.1)", () => {
     expect(screen.queryByLabelText("Country")).toBeNull();
     const region = screen.getByLabelText("Region") as HTMLSelectElement;
     expect(region.options[0]?.textContent).toBe("Choose a region");
-    expect(within(bar() as HTMLElement).getByRole("button").textContent).toBe(
-      "Choose a region",
-    );
+    barButton("Choose a region");
     fireEvent.change(region, { target: { value: "middle_east_africa" } });
     expect(hidden("territoryCode")).toBe("middle_east_africa");
   });
@@ -256,5 +268,190 @@ describe("LicensePageClient (01 J7; 05 §4.1)", () => {
       "Your card is charged in Canadian dollars. If your card uses another currency, your bank converts it and may add a fee.",
     );
     expect(text).not.toMatch(/(?<!CA)\$/);
+  });
+});
+
+describe("Request license (P16a; 05 §4.1 Submit)", () => {
+  const NEW_ID = "00000000-0000-4000-8000-000000000999";
+
+  /** Valid details and the terms ticked; Worldwide, so no country is asked for. */
+  function fillDetails() {
+    choose("territory", "worldwide");
+    const type = (label: string, value: string) =>
+      fireEvent.change(screen.getByLabelText(label), { target: { value } });
+    type("Licensed to", "Daily Laughs Media LLC");
+    type("Your name", "Sam Lee");
+    type("Email", "sam@dailylaughs.com");
+    fireEvent.click(screen.getByRole("checkbox"));
+  }
+
+  const press = () =>
+    act(async () => {
+      fireEvent.click(within(bar() as HTMLElement).getByRole("button"));
+    });
+
+  const refusal = (code: string, extra: Record<string, unknown> = {}) => ({
+    ok: false,
+    error: { code, message: "Something went wrong. Try again." },
+    ...extra,
+  });
+
+  it("checks every field on press, focuses the first problem and sends nothing", async () => {
+    show();
+    choose("territory", "worldwide");
+    await press();
+    expect(screen.getByText("Enter who the license is for.")).toBeTruthy();
+    expect(
+      screen.getByText("Agree to the license and Terms to continue."),
+    ).toBeTruthy();
+    expect(document.activeElement).toBe(screen.getByLabelText("Licensed to"));
+    expect(mocks.startCheckout).not.toHaveBeenCalled();
+  });
+
+  it("asks for the country first: a press focuses the select (04 §9.3)", async () => {
+    show();
+    await press();
+    expect(document.activeElement).toBe(screen.getByLabelText("Country"));
+    expect(mocks.startCheckout).not.toHaveBeenCalled();
+  });
+
+  it("sends the form once with the choice, then waits with the column inert while the page leaves", async () => {
+    mocks.startCheckout.mockReturnValue(new Promise(() => {}));
+    show();
+    fillDetails();
+    await press();
+    await press();
+    expect(mocks.startCheckout).toHaveBeenCalledOnce();
+    const data = mocks.startCheckout.mock.calls[0]?.[0] as FormData;
+    expect(Object.fromEntries(data)).toMatchObject({
+      useKey: "organic_social",
+      termKey: "d30",
+      territoryKey: "worldwide",
+      territoryCode: "",
+      licenseeName: "Daily Laughs Media LLC",
+      buyerEmail: "sam@dailylaughs.com",
+      acceptTerms: "on",
+      termsVersion: "v1",
+      submissionId: SUBMISSION_ID,
+      expectedTotalCents: "28875",
+    });
+    const button = within(bar() as HTMLElement).getByRole("button");
+    expect(button.getAttribute("aria-busy")).toBe("true");
+    expect(button.textContent).toContain("Starting checkout…");
+    expect(
+      screen.getByLabelText("Licensed to").closest("[inert]"),
+    ).not.toBeNull();
+  });
+
+  it("says the new total when the price changed, focuses the banner and refreshes, until another choice (01 J7.10)", async () => {
+    mocks.startCheckout.mockResolvedValue(
+      refusal("price_changed", { totalCents: 189000 }),
+    );
+    show();
+    fillDetails();
+    await press();
+    const notice = document.querySelector("[data-license-notice]");
+    expect(notice?.textContent).toBe(
+      "Prices changed since you opened this page. New total CA$1,890.00.",
+    );
+    expect(document.activeElement).toBe(notice);
+    expect(mocks.refresh).toHaveBeenCalledOnce();
+    expect(
+      within(bar() as HTMLElement)
+        .getByRole("button")
+        .getAttribute("aria-busy"),
+    ).toBeNull();
+    // The total answered the choice it was sent with: a new choice drops it.
+    choose("term", "perpetual");
+    expect(document.querySelector("[data-license-notice]")).toBeNull();
+  });
+
+  it("says a request was already sent (07 D31), and keeps that banner across a new choice", async () => {
+    mocks.startCheckout.mockResolvedValue(refusal("already_submitted"));
+    show();
+    fillDetails();
+    await press();
+    const text = () =>
+      document.querySelector("[data-license-notice]")?.textContent;
+    const sent =
+      "This request was already sent. Check your email or reload the page.";
+    expect(text()).toBe(sent);
+    choose("term", "perpetual");
+    expect(text()).toBe(sent);
+  });
+
+  it("after a failed Checkout, posts a fresh submission until the server renders a newer one", async () => {
+    mocks.startCheckout.mockResolvedValue(
+      refusal("checkout_failed", { submissionId: NEW_ID }),
+    );
+    const { rerender } = show();
+    fillDetails();
+    await press();
+    expect(document.querySelector("[data-license-notice]")?.textContent).toBe(
+      "Something went wrong. Try again.",
+    );
+    expect(hidden("submissionId")).toBe(NEW_ID);
+    const newer = "11111111-1111-4111-8111-111111111111";
+    rerender(<LicensePageClient page={page()} submissionId={newer} />);
+    expect(hidden("submissionId")).toBe(newer);
+  });
+
+  it("says when the buyer is offline", async () => {
+    mocks.startCheckout.mockRejectedValue(new TypeError("Failed to fetch"));
+    const online = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+    show();
+    fillDetails();
+    await press();
+    expect(document.querySelector("[data-license-notice]")?.textContent).toBe(
+      "You're offline. Check your connection and try again.",
+    );
+    online.mockRestore();
+  });
+
+  it("shows the server's field errors and focuses the first", async () => {
+    mocks.startCheckout.mockResolvedValue(
+      refusal("invalid", {
+        error: {
+          code: "invalid",
+          message: "Enter an email address like name@example.com.",
+          fields: {
+            buyerEmail: ["Enter an email address like name@example.com."],
+          },
+        },
+      }),
+    );
+    show();
+    fillDetails();
+    await press();
+    expect(
+      screen.getByText("Enter an email address like name@example.com."),
+    ).toBeTruthy();
+    expect(document.activeElement).toBe(screen.getByLabelText("Email"));
+  });
+
+  it("moves a group whose option is gone after the refresh, says so and focuses its new choice (01 J7.10)", async () => {
+    mocks.startCheckout.mockResolvedValue(refusal("option_disabled"));
+    const { rerender } = show();
+    choose("use", "paid_social");
+    fillDetails();
+    await press();
+    expect(mocks.refresh).toHaveBeenCalledOnce();
+    rerender(
+      <LicensePageClient
+        page={page({ disabledUses: ["paid_social"] })}
+        submissionId={SUBMISSION_ID}
+      />,
+    );
+    expect(radio("use", "organic_social").checked).toBe(true);
+    expect(
+      screen.getByText("That option isn't available anymore. Choose another."),
+    ).toBeTruthy();
+    expect(document.activeElement).toBe(radio("use", "organic_social"));
+    choose("use", "broadcast");
+    expect(
+      screen.queryByText(
+        "That option isn't available anymore. Choose another.",
+      ),
+    ).toBeNull();
   });
 });

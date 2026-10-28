@@ -40,6 +40,8 @@ const READING_ROUTES = [
   { path: "/legal/privacy", status: 200 },
   { path: "/legal/data-deletion", status: 200 },
   { path: "/does-not-exist", status: 404 },
+  // A buyer link that opens nothing (05 §10 S27).
+  { path: "/r/00000000-0000-4000-8000-000000000999", status: 404 },
 ] as const;
 
 for (const { path, status } of READING_ROUTES) {

@@ -55,6 +55,8 @@ describe("paymentsDriver registry (07 D95)", () => {
   });
 });
 
+const REQUEST = "6f4c8d7e-1a2b-4c3d-8e9f-0a1b2c3d4e5f";
+
 describe("the fake driver (07 D35)", () => {
   const fake = createPaymentsRegistry(testEnv)("cad");
 
@@ -85,10 +87,45 @@ describe("the fake driver (07 D35)", () => {
     });
   });
 
-  it("rejects what later prompts add, and every webhook", async () => {
-    await expect(fake.getAuthorization("pi_1")).rejects.toThrow(
-      "fake driver: getAuthorization arrives in P16",
+  it("opens a checkout for its own currency only, at the dev page, with no key or email in the URL (07 D35, D95)", async () => {
+    const input = {
+      currency: "cad" as const,
+      requestId: REQUEST,
+      buyerToken: "t".repeat(43),
+      buyerEmail: "sam@dailylaughs.com",
+      licensePriceCents: 157500,
+      platformFeeCents: 15750,
+      licenseLabel: "First snow · Paid social ads · 1 year · Worldwide",
+      checkoutExpiresAt: new Date(),
+    };
+    await expect(fake.createCheckout(input)).resolves.toEqual({
+      sessionId: `cs_fake_${REQUEST}`,
+      url: `http://fake.test/dev/fake-checkout/${REQUEST}`,
+    });
+    await expect(
+      fake.createCheckout({ ...input, currency: "usd" }),
+    ).rejects.toThrow("a usd checkout on the cad account");
+  });
+
+  it("captures and cancels a fake PaymentIntent, and refuses any other id before reading anything", async () => {
+    await expect(fake.capture(`pi_fake_${REQUEST}`, "k")).resolves.toEqual({
+      ok: true,
+    });
+    await expect(
+      fake.cancel(`pi_fake_${REQUEST}`, "abandoned", "k"),
+    ).resolves.toEqual({ ok: true });
+    for (const id of ["pi_1", `cs_fake_${REQUEST}`, "pi_fake_x"]) {
+      await expect(fake.getAuthorization(id)).rejects.toThrow(
+        "unknown pi_fake id",
+      );
+      await expect(fake.capture(id, "k")).rejects.toThrow("unknown pi_fake id");
+    }
+    await expect(fake.retrieveCheckout(`pi_fake_${REQUEST}`)).rejects.toThrow(
+      "unknown cs_fake id",
     );
+  });
+
+  it("rejects what later prompts add, and every webhook", async () => {
     await expect(
       fake.createTransfer({
         requestId: "r1",
