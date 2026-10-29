@@ -8,6 +8,8 @@
     "start": "next start",
     "lint": "biome check .",
     "lint:tokens": "bash scripts/lint-tokens.sh",
+    "lint:invariants": "tsx scripts/lint-invariants.ts",
+    "cn:tables": "tsx scripts/cn-tables.ts",
     "format": "biome format --write .",
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run --project unit",
@@ -22,6 +24,7 @@
     "db:migrate": "drizzle-kit migrate",
     "db:check": "drizzle-kit check",
     "db:studio": "drizzle-kit studio",
+    "email:dev": "email dev --dir src/emails/previews --port 3001",
     "db:seed": "NODE_OPTIONS=--conditions=react-server tsx scripts/seed.ts",
     "auth:schema": "bunx auth@1.7.7 generate --config src/server/auth/auth.ts --output src/db/schema/auth.ts --adapter drizzle --dialect postgresql --yes",
     "smoke:compat": "tsx scripts/compat-smoke.tsx"
@@ -46,7 +49,7 @@
     "resend": "6.31.0",
     "server-only": "0.0.1",
     "stripe": "23.0.0",
-    "zod": "4.6.5"
+    "zod": "4.6.6"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
@@ -71,8 +74,7 @@
   },
   "packageManager": "bun@1.4.3",
   "ignoreScripts": [
-    "sharp",
-    "unrs-resolver"
+    "sharp"
   ],
   "trustedDependencies": [],
   "engines": {

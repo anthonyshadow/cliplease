@@ -8,6 +8,7 @@ import {
   openFakeCheckout,
   payFakeCheckout,
 } from "@/server/payments/fake-checkout";
+import { rethrowRedacted } from "@/server/rethrow-redacted";
 
 // The fake checkout's buttons (02 §5.8, §6.1; 05 §10; 07 D35): each does what Stripe's would, then returns where Stripe
 // sends the buyer. They exist in every build, so each runs openFakeCheckout's guard first. The key is rebuilt on the
@@ -21,7 +22,9 @@ export async function fakeCheckoutPay(requestId: string): Promise<void> {
   const checkout = await openFakeCheckout(String(requestId));
   if (!checkout) notFound();
   if (checkout.status !== "checkout_pending") redirect(checkout.returnPath());
-  await payFakeCheckout(checkout);
+  await payFakeCheckout(checkout).catch((error: unknown) =>
+    rethrowRedacted(error, "fake_checkout.pay_failed"),
+  );
   afterResponse(() => retryEmailOutbox({ limit: 20 }));
   redirect(checkout.returnPath({ session_id: checkout.sessionId }));
 }

@@ -1,6 +1,9 @@
 // The rate-card tests' shared card (P12, P13): onboarding's default card as getRateCard reads it. Tests only.
-import { defaultRateOptions } from "@/lib/pricing/presets";
-import type { RateCardDTO, RateCardOption } from "./rate-card";
+import { defaultRateOptions } from "../../src/lib/pricing/presets";
+import type {
+  RateCardDTO,
+  RateCardOption,
+} from "../../src/server/pricing/rate-card";
 
 /** CA$150 with every default option on, then `change` applied to each option. */
 export const rateCardFixture = (

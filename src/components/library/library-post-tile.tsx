@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { PlatformBadge } from "@/components/platform/platform-badge";
 import { Button } from "@/components/ui/button";
 import { StatusPill } from "@/components/ui/status-pill";
@@ -16,8 +17,8 @@ import { PostThumbnail } from "./post-thumbnail";
 
 /**
  * 04 §9.12: one link (the 9:16 well and the two-line caption) described by the meta line, the neutral pills, and the
- * tertiary action to the same place (07 D39), so at most three focus stops with P27's YouTube icon link. Links to
- * /dashboard/videos/** are plain <a>: those pages come with P10b/P11 (owner answer Q-25), and a prefetch would 404.
+ * tertiary action to the same place (07 D39), so at most three focus stops with P27's YouTube icon link. Client links
+ * (an upload running in this tab keeps going, owner answer Q-42), never prefetched: a grid holds dozens of tiles.
  * Hover underlines the caption only; nothing is drawn on the image.
  */
 export function LibraryPostTile({ post }: { post: LibraryPostDTO }) {
@@ -28,9 +29,10 @@ export function LibraryPostTile({ post }: { post: LibraryPostDTO }) {
   const metaId = `meta-${post.id}`;
   return (
     <li data-post-tile className="flex min-w-0 flex-col items-start">
-      <a
+      <Link
         id={tileLinkId(post.id)}
         href={href}
+        prefetch={false}
         aria-describedby={metaId}
         className="group block w-full rounded-md"
       >
@@ -53,7 +55,7 @@ export function LibraryPostTile({ post }: { post: LibraryPostDTO }) {
         >
           {caption.text}
         </p>
-      </a>
+      </Link>
       <p id={metaId} className="mt-1 text-footnote text-ink-2 tabular-nums">
         <PlatformBadge platform={post.platform} />
         {tileMetaDetails(post)
@@ -70,7 +72,9 @@ export function LibraryPostTile({ post }: { post: LibraryPostDTO }) {
       {action ? (
         // Text-aligned with the caption; hit-44 keeps the touch target.
         <Button asChild variant="tertiary" size="sm" className="mt-1 px-0">
-          <a href={href}>{action}</a>
+          <Link href={href} prefetch={false}>
+            {action}
+          </Link>
         </Button>
       ) : null}
     </li>

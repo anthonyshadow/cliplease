@@ -29,9 +29,15 @@ export const MORE_SHEET_KEYS = [
   "settings",
 ] as const satisfies readonly CreatorNavKey[];
 
-// The /dashboard routes don't exist until P04–P12: a production prefetch of a missing route logs a 404 in the
-// console. Turn prefetch back on once every route these links point to exists.
-export const SHELL_PREFETCH = false;
+/**
+ * A shell link's prefetch: Next's default (a dynamic route down to its loading state, so Library, Connections and
+ * Pricing show their skeleton at once) for every route that exists, and none for Licenses until P20 builds it: a
+ * production prefetch of a missing route logs a 404 in the console. creator-nav.test.ts fails once a page and this
+ * disagree.
+ */
+export function shellPrefetch(key: CreatorNavKey): false | undefined {
+  return key === "licenses" ? false : undefined;
+}
 
 /** The nav key whose route contains `pathname` (Inbox only for /dashboard itself). */
 export function currentNavKey(pathname: string): CreatorNavKey | undefined {

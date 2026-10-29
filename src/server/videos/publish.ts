@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, eq, sql } from "drizzle-orm";
+import { asc, eq, sql } from "drizzle-orm";
 import { db } from "../../db/client";
 import { socialAccount, video, videoPosting } from "../../db/schema";
 import type { Video } from "../../db/schema/types";
@@ -22,6 +22,7 @@ import {
 } from "../pricing/rate-card";
 import { VideoNotFoundError } from "./errors";
 import { stepFactColumns, stepFactsOf, type VideoStepState } from "./queries";
+import { ownedVideo } from "./scope";
 
 // What stands between a video and Publish (02 §5.6; 07 §8.2, D66, D69, D74), and Publish itself: the Review lists the
 // blockers and publishVideo enforces the same ones. Payouts never block (D74); there is no guardian or payout-country
@@ -121,10 +122,7 @@ export async function getPublishFacts(
 } | null> {
   if (!isUuid(videoId)) return null;
   const [[row], postings, rateCard] = await Promise.all([
-    db
-      .select(publishColumns)
-      .from(video)
-      .where(and(eq(video.id, videoId), eq(video.creatorId, creatorId))),
+    db.select(publishColumns).from(video).where(ownedVideo(creatorId, videoId)),
     readPostings(db, videoId),
     getRateCard(creatorId),
   ]);
@@ -162,7 +160,7 @@ export async function publishVideo(
     const [row] = await tx
       .select(publishColumns)
       .from(video)
-      .where(and(eq(video.id, videoId), eq(video.creatorId, creatorId)))
+      .where(ownedVideo(creatorId, videoId))
       .for("update");
     if (!row) throw new VideoNotFoundError();
     if (row.status === "published") return { ok: true, slug: row.slug };

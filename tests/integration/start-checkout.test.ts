@@ -17,7 +17,6 @@ import {
   type StartCheckoutInput,
   StartCheckoutSchema,
 } from "../../src/lib/validation/checkout";
-import { DEMO_REQUEST } from "../../src/lib/validation/checkout-fixtures";
 import { MUSIC_DISABLED_USES } from "../../src/lib/videos/rights";
 import { env } from "../../src/server/env";
 import { getBuyerRequest } from "../../src/server/licensing/request-status";
@@ -33,6 +32,7 @@ import {
   findRequestForBuyer,
   hashBuyerToken,
 } from "../../src/server/tokens/buyer-token";
+import { DEMO_REQUEST } from "../helpers/checkout-fixtures";
 import {
   insertCreator,
   insertLicenseRequest,

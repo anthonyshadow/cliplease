@@ -412,6 +412,9 @@ export async function countLiveVideosByAccount(
       and(
         eq(videoPosting.creatorId, creatorId),
         eq(videoPosting.verification, "verified"),
+        // Equal to the posting's creator (the composite foreign key); it lets video_creator_status_published_idx start
+        // the join from this creator's published videos instead of every published video.
+        eq(video.creatorId, creatorId),
         eq(video.status, "published"),
       ),
     )

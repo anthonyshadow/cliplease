@@ -21,11 +21,27 @@ const PRIVATE = "private, no-store";
  * Demo posting unless Demo is enabled, 07 D72) gets its poster cached publicly, decided from the row with no session
  * read (a stale session cookie would otherwise be cleared on a cached response). Otherwise the signed-in owner or an
  * admin gets it private and never cached; everyone else gets the same empty 404 (a bad id, no poster, a draft, someone
- * else's video). `?v=` is only a cache-buster.
+ * else's video). `?v=` is only a cache-buster. A failed database or session read is logged and answers the same 404,
+ * not Next's 500 with the whole error printed.
  */
 export async function posterResponse(
   videoId: string,
   platforms: readonly SocialProviderId[] = enabledPlatforms(),
+): Promise<Response> {
+  try {
+    return await posterFor(videoId, platforms);
+  } catch (error) {
+    logEvent("error", "posters.lookup_failed", {
+      videoId,
+      error: errorName(error),
+    });
+    return notFoundNoStore();
+  }
+}
+
+async function posterFor(
+  videoId: string,
+  platforms: readonly SocialProviderId[],
 ): Promise<Response> {
   if (!isUuid(videoId)) return notFoundNoStore();
   const [row] = await db

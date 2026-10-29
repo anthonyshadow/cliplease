@@ -467,11 +467,20 @@ export function createLocalStorage({
     },
 
     async receivePart({ key, uploadId, partNumber }, body) {
-      objectPath(key);
-      if (partNumber < 1 || partNumber > MAX_PART_NUMBER) {
-        throw new StorageKeyError();
+      // A refused part's body is cancelled, as receiveObject's is: nothing reads it.
+      try {
+        objectPath(key);
+        if (partNumber < 1 || partNumber > MAX_PART_NUMBER) {
+          throw new StorageKeyError();
+        }
+      } catch (error) {
+        await body.cancel();
+        throw error;
       }
-      if (!(await isOpenUpload(key, uploadId))) return "no_such_upload";
+      if (!(await isOpenUpload(key, uploadId))) {
+        await body.cancel();
+        return "no_such_upload";
+      }
       const dir = uploadDir(uploadId);
       const part = path.join(dir, `${partNumber}.part`);
       // The upload's folder must exist: a part never brings back an upload a complete or an abort just removed.

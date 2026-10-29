@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { rateCardFixture } from "../../../tests/helpers/rate-card-fixtures";
 import { effectiveOptions } from "../../server/pricing/rate-card";
-import { rateCardFixture } from "../../server/pricing/rate-card-fixtures";
 import type { RateOptionKey, UseKey } from "../domain/values";
 import { formatDelta } from "../format";
 import { fromPriceCents } from "../pricing/from-price";

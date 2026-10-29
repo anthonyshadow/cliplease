@@ -4,27 +4,51 @@
 # only when the code differs from that green run.
 #
 # The fingerprint covers every tracked or new, non-ignored file except Markdown (notes like PROGRESS.md change after a
-# run without changing what it proved), by path and content, in byte order whatever the shell's locale. Env files are
-# ignored by git, so a .env.test change isn't seen: run check:full after editing one.
+# run without changing what it proved), by path and content, in byte order whatever the shell's locale; then what git
+# ignores but a run depends on: .env.test and .env.test.local (by content, never printed) and the Node and Bun versions.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 MARK=.data/last-green
+SCHEMA_COPY=.data/schema-drift
 
 fingerprint() {
-  git ls-files -co --exclude-standard -z -- ':!*.md' |
-    while IFS= read -r -d '' file; do
-      if [ -f "$file" ]; then printf '%s\0' "$file"; fi
-    done |
-    LC_ALL=C sort -z | xargs -0 shasum -a 256 | shasum -a 256 | cut -d' ' -f1
+  {
+    git ls-files -co --exclude-standard -z -- ':!*.md' |
+      while IFS= read -r -d '' file; do
+        if [ -f "$file" ]; then printf '%s\0' "$file"; fi
+      done |
+      LC_ALL=C sort -z | xargs -0 shasum -a 256
+    for file in .env.test .env.test.local; do
+      if [ -f "$file" ]; then shasum -a 256 "$file"; fi
+    done
+    node -v
+    bun -v
+  } | shasum -a 256 | cut -d' ' -f1
 }
 
 recorded() { [ -f "$MARK" ] && sed -n "s/^$1=//p" "$MARK"; }
+
+# A schema edit with no migration: drizzle-kit generate, run on a copy of drizzle/ (it takes only an out path inside the
+# project, so the copy lives in the ignored .data), must find nothing to write.
+schema_matches_migrations() {
+  rm -rf "$SCHEMA_COPY" && mkdir -p "$SCHEMA_COPY" && cp -R drizzle "$SCHEMA_COPY/drizzle"
+  printf 'import base from "../../drizzle.config";\nexport default { ...base, out: "./%s/drizzle" };\n' \
+    "$SCHEMA_COPY" >"$SCHEMA_COPY/drizzle.config.ts"
+  NODE_ENV=test bun run db:generate --config "$SCHEMA_COPY/drizzle.config.ts" >/dev/null
+  if ! diff -rq drizzle "$SCHEMA_COPY/drizzle" >/dev/null; then
+    echo "check: src/db/schema has changes that no migration in drizzle/ holds: run bun run db:generate." >&2
+    return 1
+  fi
+  rm -rf "$SCHEMA_COPY"
+}
 
 fast() {
   bun run typecheck
   bun run lint
   bun run lint:tokens
+  bun run lint:invariants
+  schema_matches_migrations
   bun run test
 }
 

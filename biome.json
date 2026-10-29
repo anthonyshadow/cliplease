@@ -7,7 +7,7 @@
   },
   "files": {
     "ignoreUnknown": true,
-    "includes": ["**", "!drizzle"]
+    "includes": ["**", "!drizzle", "!src/lib/cn-tables.ts"]
   },
   "formatter": {
     "enabled": true,

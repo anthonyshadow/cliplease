@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { POSTINGS_MAX } from "@/lib/postings/limits";
 import {
+  SOURCE_POSTING,
+  savedPosting,
+} from "../../../tests/helpers/postings-fixtures";
+import {
   addRow,
   atLimit,
   clearRowError,
@@ -31,7 +35,6 @@ import {
   syncFailureLine,
   toggleChip,
 } from "./posting-picker-state";
-import { SOURCE_POSTING, savedPosting } from "./postings-fixtures";
 
 const opts = { allowMock: true };
 const REEL = "https://www.instagram.com/reel/C0dEaBcDeF1/";

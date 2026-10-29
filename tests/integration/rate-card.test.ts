@@ -16,7 +16,6 @@ import {
   InvalidRateCardError,
   saveRateCard,
 } from "../../src/server/pricing/rate-card";
-import { rateCardFixture } from "../../src/server/pricing/rate-card-fixtures";
 import { redirectTo } from "../helpers/actions";
 import {
   creatorActor,
@@ -25,6 +24,7 @@ import {
   signInWithOtp,
 } from "../helpers/auth";
 import { uniqueTestHandle } from "../helpers/factories";
+import { rateCardFixture } from "../helpers/rate-card-fixtures";
 
 // The rate card (J4.1, J4.6, J4.9; 02 §5.5, §6.1) against the test database: onboarding's defaults, the save round
 // trip, crafted input the shared schema refuses, and the action's requireCreator. Outside a request refresh() has no

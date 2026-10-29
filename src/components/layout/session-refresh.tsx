@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect } from "react";
-import { authClient } from "@/lib/auth-client";
 import { SESSION_UPDATE_AGE_S } from "@/lib/sign-in";
 
 // When this page last asked, so a long-open tab asks again only once the next daily extension is due.
@@ -22,7 +21,10 @@ export function SessionRefresh({ refreshAt }: { refreshAt: number | null }) {
         return;
       }
       askedAt = now;
-      void authClient.getSession().catch(() => null);
+      // Loaded on first use: most page views never need the auth client.
+      void import("@/lib/auth-client")
+        .then(({ authClient }) => authClient.getSession())
+        .catch(() => null);
     };
     refreshIfDue();
     const onVisible = () => {

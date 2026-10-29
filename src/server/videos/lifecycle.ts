@@ -7,13 +7,11 @@ import { writeAudit } from "../audit";
 import { type Actor, requireCreatorActor } from "../auth/actor";
 import { removeVideoObjects } from "../storage/uploads";
 import { VideoNotDraftError, VideoNotFoundError } from "./errors";
+import { ownedVideo } from "./scope";
 
 // Turn off and Delete draft (02 §5.6; 03 §5.2; 01 J5.20, J5.21). Turn on is publishVideo (P14a), which runs every
 // blocker again. Neither touches a license_request: a request waiting for approval stays approvable (J5.20), and a
 // draft never has one (license_request_video_fk is restrict).
-
-const own = (creatorId: string, videoId: string) =>
-  and(eq(video.id, videoId), eq(video.creatorId, creatorId));
 
 /**
  * Turn off (01 J5.20): the creator's `published` video becomes `unpublished`, with `video.unpublished` in the same
@@ -28,7 +26,7 @@ export async function unpublishVideo(a: Actor, videoId: string): Promise<void> {
     const [turnedOff] = await tx
       .update(video)
       .set({ status: "unpublished" })
-      .where(and(own(creatorId, videoId), eq(video.status, "published")))
+      .where(and(ownedVideo(creatorId, videoId), eq(video.status, "published")))
       .returning({ id: video.id });
     if (turnedOff) {
       await writeAudit(tx, a, {
@@ -41,7 +39,7 @@ export async function unpublishVideo(a: Actor, videoId: string): Promise<void> {
     const [row] = await tx
       .select({ id: video.id })
       .from(video)
-      .where(own(creatorId, videoId));
+      .where(ownedVideo(creatorId, videoId));
     if (!row) throw new VideoNotFoundError();
   });
 }
@@ -68,7 +66,7 @@ export async function deleteDraftVideo(
         posterObjectKey: video.posterObjectKey,
       })
       .from(video)
-      .where(own(creatorId, videoId))
+      .where(ownedVideo(creatorId, videoId))
       .for("update");
     if (!row) return null;
     if (row.status !== "draft") throw new VideoNotDraftError();

@@ -1,6 +1,5 @@
 // Resuming an original on the same device (07 D80, D103): the hint the browser keeps, which parts are left, and the
 // server's view of an unfinished upload. Pure and client-safe; storage is passed in.
-import { z } from "zod";
 import type { UploadErrorCode } from "./codes";
 import { planParts } from "./plan";
 
@@ -16,12 +15,25 @@ export type HintStore = Pick<
   "getItem" | "setItem" | "removeItem"
 > | null;
 
-const hintSchema = z.strictObject({
-  uploadId: z.string().min(1),
-  name: z.string(),
-  size: z.number().int().positive(),
-  lastModified: z.number(),
-});
+/**
+ * A hint exactly as writeResumeHint stores it; anything else (a missing or extra field, a wrong type) is corrupt or
+ * foreign. Checked by hand: the upload indicator brings this module into every dashboard page, and a schema library
+ * would come with it.
+ */
+function isResumeHint(value: unknown): value is ResumeHint {
+  if (typeof value !== "object" || value === null) return false;
+  const hint = value as Record<string, unknown>;
+  return (
+    Object.keys(hint).length === 4 &&
+    typeof hint.uploadId === "string" &&
+    hint.uploadId.length > 0 &&
+    typeof hint.name === "string" &&
+    typeof hint.size === "number" &&
+    Number.isInteger(hint.size) &&
+    hint.size > 0 &&
+    Number.isFinite(hint.lastModified)
+  );
+}
 
 /** `localStorage` key of a video's hint (07 D103). */
 export const resumeHintKey = (videoId: string) => `cliplease.upload.${videoId}`;
@@ -36,8 +48,8 @@ export function readResumeHint(
   try {
     const raw = store.getItem(key);
     if (raw === null) return null;
-    const parsed = hintSchema.safeParse(JSON.parse(raw));
-    if (parsed.success) return parsed.data;
+    const hint: unknown = JSON.parse(raw);
+    if (isResumeHint(hint)) return hint;
   } catch {
     // Unreadable storage or JSON: treated as no hint.
   }

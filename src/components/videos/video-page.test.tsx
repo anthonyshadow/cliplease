@@ -1,15 +1,15 @@
 // @vitest-environment jsdom
-import "./file-step-fixtures";
-import "./postings-fixtures";
+import "../../../tests/helpers/file-step-fixtures";
+import "../../../tests/helpers/postings-fixtures";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import type { ComponentProps } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { formatBytes } from "@/lib/format";
 import type { PublishBlocker } from "@/lib/videos/review";
 import { effectiveOptions } from "@/server/pricing/rate-card";
-import { rateCardFixture } from "@/server/pricing/rate-card-fixtures";
-import { creatorVideoFixture } from "./creator-video-fixture";
-import { savedPosting } from "./postings-fixtures";
+import { creatorVideoFixture } from "../../../tests/helpers/creator-video-fixture";
+import { savedPosting } from "../../../tests/helpers/postings-fixtures";
+import { rateCardFixture } from "../../../tests/helpers/rate-card-fixtures";
 import { VideoPageView } from "./video-page";
 
 vi.mock("@/app/(dashboard)/dashboard/videos/[id]/review-actions", () => ({

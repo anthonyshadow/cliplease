@@ -4,6 +4,7 @@ import {
   videoHref,
   videoStepHref,
 } from "../../src/lib/videos/steps";
+import { CONNECTED_TOAST } from "./helpers/connections";
 import { collectConsoleErrors } from "./helpers/console";
 import { signUpCreator } from "./helpers/creator";
 import {
@@ -92,7 +93,12 @@ test("J5.1–J5.5: post 01's Source page, Make licensable, the File step, then W
   await expect(main.getByText(LINKED)).toBeVisible();
   await expect(main.locator("ol")).toHaveCount(0);
 
-  // The badge's explainer (04 §9.19, §11.2; 07 D43, D70): Esc closes it and focus returns to its link.
+  // The badge's explainer (04 §9.19, §11.2; 07 D43, D70): Esc closes it and focus returns to its link. The connect
+  // step's toast may still be up after the client navigations: an Esc closes it first (or does nothing once it timed
+  // out), so the Esc below is the sheet's alone (Radix gives a toast's Esc to a sheet opened over it a render later,
+  // sooner than a person presses but not than a test).
+  await page.keyboard.press("Escape");
+  await expect(page.getByText(CONNECTED_TOAST, { exact: true })).toBeHidden();
   const explain = main.getByRole("button", {
     name: "What does this mean?",
     exact: true,

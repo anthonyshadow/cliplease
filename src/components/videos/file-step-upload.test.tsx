@@ -1,9 +1,12 @@
 // @vitest-environment jsdom
 // First: its mocks must be in place before the upload island loads.
-import "./file-step-fixtures";
+import "../../../tests/helpers/file-step-fixtures";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { LIBRARY_STEP, NOTICE } from "./file-step-fixtures";
+import {
+  LIBRARY_STEP,
+  NOTICE,
+} from "../../../tests/helpers/file-step-fixtures";
 import { FileStepUpload, type FileStepVideo } from "./file-step-upload";
 
 afterEach(cleanup);

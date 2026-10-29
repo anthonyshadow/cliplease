@@ -8,6 +8,7 @@ import { isUuid } from "../../lib/validation/uuid";
 import { type Actor, requireCreatorActor } from "../auth/actor";
 import { deriveSubkey } from "../crypto/token-cipher";
 import { errorName, logEvent } from "../log";
+import { ownedVideo } from "../videos/scope";
 import { contentDisposition } from "./content-disposition";
 import { MultipartError } from "./errors";
 import { storage } from "./index";
@@ -194,7 +195,7 @@ async function ownVideo(creatorId: string, videoId: string) {
       uploadFresh,
     })
     .from(video)
-    .where(and(eq(video.id, videoId), eq(video.creatorId, creatorId)));
+    .where(ownedVideo(creatorId, videoId));
   return row;
 }
 type OwnVideo = NonNullable<Awaited<ReturnType<typeof ownVideo>>>;
@@ -756,7 +757,7 @@ async function completePoster(
     const [current] = await tx
       .select({ key: video.posterObjectKey, status: video.status })
       .from(video)
-      .where(and(eq(video.id, row.id), eq(video.creatorId, creatorId)))
+      .where(ownedVideo(creatorId, row.id))
       .for("update");
     // Read again under the row lock: a disable that lands during the check wins (02 §6.2).
     if (current && current.status !== "disabled") {
@@ -807,7 +808,7 @@ export async function abortUpload(
         uploadId: video.originalUploadId,
       })
       .from(video)
-      .where(and(eq(video.id, i.videoId), eq(video.creatorId, creatorId)))
+      .where(ownedVideo(creatorId, i.videoId))
       .for("update");
     if (!locked) return null;
     if (
@@ -864,7 +865,7 @@ export async function getOriginalUploadProgress(
       fresh: uploadFresh,
     })
     .from(video)
-    .where(and(eq(video.id, i.videoId), eq(video.creatorId, creatorId)));
+    .where(ownedVideo(creatorId, i.videoId));
   if (row?.status !== "uploading") return null;
   const { key, uploadId, size } = row;
   if (!key || !uploadId || !size) return null;

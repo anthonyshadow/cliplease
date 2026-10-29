@@ -1,11 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import {
-  DETAILS_COPY,
-  detailsErrors,
-  detailsFieldError,
-  EMAIL_RE,
-} from "./details";
+import { EMAIL_RE } from "../validation/email";
+import { DETAILS_COPY, detailsErrors, detailsFieldError } from "./details";
 
 describe("detailsFieldError (the form's blur checks; owner answer Q-109 a)", () => {
   it("asks for each name, then keeps it to 120 characters after tidying", () => {

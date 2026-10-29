@@ -5,7 +5,7 @@ import { pressButton, pressLink } from "./press";
 // connects the same way; this one starts from the page a test is on.)
 
 export const CONNECTIONS = "/dashboard/connections";
-const CONNECTED_TOAST = "Demo connected. Showing your latest videos.";
+export const CONNECTED_TOAST = "Demo connected. Showing your latest videos.";
 /** The callback's first sync (07 D13); a slow run can read "1 min ago". */
 export const SYNC_LINE = /^Synced (just now|\d+ min ago) · 24 videos$/;
 

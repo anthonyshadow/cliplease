@@ -36,6 +36,7 @@ import {
   stepFactsOf,
   type VideoStepState,
 } from "../videos/queries";
+import { ownedVideo } from "../videos/scope";
 import {
   CheckedRecentlyError,
   InvalidPostingsError,
@@ -46,6 +47,7 @@ import {
   assertPostingAvailable,
   assertPostingsAvailable,
   auditNewlyVerified,
+  lockConnectedAccounts,
   type PostingTarget,
   postKey,
   refreshVideoOwnership,
@@ -57,6 +59,7 @@ import {
   type PostingCheckResult,
   type PostingDeadline,
   postingDeadline,
+  unverified,
   verifyPostingLink,
 } from "./verify";
 
@@ -205,6 +208,31 @@ export type UncheckedRow = "carried" | "not_reached";
 
 /** A row as save step 5 leaves it: a check's result, or how it went unchecked. */
 export type RowCheck = PostingCheckResult | UncheckedRow;
+
+/**
+ * `checks` once their accounts are share-locked (lockConnectedAccounts, after the video's lock): a fresh Verified check
+ * through an account no longer `connected` is check_failed, as if the check had failed, since a Disconnect committed
+ * after it (03 §9.3) and may have deleted the post it found. A Disconnect after this waits for the write.
+ */
+async function settleDisconnects<C extends RowCheck>(
+  tx: Pick<typeof db, "select">,
+  checks: readonly C[],
+): Promise<(C | PostingCheckResult)[]> {
+  const verifiedThrough = (check: RowCheck) =>
+    typeof check === "object" && check.verification === "verified"
+      ? check.socialAccountId
+      : null;
+  const connected = await lockConnectedAccounts(
+    tx,
+    checks.flatMap((check) => verifiedThrough(check) ?? []),
+  );
+  return checks.map((check) => {
+    const account = verifiedThrough(check);
+    return account === null || connected.has(account)
+      ? check
+      : unverified("check_failed");
+  });
+}
 
 /**
  * Save step 5 for one planned row: carried when its post's saved check is recent, else checkPosting under the save's
@@ -478,7 +506,7 @@ async function lockEditableVideo(
   const [locked] = await tx
     .select({ status: video.status })
     .from(video)
-    .where(and(eq(video.id, videoId), eq(video.creatorId, creatorId)))
+    .where(ownedVideo(creatorId, videoId))
     .for("update");
   if (!locked) throw new VideoNotFoundError();
   if (!POSTINGS_EDITABLE.includes(locked.status))
@@ -529,9 +557,7 @@ export async function saveVideoPostings(
       videoPosting,
       and(eq(videoPosting.videoId, video.id), eq(videoPosting.isSource, true)),
     )
-    .where(
-      and(eq(video.id, input.videoId), eq(video.creatorId, actor.creatorId)),
-    );
+    .where(ownedVideo(actor.creatorId, input.videoId));
   if (!current) throw new VideoNotFoundError();
   if (!POSTINGS_EDITABLE.includes(current.status))
     throw new PostingsLockedError();
@@ -596,8 +622,12 @@ export async function saveVideoPostings(
     facts = await db.transaction(async (tx) => {
       await lockEditableVideo(tx, actor.creatorId, input.videoId);
       await assertPostingsAvailable(tx, targets);
+      const settled = await settleDisconnects(
+        tx,
+        checked.map(({ check }) => check),
+      );
       return replacePostings(tx, actor, input.videoId, {
-        checked,
+        checked: checked.map(({ row }, n) => ({ row, check: settled[n] })),
         sourceShowLink: input.sourceShowLink,
       });
     });
@@ -824,6 +854,7 @@ async function checkAgain(
     await db.transaction(async (tx) => {
       await lockEditableVideo(tx, actor.creatorId, posting.videoId);
       await assertPostingAvailable(tx, target);
+      const [settled] = await settleDisconnects(tx, [check]);
       const postings = await tx
         .select({
           id: videoPosting.id,
@@ -837,7 +868,7 @@ async function checkAgain(
       // A save replaced the video's postings meanwhile: this one is gone.
       if (!row) throw new VideoNotFoundError();
       const columns = recheckColumns(
-        check,
+        settled,
         row.verification === "verified",
         now,
       );

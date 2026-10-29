@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db } from "../../db/client";
 import { video } from "../../db/schema";
 import type { VideoStatus } from "../../lib/domain/values";
@@ -20,6 +20,7 @@ import {
   VideoDisabledError,
   VideoNotFoundError,
 } from "./errors";
+import { ownedVideo } from "./scope";
 
 // A video's edits that aren't uploads or postings (02 §5.6), each under the video row lock: "These posts show this same
 // video" on the Where posted step (07 D69; P11c moved it there from P11's File step), stored and taken back only while
@@ -43,7 +44,7 @@ async function lockForTick(
       sameVideoConfirmedAt: video.sameVideoConfirmedAt,
     })
     .from(video)
-    .where(and(eq(video.id, videoId), eq(video.creatorId, creatorId)))
+    .where(ownedVideo(creatorId, videoId))
     .for("update");
   if (!row) throw new VideoNotFoundError();
   if (!POSTINGS_EDITABLE.includes(row.status)) throw new PostingsLockedError();
@@ -115,7 +116,7 @@ async function lockEditableVideo(
       publishedAt: video.publishedAt,
     })
     .from(video)
-    .where(and(eq(video.id, videoId), eq(video.creatorId, creatorId)))
+    .where(ownedVideo(creatorId, videoId))
     .for("update");
   if (!row) throw new VideoNotFoundError();
   if (row.status === "disabled") throw new VideoDisabledError();

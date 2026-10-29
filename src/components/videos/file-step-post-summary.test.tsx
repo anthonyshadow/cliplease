@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, render } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { PROVENANCE } from "./file-step-fixtures";
+import { PROVENANCE } from "../../../tests/helpers/file-step-fixtures";
 import { PostSummary } from "./file-step-post-summary";
 
 afterEach(cleanup);

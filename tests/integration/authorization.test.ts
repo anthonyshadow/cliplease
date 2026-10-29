@@ -6,7 +6,12 @@ import {
   fakeCheckoutPay,
 } from "../../src/app/dev/fake-checkout/[requestId]/actions";
 import { db, pool } from "../../src/db/client";
-import { licenseRequest, stripeEvent, video } from "../../src/db/schema";
+import {
+  emailLog,
+  licenseRequest,
+  stripeEvent,
+  video,
+} from "../../src/db/schema";
 import type { LicenseRequest, Video } from "../../src/db/schema/types";
 import type { Currency } from "../../src/lib/domain/values";
 import { DAY_MS, HOUR_MS } from "../../src/lib/time";
@@ -527,6 +532,31 @@ async function waitForLockWaiters(n: number) {
   );
 }
 
+/**
+ * Holds the request's row so the two calls `start` makes both queue on applyTransition's lock, then lets them go and
+ * waits for both.
+ */
+async function bothQueuedOnRow(
+  requestId: string,
+  start: () => [Promise<unknown>, Promise<unknown>],
+): Promise<void> {
+  const holder = await pool.connect();
+  try {
+    await holder.query("begin");
+    await holder.query(
+      "select 1 from license_request where id = $1 for update",
+      [requestId],
+    );
+    const both = Promise.all(start());
+    await waitForLockWaiters(2);
+    await holder.query("commit");
+    await both;
+  } finally {
+    // Closed, not pooled: after a failure its transaction may still be open.
+    holder.release(true);
+  }
+}
+
 describe("the webhook and the return at once (02 §8.1, §8.3; 07 D24)", () => {
   it.each([
     ["authorizes", {}, "awaiting_approval", 0],
@@ -536,28 +566,55 @@ describe("the webhook and the return at once (02 §8.1, §8.3; 07 D24)", () => {
     async (_, script, status, cancelCount) => {
       const { row, token } = await pendingRequest();
       scripted.script({ retrieveCheckout: { status: "complete" }, ...script });
-      // Hold the row so both arrivals queue on applyTransition's lock, then let them go.
-      const holder = await pool.connect();
-      try {
-        await holder.query("begin");
-        await holder.query(
-          "select 1 from license_request where id = $1 for update",
-          [row.id],
-        );
-        const both = Promise.all([
-          onWebhookEvent(completed(row), "cad"),
-          reconcileCheckoutReturn(row.id, token, `cs_fake_${row.id}`),
-        ]);
-        await waitForLockWaiters(2);
-        await holder.query("commit");
-        await both;
-      } finally {
-        // Closed, not pooled: after a failure its transaction may still be open.
-        holder.release(true);
-      }
+      await bothQueuedOnRow(row.id, () => [
+        onWebhookEvent(completed(row), "cad"),
+        reconcileCheckoutReturn(row.id, token, `cs_fake_${row.id}`),
+      ]);
       expect((await requestRow(row.id)).status).toBe(status);
       expect(await transitionsOf(row.id)).toHaveLength(1);
       expect(cancels()).toHaveLength(cancelCount);
+    },
+  );
+});
+
+describe("one event delivered twice at once (02 §8.1; 03 T13)", () => {
+  // The claim takes an event again while it is unprocessed, so a redelivery during the first delivery is handled too:
+  // applyTransition's row lock and status guard must keep that to one transition, one cancel and one set of emails.
+  it.each([
+    ["authorizes", completed, {}, "awaiting_approval", 0],
+    [
+      "abandons on a failed assert",
+      completed,
+      { getAuthorization: { amountCents: 1 } },
+      "abandoned",
+      1,
+    ],
+    ["expires", expired, {}, "abandoned", 0],
+  ] as const)(
+    "%s once, with at most one cancel, and counts both deliveries",
+    async (_, eventFor, script, status, cancelCount) => {
+      const { row } = await pendingRequest();
+      scripted.script(script);
+      const event = eventFor(row);
+      await bothQueuedOnRow(row.id, () => [
+        onWebhookEvent(event, "cad"),
+        onWebhookEvent(event, "cad"),
+      ]);
+      await flushAfter();
+      expect((await requestRow(row.id)).status).toBe(status);
+      expect(await transitionsOf(row.id)).toHaveLength(1);
+      expect(cancels()).toHaveLength(cancelCount);
+      expect(await eventRow(event.id)).toMatchObject({
+        attempts: 2,
+        processedAt: expect.any(Date),
+        lastError: null,
+      });
+      const emails = await db
+        .select({ key: emailLog.idempotencyKey })
+        .from(emailLog)
+        .where(eq(emailLog.entityId, row.id));
+      expect(new Set(emails.map((e) => e.key)).size).toBe(emails.length);
+      expect(emails).toHaveLength(status === "awaiting_approval" ? 2 : 0);
     },
   );
 });

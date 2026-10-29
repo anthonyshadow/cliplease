@@ -55,7 +55,7 @@ describe("readCapped", () => {
     expect(pulledOnceWritten).toEqual([1, 2, 3]);
   });
 
-  it("leaves a read error and an onChunk error to the caller", async () => {
+  it("leaves a read error and an onChunk error to the caller, the stream cancelled after an onChunk error", async () => {
     const failing = new ReadableStream<Uint8Array>({
       pull(controller) {
         controller.error(new Error("cut off"));
@@ -63,11 +63,12 @@ describe("readCapped", () => {
     });
     await expect(readCapped(failing, 12, () => {})).rejects.toThrow("cut off");
 
-    const { stream } = chunkedStream([1]);
+    const { stream, cancelled } = chunkedStream([1, 1]);
     await expect(
       readCapped(stream, 12, () => {
         throw new Error("disk full");
       }),
     ).rejects.toThrow("disk full");
+    expect(cancelled()).toBe(true);
   });
 });

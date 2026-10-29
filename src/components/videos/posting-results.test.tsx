@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // First: its mocks must be in place before the form loads.
-import "./postings-fixtures";
+import "../../../tests/helpers/postings-fixtures";
 import {
   act,
   cleanup,
@@ -19,7 +19,6 @@ import {
 } from "@/app/(dashboard)/dashboard/videos/[id]/actions";
 import { verifiedPostingsKey } from "@/lib/postings/form";
 import type { OwnerPostingDTO } from "@/lib/postings/types";
-import { postingAccounts } from "./posting-picker-state";
 import {
   ACCOUNT_ID,
   DEMO_01,
@@ -28,7 +27,8 @@ import {
   savedPosting,
   unverified,
   VIDEO,
-} from "./postings-fixtures";
+} from "../../../tests/helpers/postings-fixtures";
+import { postingAccounts } from "./posting-picker-state";
 import { PostingsForm } from "./postings-form";
 import { PostingsReadOnly } from "./postings-read-only";
 

@@ -21,6 +21,7 @@ import { isKeptVideo, upsertPosts } from "../social/sync";
 import { NoTimeToRefreshError, withAccessToken } from "../social/tokens";
 import type { PostVisibility, SocialPost } from "../social/types";
 import { NotPublicError } from "./errors";
+import { lockConnectedAccounts } from "./ownership";
 
 // Posting verification by id (02 §5.12, 06 §5b; 07 D68). A link is Verified only when its parsed id matches a post on one
 // of the creator's `connected` accounts: a synced social_post confirmed live, or a platform lookup by id whose post is
@@ -83,7 +84,9 @@ export const postingDeadline = (): PostingDeadline => ({
   refreshBy: Date.now() + POSTING_CHECKS_BUDGET_MS,
 });
 
-function unverified(reason: PostingUnverifiedReason): PostingCheckResult {
+export function unverified(
+  reason: PostingUnverifiedReason,
+): PostingCheckResult {
   return { verification: "unverified", reason };
 }
 
@@ -277,23 +280,36 @@ function sameLink(post: SocialPost | null, linkKey: string): SocialPost | null {
     : null;
 }
 
-/** Step 6: refuses a private post, writes the post to social_post and names the row a verified posting references. */
+/**
+ * Step 6: refuses a private post, writes the post to social_post and names the row a verified posting references. The
+ * write runs only while the account is still connected (lockConnectedAccounts): a Disconnect during the platform call
+ * leaves the link check_failed rather than its post back in the Library (03 §9.3).
+ */
 async function verified(
   account: CheckAccount,
   post: SocialPost,
 ): Promise<PostingCheckResult> {
   if (post.visibility === "private") throw new NotPublicError();
-  await upsertPosts(db, account, [post], new Date());
-  const [row] = await db
-    .select({ id: socialPost.id })
-    .from(socialPost)
-    .where(
-      and(
-        eq(socialPost.socialAccountId, account.id),
-        eq(socialPost.providerPostId, post.externalId),
-      ),
-    );
-  if (!row) throw new Error("verifyPostingLink: the written post is missing");
+  const row = await db.transaction(async (tx) => {
+    if (!(await lockConnectedAccounts(tx, [account.id])).has(account.id)) {
+      return null;
+    }
+    await upsertPosts(tx, account, [post], new Date());
+    const [written] = await tx
+      .select({ id: socialPost.id })
+      .from(socialPost)
+      .where(
+        and(
+          eq(socialPost.socialAccountId, account.id),
+          eq(socialPost.providerPostId, post.externalId),
+        ),
+      );
+    if (!written) {
+      throw new Error("verifyPostingLink: the written post is missing");
+    }
+    return written;
+  });
+  if (!row) return unverified("check_failed");
   return {
     verification: "verified",
     socialAccountId: account.id,

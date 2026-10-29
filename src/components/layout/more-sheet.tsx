@@ -12,7 +12,7 @@ import {
   CREATOR_NAV,
   type CreatorNavKey,
   MORE_SHEET_KEYS,
-  SHELL_PREFETCH,
+  shellPrefetch,
 } from "./creator-nav";
 
 // Plain rows, no separators (05 §1.3 draws none).
@@ -44,7 +44,7 @@ export function MoreSheet({
                 <SheetClose asChild>
                   <Link
                     href={CREATOR_NAV[key].href}
-                    prefetch={SHELL_PREFETCH}
+                    prefetch={shellPrefetch(key)}
                     aria-current={key === current ? "page" : undefined}
                     className={ROW}
                   >

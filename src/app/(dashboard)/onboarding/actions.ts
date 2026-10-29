@@ -22,7 +22,10 @@ import {
 export type ProfileStepError = ActionError & { suggestions?: string[] };
 export type ProfileStepState = ProfileStepError | null;
 
-const checkHandleInput = z.object({ handle: z.string().max(64) });
+// Only a crafted call sends anything but a string of at most 64 characters: it gets the length line, not a 500.
+const checkHandleInput = z
+  .object({ handle: z.string().max(64) })
+  .catch({ handle: "" });
 
 /** The live availability line (01 J1.4). */
 export async function checkHandle(input: {

@@ -64,6 +64,7 @@ import {
   withdrawSameVideo,
 } from "../../src/server/videos/edit";
 import {
+  NeedsReconnectError,
   NoVerifiedPostingError,
   OriginalNotReadyError,
   VideoNotFoundError,
@@ -91,6 +92,7 @@ import {
   liveGetPost,
   spyGetPost,
   twoCreatorsOnOneAccount,
+  videosOf,
 } from "../helpers/library-videos";
 import { captureLogEvents } from "../helpers/logs";
 import { pgError, wrapped } from "../helpers/pg-errors";
@@ -2776,5 +2778,72 @@ describe("getPublicPostings (the buyer's DTOs, 07 D70)", () => {
         postings: [],
       });
     }
+  });
+});
+
+describe("a Disconnect while a posting is checked or written (03 §9.3)", () => {
+  /** getPost answers, then the account is disconnected before the check writes anything. */
+  function disconnectDuringGetPost(d: {
+    account: SocialAccount;
+    actor: Actor;
+  }) {
+    const realGet = mockProvider.getPost.bind(mockProvider);
+    return spyGetPost().mockImplementationOnce(async (...args) => {
+      const live = await realGet(...args);
+      await disconnectSocialAccount(d.account.id, d.actor);
+      return live;
+    });
+  }
+
+  /** The account's posts the Library could show. */
+  const availablePostsOf = async (accountId: string) =>
+    (await postsOf(accountId)).filter((post) => post.status === "available");
+
+  it("saves the link as check_failed and leaves the post out of the Library when Disconnect lands during the check", async () => {
+    const { d, upload, post } = await syncedUpload();
+    disconnectDuringGetPost(d);
+
+    await saveOk(d.actor, upload.id, [demoPaste(post.permalink)]);
+
+    expect(await postingAt(upload.id, 1)).toMatchObject({
+      verification: "unverified",
+      unverifiedReason: "check_failed",
+      socialAccountId: null,
+      socialPostId: null,
+    });
+    expect(await availablePostsOf(d.account.id)).toEqual([]);
+  });
+
+  it("saves the link as check_failed when Disconnect lands between the check and the save's write", async () => {
+    const { d, upload, post } = await syncedUpload();
+    const transaction = db.transaction.bind(db);
+    let calls = 0;
+    vi.spyOn(db, "transaction").mockImplementation(async (run, config) => {
+      calls += 1;
+      // The check's own write is the first transaction, the save's the second; Disconnect's is the third.
+      if (calls === 2) await disconnectSocialAccount(d.account.id, d.actor);
+      return transaction(run, config);
+    });
+
+    await saveOk(d.actor, upload.id, [demoPaste(post.permalink)]);
+
+    expect(calls).toBe(3);
+    expect(await postingAt(upload.id, 1)).toMatchObject({
+      verification: "unverified",
+      unverifiedReason: "check_failed",
+      socialPostId: null,
+    });
+    expect(await availablePostsOf(d.account.id)).toEqual([]);
+  });
+
+  it("refuses Make licensable as needs_reconnect, writing nothing, when Disconnect lands after the live check", async () => {
+    const d = await syncedDemo();
+    const post = await postNumber(d.account.id, "01");
+    disconnectDuringGetPost(d);
+
+    await expect(createVideoFromPost(d.actor, post.id)).rejects.toBeInstanceOf(
+      NeedsReconnectError,
+    );
+    expect(await videosOf(d.account.creatorId)).toEqual([]);
   });
 });

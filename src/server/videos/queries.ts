@@ -35,6 +35,7 @@ import { postThumbnail } from "../library/queries";
 import { ownerPostingsByVideo } from "../postings/queries";
 import { getRateCard, videoFromPrice } from "../pricing/rate-card";
 import { lockedBy, lockFlags } from "../storage/uploads";
+import { ownedVideo } from "./scope";
 import { posterSrc, shareUrl } from "./visibility";
 
 /**
@@ -206,7 +207,7 @@ const videoForCreator = cache(
         ),
       )
       .leftJoin(socialPost, eq(socialPost.id, videoPosting.socialPostId))
-      .where(and(eq(video.id, videoId), eq(video.creatorId, creatorId)));
+      .where(ownedVideo(creatorId, videoId));
     if (!row) return null;
     return {
       ...stepFactsOf(row),
@@ -253,7 +254,7 @@ export async function getVideoStepFacts(
   const [row] = await db
     .select(stepFactColumns)
     .from(video)
-    .where(and(eq(video.id, videoId), eq(video.creatorId, creatorId)));
+    .where(ownedVideo(creatorId, videoId));
   return row ? stepFactsOf(row) : null;
 }
 
@@ -279,7 +280,7 @@ export async function getRequestCounts(
   const [row] = await db
     .select(requestCounts)
     .from(video)
-    .where(and(eq(video.id, videoId), eq(video.creatorId, creatorId)));
+    .where(ownedVideo(creatorId, videoId));
   return row ?? null;
 }
 

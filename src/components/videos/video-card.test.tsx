@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import "./postings-fixtures";
+import "../../../tests/helpers/postings-fixtures";
 import {
   cleanup,
   fireEvent,

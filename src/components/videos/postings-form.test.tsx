@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // First: its mocks must be in place before the form loads.
-import "./postings-fixtures";
+import "../../../tests/helpers/postings-fixtures";
 import {
   act,
   cleanup,
@@ -15,7 +15,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { saveVideoPostings } from "@/app/(dashboard)/dashboard/videos/[id]/actions";
 import { postingsFromFormData } from "@/lib/postings/form";
 import { POSTINGS_MAX } from "@/lib/postings/limits";
-import { postingAccounts } from "./posting-picker-state";
 import {
   ACCOUNT_ID,
   DEMO_01,
@@ -23,7 +22,8 @@ import {
   savedPosting,
   VIDEO,
   VIDEO_ID,
-} from "./postings-fixtures";
+} from "../../../tests/helpers/postings-fixtures";
+import { postingAccounts } from "./posting-picker-state";
 import { PostingsForm } from "./postings-form";
 
 const save = vi.mocked(saveVideoPostings);

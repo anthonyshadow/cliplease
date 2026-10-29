@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { DEMO_REQUEST as DEMO } from "../../../tests/helpers/checkout-fixtures";
 import { DETAILS_COPY } from "../licensing/details";
 import { StartCheckoutSchema } from "./checkout";
-import { DEMO_REQUEST as DEMO } from "./checkout-fixtures";
 
 /** The first issue of `change` applied to the demo request: [path, message], or null when it parses. */
 function issue(change: Record<string, unknown>) {

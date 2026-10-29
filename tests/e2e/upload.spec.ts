@@ -332,11 +332,22 @@ test("Q-42: the upload carries on across pages; the card shows it, Open goes bac
 }) => {
   test.setTimeout(120_000);
   const errors = collectConsoleErrors(page);
+  // A full document navigation would ask "Leave site?" (the guard while an original runs) and end the tab's upload.
+  const dialogs: string[] = [];
+  page.on("dialog", (dialog) => {
+    dialogs.push(dialog.type());
+    void dialog.dismiss();
+  });
   await signUpCreator(page, { payouts: false });
   const videoId = await createDraft(page);
   const fileStep = `/dashboard/videos/${videoId}?step=file`;
   const card = uploadCard(page);
   const held = await uploadThenLeave(page);
+  // Left on the Library, which has no account yet: its empty state's in-app link keeps the upload running.
+  await pressLink(page, "Or upload a video");
+  await page.waitForURL(NEW_VIDEO);
+  await expect(card.getByText(`Uploading ${DRAFT_TITLE}`)).toBeVisible();
+  expect(dialogs).toEqual([]);
   await expect(card.getByRole("progressbar")).toBeVisible();
   const open = card.getByRole("link", { name: "Open", exact: true });
   await expect(open).toHaveAttribute("href", fileStep);

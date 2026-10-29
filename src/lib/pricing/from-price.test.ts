@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { rateCardFixture } from "../../../tests/helpers/rate-card-fixtures";
 import { effectiveOptions } from "../../server/pricing/rate-card";
-import { rateCardFixture } from "../../server/pricing/rate-card-fixtures";
 import { fromPriceCents } from "./from-price";
 
 const FEE_BPS = 1000;

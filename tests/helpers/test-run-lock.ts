@@ -1,3 +1,6 @@
+import path from "node:path";
+import { drizzle } from "drizzle-orm/node-postgres";
+import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { Client } from "pg";
 import { pruneOldEmails } from "./read-latest-email";
 import { checkTestDatabaseFiles, emptyPublicTables } from "./test-database";
@@ -11,8 +14,9 @@ export type TestSuite = "integration" | "e2e";
 
 /**
  * Starts a test run: takes the test-run lock on the database that `root`'s .env.test names, after the same guard the
- * tests use; then empties that database on the lock's own connection, so the run starts clean whatever an interrupted
- * run left, and deletes the test emails sent more than a day ago. Resolves to the function that releases the lock;
+ * tests use; then, on the lock's own connection, applies any migration in drizzle/ it doesn't have yet and empties it, so
+ * the run starts on the current schema and clean whatever an interrupted run left, and deletes the test emails sent
+ * more than a day ago. Resolves to the function that releases the lock;
  * throws a clear error when another run holds it or the database can't be reached.
  */
 export async function startTestRun(
@@ -57,12 +61,15 @@ export async function startTestRun(
     );
   }
   try {
+    await migrate(drizzle({ client }), {
+      migrationsFolder: path.join(root, "drizzle"),
+    });
     await emptyPublicTables(client);
     await pruneOldEmails();
   } catch (error) {
     await client.end();
     throw new Error(
-      `The ${suite} run can't empty the test database and old test emails.`,
+      `The ${suite} run can't migrate and empty the test database and old test emails.`,
       { cause: error },
     );
   }

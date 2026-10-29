@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { isDevStorageEnabled, parseDevStorageRequest } from "./dev-route";
+import {
+  handleDevStorage,
+  isDevStorageEnabled,
+  parseDevStorageRequest,
+} from "./dev-route";
 import {
   localRequestUrl,
   type SignedRequest,
@@ -351,5 +355,22 @@ describe("parseDevStorageRequest", () => {
         ),
       ).toBeNull();
     });
+  });
+});
+
+describe("handleDevStorage's methods", () => {
+  it("answers 405 to a method the route doesn't have, before reading anything", async () => {
+    const e = { APP_ENV: "test", STORAGE_DRIVER: "local" } as const;
+    for (const method of ["DELETE", "POST", "PATCH"]) {
+      const response = await handleDevStorage(
+        e,
+        new Request("http://localhost/api/dev/storage/originals/x.mp4", {
+          method,
+        }),
+        SEGMENTS,
+      );
+      expect(response.status).toBe(405);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+    }
   });
 });

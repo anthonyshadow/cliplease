@@ -391,6 +391,25 @@ describe("multipart upload", () => {
       expect(await exists(uploadDirOf(NEVER_CREATED))).toBe(false);
     });
 
+    it("cancels a refused part's body, unread: an unknown upload or a part number out of range", async () => {
+      const unknown = lazyStream(10);
+      expect(
+        await store.receivePart(
+          { key: KEY, uploadId: NEVER_CREATED, partNumber: 1 },
+          unknown.stream,
+        ),
+      ).toBe("no_such_upload");
+      expect(unknown.cancelled()).toBe(true);
+      const outOfRange = lazyStream(10);
+      await expect(
+        store.receivePart(
+          { key: KEY, uploadId: NEVER_CREATED, partNumber: 0 },
+          outOfRange.stream,
+        ),
+      ).rejects.toBeInstanceOf(StorageKeyError);
+      expect(outOfRange.cancelled()).toBe(true);
+    });
+
     it("answers no_such_upload when the key is not the upload's", async () => {
       const { uploadId } = await store.createMultipart({
         key: KEY,

@@ -9,10 +9,11 @@ export const AUTO_REFRESH_EVERY_MS = 30_000;
 const SAME_RETURN_MS = 1_000;
 
 /**
- * Refreshes the page (router.refresh(): the server components re-render, client state stays) every 30 s, and when the
- * viewer comes back to the tab: window focus, or the document becoming visible (iOS Safari doesn't always fire focus).
- * `onRefresh` runs just before each refresh; `restart` starts the 30 s over (P18: the inbox keeps a settled row until
- * the next refresh). One refresher per page.
+ * Refreshes the page (router.refresh(): the server components re-render, client state stays) every 30 s while the tab
+ * is visible, and when the viewer comes back to it: window focus, or the document becoming visible (iOS Safari doesn't
+ * always fire focus). A hidden tab skips its ticks and refreshes on that return instead (owner answer Q-130: nobody
+ * sees it). `onRefresh` runs just before each refresh; `restart` starts the 30 s over (P18: the inbox keeps a settled
+ * row until the next refresh). One refresher per page.
  */
 export function useAutoRefresh({
   onRefresh,
@@ -38,10 +39,13 @@ export function useAutoRefresh({
     const visible = () => {
       if (document.visibilityState === "visible") back();
     };
-    let timer = setInterval(refresh, AUTO_REFRESH_EVERY_MS);
+    const tick = () => {
+      if (document.visibilityState !== "hidden") refresh();
+    };
+    let timer = setInterval(tick, AUTO_REFRESH_EVERY_MS);
     startOver.current = () => {
       clearInterval(timer);
-      timer = setInterval(refresh, AUTO_REFRESH_EVERY_MS);
+      timer = setInterval(tick, AUTO_REFRESH_EVERY_MS);
     };
     window.addEventListener("focus", back);
     document.addEventListener("visibilitychange", visible);

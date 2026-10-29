@@ -27,12 +27,11 @@ export function IgPersonalExplainer() {
             Try again
           </a>
         </Button>
-        {/* The Videos page arrives in P10b: a plain link, so nothing prefetches a page that isn't there yet. */}
         <Button asChild variant="tertiary" size="sm" wrap>
-          <a href="/dashboard/videos/new">
+          <Link href="/dashboard/videos/new">
             Not ready to switch? Upload the video instead. It will be labeled
             Self-attested.
-          </a>
+          </Link>
         </Button>
         <Button asChild variant="tertiary" size="sm">
           <Link href="/dashboard/connections">Back to Connections</Link>

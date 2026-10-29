@@ -7,8 +7,19 @@ import { formatLogLine } from "../lib/log-line";
 import { env } from "../server/env";
 import * as schema from "./schema";
 
+/**
+ * How long a query waits for a connection (a free one, or a new one to Neon) before failing, instead of waiting until
+ * the function is stopped with its leases held. Above a cold Neon start's few seconds.
+ */
+export const POOL_CONNECT_TIMEOUT_MS = 10_000;
+
 /** The pooled connection (Neon's PgBouncer). drizzle-kit migrates through DATABASE_URL_UNPOOLED instead. */
-export const pool = new Pool({ connectionString: env.DATABASE_URL });
+export const pool = new Pool({
+  connectionString: env.DATABASE_URL,
+  // pg-pool's default, written out: at most this many connections per instance.
+  max: 10,
+  connectionTimeoutMillis: POOL_CONNECT_TIMEOUT_MS,
+});
 // On Vercel it closes idle connections before a function suspends; elsewhere it only adds a `release` listener.
 attachDatabasePool(pool);
 // An idle client's connection dropped (a Neon restart or suspend, a network blip). pg-pool has already removed the

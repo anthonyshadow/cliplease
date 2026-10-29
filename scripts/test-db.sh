@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The local test database (owner answers Q-87, Q-89): Postgres 18, the major Neon runs, in Docker Desktop, the way CI's
+# The local test database (owner answers Q-87, Q-89): Postgres 18.6, Neon's version, in Docker Desktop, the way CI's
 # postgres service will run it (P32), instead of the Neon test branch over the network. `bun run test:db` starts Docker
 # Desktop if Docker isn't up, creates or starts the container, waits for it and applies the migrations. The tests reach
 # it through .env.test.local (git-ignored), whose two database URLs are $URL below (the script prints the lines when
@@ -10,7 +10,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 NAME=cliplease-test-db
-IMAGE=postgres:18
+IMAGE=postgres:18.6
 PORT=54329
 URL="postgres://cliplease:cliplease@127.0.0.1:$PORT/cliplease_test"
 

@@ -2,8 +2,8 @@
 // a Library video's source post. A test whose components read the mock imports this file first, as a bare import, so
 // the mock is in place before those components load.
 import { vi } from "vitest";
-import type { CreatorSourcePostDTO } from "@/server/videos/queries";
-import type { FileStepLibrary } from "./file-step-upload";
+import type { FileStepLibrary } from "../../src/components/videos/file-step-upload";
+import type { CreatorSourcePostDTO } from "../../src/server/videos/queries";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn() }),

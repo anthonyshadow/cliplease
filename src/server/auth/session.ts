@@ -20,6 +20,7 @@ import {
   safeNextPath,
   signInPath,
 } from "@/lib/sign-in";
+import { rethrowRedacted } from "../rethrow-redacted";
 import type { Actor } from "./actor";
 import { auth } from "./auth";
 
@@ -49,14 +50,20 @@ export type CreatorContext = {
 
 /**
  * The session, once per request. The read never extends it: a Server Component can't write the cookie, so the expiry
- * would move in the database but not in the browser. SessionRefresh extends it through the auth route instead.
+ * would move in the database but not in the browser. SessionRefresh extends it through the auth route instead. A failed
+ * read reaches every page, action and route that starts here as a plain error (rethrowRedacted): its query's message
+ * holds the session token.
  */
-const readSession = cache(async () =>
-  auth.api.getSession({
-    headers: await headers(),
-    query: { disableRefresh: true },
-  }),
-);
+const readSession = cache(async () => {
+  try {
+    return await auth.api.getSession({
+      headers: await headers(),
+      query: { disableRefresh: true },
+    });
+  } catch (error) {
+    rethrowRedacted(error, "auth.session_read_failed");
+  }
+});
 
 /** The signed-in user, once per request. `name` is "" after an OTP sign-up until onboarding sets it (P05). */
 export const getSessionUser = cache(async (): Promise<SessionUser | null> => {
@@ -73,7 +80,10 @@ export const getCreatorContext = cache(
       .select()
       .from(creatorProfile)
       .where(eq(creatorProfile.userId, user.id))
-      .limit(1);
+      .limit(1)
+      .catch((error: unknown) =>
+        rethrowRedacted(error, "auth.session_read_failed"),
+      );
     if (!profile) return null;
     return {
       user,

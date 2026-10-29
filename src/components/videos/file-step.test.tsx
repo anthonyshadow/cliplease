@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
 // First: its mocks must be in place before the File step loads.
-import "./file-step-fixtures";
+import "../../../tests/helpers/file-step-fixtures";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CreatorVideoDTO } from "@/server/videos/queries";
-import { creatorVideoFixture } from "./creator-video-fixture";
+import { creatorVideoFixture } from "../../../tests/helpers/creator-video-fixture";
+import { NOTICE, SOURCE_POST } from "../../../tests/helpers/file-step-fixtures";
 import { FileStep } from "./file-step";
-import { NOTICE, SOURCE_POST } from "./file-step-fixtures";
 
 afterEach(() => {
   cleanup();

@@ -21,7 +21,6 @@ export const PAYMENTS_DRIVERS = ["fake", "stripe"] as const;
 export type PaymentsDriverName = (typeof PAYMENTS_DRIVERS)[number];
 
 export const STORAGE_DRIVERS = ["local", "r2"] as const;
-export type StorageDriverName = (typeof STORAGE_DRIVERS)[number];
 
 // 02 §7.9 (07 D36).
 export const MOCK_SOCIAL_SCENARIOS = [

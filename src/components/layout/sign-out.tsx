@@ -2,14 +2,16 @@
 
 import { Button } from "@/components/ui/button";
 import { MenuItem } from "@/components/ui/menu";
-import { authClient } from "@/lib/auth-client";
 
 /**
  * Signs out, then a full navigation to /sign-in (a server render with no session). A network failure still navigates:
- * with the session intact, /sign-in sends the visitor back in.
+ * with the session intact, /sign-in sends the visitor back in. The auth client loads on the press, so the shell that
+ * renders these doesn't carry it.
  */
 async function signOutAndLeave() {
-  await authClient.signOut().catch(() => null);
+  await import("@/lib/auth-client")
+    .then(({ authClient }) => authClient.signOut())
+    .catch(() => null);
   window.location.assign("/sign-in");
 }
 

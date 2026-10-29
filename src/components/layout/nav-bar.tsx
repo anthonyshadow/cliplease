@@ -12,7 +12,7 @@ import {
   type CreatorNavKey,
   currentNavKey,
   NAV_BAR_KEYS,
-  SHELL_PREFETCH,
+  shellPrefetch,
 } from "./creator-nav";
 import { SHELL_GUTTER } from "./gutter";
 import { useInboxCount } from "./inbox-count";
@@ -76,7 +76,7 @@ function CreatorLinks({
             <li key={key}>
               <Link
                 href={CREATOR_NAV[key].href}
-                prefetch={SHELL_PREFETCH}
+                prefetch={shellPrefetch(key)}
                 aria-current={isCurrent ? "page" : undefined}
                 className={cn(
                   // hit-44: a short label ("Inbox") is under 44 px wide (07 D152); the hit area grows, nothing shows.
@@ -111,7 +111,7 @@ export function NavBar(props: NavBarProps) {
       <>
         <Bar>
           <div className="flex items-center gap-3">
-            <Wordmark href="/admin" prefetch={SHELL_PREFETCH} />
+            <Wordmark href="/admin" />
             <span className="text-callout font-semibold text-ink-2">Admin</span>
           </div>
         </Bar>
@@ -126,7 +126,7 @@ export function NavBar(props: NavBarProps) {
   const current = props.current ?? currentNavKey(pathname);
   return (
     <Bar>
-      <Wordmark href={CREATOR_NAV.inbox.href} prefetch={SHELL_PREFETCH} />
+      <Wordmark href={CREATOR_NAV.inbox.href} />
       {props.withoutProfile ? null : (
         <CreatorLinks current={current} inboxCount={props.inboxCount} />
       )}
@@ -144,7 +144,7 @@ export function NavBar(props: NavBarProps) {
         <MenuContent>
           {props.withoutProfile ? null : (
             <MenuItem asChild>
-              <Link href={CREATOR_NAV.settings.href} prefetch={SHELL_PREFETCH}>
+              <Link href={CREATOR_NAV.settings.href}>
                 {CREATOR_NAV.settings.label}
               </Link>
             </MenuItem>

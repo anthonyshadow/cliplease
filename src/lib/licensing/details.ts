@@ -2,16 +2,16 @@
 // the field checks it runs on blur, with no Zod: the buyer's page never loads the validation library for them. The
 // schema the server enforces (StartCheckoutSchema, src/lib/validation/checkout.ts) reads the same limits and words.
 import { tidyText } from "../text/tidy";
+import { EMAIL_MAX, EMAIL_MESSAGE, EMAIL_RE } from "../validation/email";
 
 export const NAME_MAX = 120;
-export const EMAIL_MAX = 254;
 export const INTENDED_USE_MAX = 200;
 
 export const DETAILS_COPY = {
   licenseeEmpty: "Enter who the license is for.",
   nameEmpty: "Enter your name.",
   nameLong: `Use ${NAME_MAX} characters or fewer.`,
-  email: "Enter an email address like name@example.com.",
+  email: EMAIL_MESSAGE,
   intendedUseLong: `Use ${INTENDED_USE_MAX} characters or fewer.`,
   terms: "Agree to the license and Terms to continue.",
   chooseCountry: "Choose a country.",
@@ -26,13 +26,6 @@ export const DETAILS_FIELDS = [
   "intendedUse",
 ] as const;
 export type DetailsField = (typeof DETAILS_FIELDS)[number];
-
-/**
- * Zod 4's default `z.email()` pattern (zod/v4/core regexes `email`), copied so the page checks exactly what the server
- * does without loading Zod; StartCheckoutSchema passes it to `z.email({ pattern })`, so the two can't drift.
- */
-export const EMAIL_RE =
-  /^(?:[A-Za-z0-9_'+-]+\.)*[A-Za-z0-9_'+-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9-]*\.)+[A-Za-z]{2,}$/;
 
 /** The field's message for `raw` as the buyer typed it, or null when it is fine (names and the use are tidied first). */
 export function detailsFieldError(

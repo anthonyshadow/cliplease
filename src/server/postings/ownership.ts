@@ -1,7 +1,7 @@
 import "server-only";
-import { and, asc, eq, ne, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, ne, or, sql } from "drizzle-orm";
 import type { db } from "../../db/client";
-import { video, videoPosting } from "../../db/schema";
+import { socialAccount, video, videoPosting } from "../../db/schema";
 import type { Ownership, PostingPlatform } from "../../lib/domain/values";
 import { writeAudit } from "../audit";
 import type { Actor } from "../auth/actor";
@@ -89,6 +89,30 @@ export function assertPostingAvailable(
   target: PostingTarget,
 ): Promise<void> {
   return assertPostingsAvailable(exec, [target]);
+}
+
+/**
+ * Of `accountIds`, the ones still `connected`, each held FOR SHARE until the transaction ends (03 §9.3): a Disconnect
+ * that committed first is seen here, and one that comes later waits for this write, then spares the posts it
+ * references. Taken after the video's lock (video → account → post, the order sync and Disconnect also keep from the
+ * account on).
+ */
+export async function lockConnectedAccounts(
+  tx: Pick<typeof db, "select">,
+  accountIds: readonly string[],
+): Promise<ReadonlySet<string>> {
+  if (accountIds.length === 0) return new Set();
+  const rows = await tx
+    .select({ id: socialAccount.id })
+    .from(socialAccount)
+    .where(
+      and(
+        inArray(socialAccount.id, [...accountIds]),
+        eq(socialAccount.status, "connected"),
+      ),
+    )
+    .for("share");
+  return new Set(rows.map((row) => row.id));
 }
 
 /**

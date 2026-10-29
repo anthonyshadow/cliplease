@@ -93,7 +93,9 @@ export async function handleDevStorage(
   nowS = Math.floor(Date.now() / 1000),
 ): Promise<Response> {
   if (!isDevStorageEnabled(e)) return notFoundNoStore();
-  const method = request.method === "GET" ? "GET" : "PUT";
+  // Next answers HEAD with the GET handler: it reads as a GET. Anything else isn't this route's.
+  const method = request.method === "HEAD" ? "GET" : request.method;
+  if (method !== "GET" && method !== "PUT") return status(405);
   const parsed = parseDevStorageRequest(
     method,
     segments,

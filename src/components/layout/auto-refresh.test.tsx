@@ -56,6 +56,20 @@ describe("AutoRefresh (01 J7.17; 05 §4.3, §6.3)", () => {
     expect(mocks.refresh).toHaveBeenCalledTimes(2);
   });
 
+  it("skips its ticks while the tab is hidden, then refreshes once when it is shown again", () => {
+    const visibility = vi.spyOn(document, "visibilityState", "get");
+    visibility.mockReturnValue("hidden");
+    render(<AutoRefresh />);
+    act(() => vi.advanceTimersByTime(10 * AUTO_REFRESH_EVERY_MS));
+    expect(mocks.refresh).not.toHaveBeenCalled();
+    visibility.mockReturnValue("visible");
+    act(() => void document.dispatchEvent(new Event("visibilitychange")));
+    expect(mocks.refresh).toHaveBeenCalledTimes(1);
+    act(() => vi.advanceTimersByTime(AUTO_REFRESH_EVERY_MS));
+    expect(mocks.refresh).toHaveBeenCalledTimes(2);
+    visibility.mockRestore();
+  });
+
   it("calls onRefresh just before each refresh", () => {
     const order: string[] = [];
     mocks.refresh.mockImplementation(() => order.push("refresh"));

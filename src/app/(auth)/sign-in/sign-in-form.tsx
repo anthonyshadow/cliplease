@@ -9,7 +9,6 @@ import {
   useRef,
   useState,
 } from "react";
-import * as z from "zod/mini";
 import { Banner } from "@/components/ui/banner";
 import { Button } from "@/components/ui/button";
 import { INLINE_LINK } from "@/components/ui/inline-link";
@@ -26,13 +25,12 @@ import {
   shouldAutoSubmit,
   signInErrorKey,
 } from "@/lib/sign-in";
+import { EMAIL_RE } from "@/lib/validation/email";
 
 type Step = "email" | "code";
 /** `id` is new on every failure, so a repeated message is announced again. */
 type Failure = { key: SignInErrorKey; id: number };
 
-// zod/mini: the same email check without shipping all of Zod to the sign-in page.
-const EMAIL = z.email();
 const networkFailure = (): SignInErrorKey =>
   navigator.onLine === false ? "offline" : "generic";
 
@@ -166,7 +164,7 @@ export function SignInForm({ next }: { next: string }) {
     event.preventDefault();
     if (busy.current) return;
     const address = email.trim().toLowerCase();
-    if (!EMAIL.safeParse(address).success) {
+    if (!EMAIL_RE.test(address)) {
       fail("invalidEmail");
       return;
     }

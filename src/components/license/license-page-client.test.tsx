@@ -15,7 +15,7 @@ import { defaultSelection } from "@/lib/licensing/selection";
 import { publicBadge } from "@/lib/videos/ownership";
 import { MUSIC_DISABLED_USES } from "@/lib/videos/rights";
 import { effectiveOptions } from "@/server/pricing/rate-card";
-import { rateCardFixture } from "@/server/pricing/rate-card-fixtures";
+import { rateCardFixture } from "../../../tests/helpers/rate-card-fixtures";
 import { LicensePageClient } from "./license-page-client";
 
 const mocks = vi.hoisted(() => ({

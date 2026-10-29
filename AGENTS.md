@@ -23,7 +23,9 @@ On a product rule for exclusive licenses, renewals, renewal pricing, reservation
 ## 2. The loop — run it for every prompt, in this order
 
 **Step 0 — Prove the previous prompt is done.**
-- Read `PROGRESS.md`. Confirm the previous prompt is marked done and has no unresolved blockers.
+- Read `PROGRESS.md`. Confirm the previous prompt is marked done and has no unresolved blockers. Finished logs P00–P16
+  are archived in `progress/log-P00-P16.md` (their open follow-ups stay in PROGRESS.md) and the Decisions table is
+  `progress/decisions.md`: open either only when a prompt points there.
 - Run the previous prompt's **Verify** commands: `bun run check:step0 <its e2e specs>` (see Test commands below), plus
   any URL checks it lists.
 - Re-check its **Acceptance criteria** against the code. Open the files; don't trust the log alone.
@@ -54,11 +56,12 @@ database (Docker Desktop) and migrates it; `.env.test.local` (git-ignored) point
 - `bun run test:changed` / `bun run test:int:changed`: only the unit or integration tests whose imports reach a changed
   file (a change to the test setup or to a file tests read without importing, such as a migration, runs them all).
 - `bun run test:e2e a.spec.ts b.spec.ts`: one invocation per verify step, never one per spec (each one builds the app).
-- `bun run check:full`: typecheck, lint, token lint, unit, integration and every e2e spec; a green run is recorded in
-  `.data/last-green`.
-- `bun run check:step0 [specs]`: typecheck, lint, token lint and unit always. When the files are exactly those of the
-  last green `check:full`, it skips integration and e2e; otherwise it runs the integration tests the changes reach and
-  the given specs (all when none).
+- `bun run check:full`: typecheck, lint, token lint, invariant lint (`bun run lint:invariants`: the §5 rules a type
+  check can't see), a schema-drift check, unit, integration and every e2e spec; a green run is recorded in
+  `.data/last-green`. Every integration and e2e run migrates the test database to the head of `drizzle/` first.
+- `bun run check:step0 [specs]`: the same fast checks (typecheck through unit) always. When the files, the test env
+  files and the Node and Bun versions are exactly those of the last green `check:full`, it skips integration and e2e;
+  otherwise it runs the integration tests the changes reach and the given specs (all when none).
 
 ## 3. Always stop and ask when…
 - A credential, API key, account, domain or paid service is needed (never invent or reuse keys).
@@ -107,6 +110,7 @@ Then wait. Don't proceed on a guess for anything in §3.
 - Never hard-code colors, font sizes or radii in components; use the design tokens.
 
 ## 6. PROGRESS.md format
+New rows of the Decisions table go at the end of `progress/decisions.md`; everything else below stays in PROGRESS.md.
 ```
 # Progress
 

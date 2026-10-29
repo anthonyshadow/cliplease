@@ -1,13 +1,16 @@
 // @vitest-environment jsdom
 // First: its mocks must be in place before the step loads.
-import "./postings-fixtures";
+import "../../../tests/helpers/postings-fixtures";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { listPostingAccountStates } from "@/server/library/queries";
 import { listVideoPostings } from "@/server/postings/queries";
 import type { CreatorVideoDTO } from "@/server/videos/queries";
-import { creatorVideoFixture } from "./creator-video-fixture";
-import { SOURCE_POSTING, VIDEO_ID } from "./postings-fixtures";
+import { creatorVideoFixture } from "../../../tests/helpers/creator-video-fixture";
+import {
+  SOURCE_POSTING,
+  VIDEO_ID,
+} from "../../../tests/helpers/postings-fixtures";
 import { PostingsStep } from "./postings-step";
 
 vi.mock("@/server/postings/queries", () => ({ listVideoPostings: vi.fn() }));

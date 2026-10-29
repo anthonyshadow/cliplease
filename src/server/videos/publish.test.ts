@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { PUBLISH_BLOCKERS, type PublishBlocker } from "@/lib/videos/review";
+import { rateCardFixture } from "../../../tests/helpers/rate-card-fixtures";
 import { effectiveOptions } from "../pricing/rate-card";
-import { rateCardFixture } from "../pricing/rate-card-fixtures";
 import { computePublishBlockers, type PublishFacts } from "./publish";
 
 const ALL_ON = effectiveOptions(rateCardFixture(), {

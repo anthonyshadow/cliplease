@@ -2,8 +2,8 @@
 // under jsdom, Radix's ResizeObserver, and saved postings as listVideoPostings gives them. A test whose components read
 // the mocks imports this file first, as a bare import, so the mocks are in place before those components load.
 import { vi } from "vitest";
-import type { OwnerPostingDTO } from "@/lib/postings/types";
-import type { PostingsFormVideo } from "./postings-form";
+import type { PostingsFormVideo } from "../../src/components/videos/postings-form";
+import type { OwnerPostingDTO } from "../../src/lib/postings/types";
 
 vi.mock("@/app/(dashboard)/dashboard/videos/[id]/actions", () => ({
   saveVideoPostings: vi.fn(),

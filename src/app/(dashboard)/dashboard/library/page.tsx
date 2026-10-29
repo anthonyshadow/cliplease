@@ -105,9 +105,8 @@ export default async function LibraryPage({
               <Button asChild className="w-full md:w-auto">
                 <Link href="/dashboard/connections">Connect an account</Link>
               </Button>
-              {/* A plain link: the upload page comes with P10b (owner answer Q-25). */}
               <Button asChild variant="tertiary" size="sm">
-                <a href="/dashboard/videos/new">Or upload a video</a>
+                <Link href="/dashboard/videos/new">Or upload a video</Link>
               </Button>
             </>
           }

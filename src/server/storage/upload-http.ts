@@ -56,21 +56,24 @@ export async function uploadRoute<S extends z.ZodType>(
   handle: (ctx: CreatorContext, input: z.output<S>) => Promise<Response>,
   codeOf: IssueCode = () => null,
 ): Promise<Response> {
-  const ctx = await getCreatorForApi();
-  if (!ctx) return unauthorizedJson();
-  const type = request.headers.get("content-type")?.split(";")[0]?.trim();
-  if (type?.toLowerCase() !== "application/json") return uploadError("invalid");
-  const read = await readJsonCapped(request, UPLOAD_BODY_MAX_BYTES);
-  if (!read.ok) return uploadError("invalid");
-  const parsed = schema.safeParse(read.body);
-  if (!parsed.success) {
-    const codes = parsed.error.issues.map(codeOf);
-    return uploadError(codes.find((c) => c !== null) ?? "invalid");
-  }
   try {
+    const ctx = await getCreatorForApi();
+    if (!ctx) return unauthorizedJson();
+    const type = request.headers.get("content-type")?.split(";")[0]?.trim();
+    if (type?.toLowerCase() !== "application/json") {
+      return uploadError("invalid");
+    }
+    const read = await readJsonCapped(request, UPLOAD_BODY_MAX_BYTES);
+    if (!read.ok) return uploadError("invalid");
+    const parsed = schema.safeParse(read.body);
+    if (!parsed.success) {
+      const codes = parsed.error.issues.map(codeOf);
+      return uploadError(codes.find((c) => c !== null) ?? "invalid");
+    }
     return await handle(ctx, parsed.data);
   } catch (error) {
-    // Next's own handler would print the whole error, and a database error's message holds the bound key and upload id.
+    // The session read included: Next's own handler would print the whole error, and a database error's message holds
+    // the bound key and upload id.
     logEvent("error", "uploads.route_failed", { error: errorName(error) });
     return uploadError("internal");
   }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { rateCardFixture } from "../../../tests/helpers/rate-card-fixtures";
 import { effectiveOptions } from "./rate-card";
-import { rateCardFixture } from "./rate-card-fixtures";
 
 const NO_VIDEO = { disabledUses: [], basePriceOverrideCents: null };
 

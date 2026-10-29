@@ -13,15 +13,10 @@ import {
 } from "../domain/values";
 import { LICENSE_V1_VERSION } from "../legal/license-v1-summary";
 import { countryOf } from "../licensing/countries";
-import {
-  DETAILS_COPY,
-  EMAIL_MAX,
-  EMAIL_RE,
-  INTENDED_USE_MAX,
-  NAME_MAX,
-} from "../licensing/details";
+import { DETAILS_COPY, INTENDED_USE_MAX, NAME_MAX } from "../licensing/details";
 import { GENERIC_ERROR_MESSAGE } from "../result";
 import { tidyText } from "../text/tidy";
+import { EMAIL_MAX, EMAIL_RE } from "./email";
 
 /** A name others read (the license, /verify, the creator's emails): tidied, then 1 to 120 characters. */
 const name = (empty: string) =>

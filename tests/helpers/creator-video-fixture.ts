@@ -1,5 +1,5 @@
 // The video component tests' CreatorVideoDTO (P10b–P13): a fresh upload draft as getVideoForCreator gives it. Tests only.
-import type { CreatorVideoDTO } from "@/server/videos/queries";
+import type { CreatorVideoDTO } from "../../src/server/videos/queries";
 
 /** A new upload draft "Beach day", nothing done yet, with `change` on top. */
 export const creatorVideoFixture = (

@@ -1,5 +1,5 @@
 // What a failed query throws, for unit tests: pg's DatabaseError with a SQLSTATE and a constraint, bare or wrapped by
-// Drizzle. Shared by the db-errors and postings ownership tests.
+// Drizzle. Shared by the db-errors, postings ownership and redacted-error tests.
 import { DrizzleQueryError } from "drizzle-orm";
 import { DatabaseError } from "pg";
 
@@ -11,6 +11,9 @@ export function pgError(code: string, constraint?: string): DatabaseError {
   return error;
 }
 
-/** `cause` as Drizzle throws it from a failed query. */
-export const wrapped = (cause: Error) =>
-  new DrizzleQueryError("select 1", [], cause);
+/** `cause` as Drizzle throws it from a failed query: `query` with its bound `params` in the message. */
+export const wrapped = (
+  cause: Error,
+  query = "select 1",
+  params: unknown[] = [],
+) => new DrizzleQueryError(query, params, cause);

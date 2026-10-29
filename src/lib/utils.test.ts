@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { cn, TYPE_SCALE } from "./utils";
+import { TYPE_SCALE } from "./type-scale";
+import { cn } from "./utils";
 
 describe("cn", () => {
   it("keeps a type-scale size next to a text color", () => {

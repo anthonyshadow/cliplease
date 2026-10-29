@@ -5,6 +5,7 @@ import { socialAccount, socialPost } from "../../db/schema";
 import { THUMBNAIL_FALLBACK } from "../../lib/library/post";
 import { type Actor, requireCreatorActor } from "../auth/actor";
 import { notFoundNoStore } from "../http";
+import { errorName, logEvent } from "../log";
 import { mockThumbnailSvg } from "./providers/mock-data";
 
 // The authenticated image proxy (02 §7.6, 07 D42): the creator's browser never loads a platform URL itself. P08 built
@@ -116,8 +117,15 @@ export async function streamPlatformImage(
     return new Response(mockThumbnailSvg(image.n, image.width, image.height), {
       headers: MOCK_IMAGE_HEADERS,
     });
-  } catch {
-    // Also a size mockThumbnailSvg refuses (RangeError).
+  } catch (error) {
+    // Also a size mockThumbnailSvg refuses (RangeError), which isn't worth a log line; anything else (a database error)
+    // would otherwise only show as "Sync to refresh".
+    if (!(error instanceof RangeError)) {
+      logEvent("warn", "social.image_failed", {
+        kind: i.kind,
+        error: errorName(error),
+      });
+    }
     return notFoundNoStore();
   }
 }
