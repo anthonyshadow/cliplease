@@ -1,6 +1,8 @@
 "use server";
 
 import { notFound, redirect } from "next/navigation";
+import { retryEmailOutbox } from "@/server/email/send";
+import { afterResponse } from "@/server/licensing/effects";
 import {
   expireFakeCheckout,
   openFakeCheckout,
@@ -11,12 +13,16 @@ import {
 // sends the buyer. They exist in every build, so each runs openFakeCheckout's guard first. The key is rebuilt on the
 // server, never passed in (owner answer Q-118 a). A request past checkout only goes to its /r page.
 
-/** Pay: the completed event, then Stripe's success_url, `/r/{id}?t={token}&session_id={CHECKOUT_SESSION_ID}`. */
+/**
+ * Pay: the completed event, then Stripe's success_url, `/r/{id}?t={token}&session_id={CHECKOUT_SESSION_ID}`. Like each
+ * webhook delivery (02 §8.1), it then retries the email outbox after the response.
+ */
 export async function fakeCheckoutPay(requestId: string): Promise<void> {
   const checkout = await openFakeCheckout(String(requestId));
   if (!checkout) notFound();
   if (checkout.status !== "checkout_pending") redirect(checkout.returnPath());
   await payFakeCheckout(checkout);
+  afterResponse(() => retryEmailOutbox({ limit: 20 }));
   redirect(checkout.returnPath({ session_id: checkout.sessionId }));
 }
 

@@ -6,6 +6,7 @@ import {
   formatDeadline,
   formatDelta,
   formatDuration,
+  formatEmailDateTime,
   formatLicenseDate,
   formatMoney,
   formatPostDate,
@@ -121,6 +122,36 @@ describe.each(["Pacific/Auckland", "America/Los_Angeles"])(
       expect(formatDeadline(at, "Bogus/Zone")).toBe("Sun 18 Oct, 7:10 PM UTC");
     });
 
+    // 07 D84's goldens: 17 Oct 2026 is a Saturday.
+    it.each([
+      ["America/New_York", "Sat 17 Oct 2026, 2:32 PM EDT (18:32 UTC)"],
+      ["America/Toronto", "Sat 17 Oct 2026, 2:32 PM EDT (18:32 UTC)"],
+      ["America/Los_Angeles", "Sat 17 Oct 2026, 11:32 AM PDT (18:32 UTC)"],
+      ["Europe/London", "Sat 17 Oct 2026, 7:32 PM GMT+1 (18:32 UTC)"],
+      [
+        "Asia/Kolkata",
+        "Sun 18 Oct 2026, 12:02 AM GMT+5:30 (Sat 17 Oct, 18:32 UTC)",
+      ],
+      ["America/St_Johns", "Sat 17 Oct 2026, 4:02 PM GMT-2:30 (18:32 UTC)"],
+      ["UTC", "Sat 17 Oct 2026, 18:32 UTC"],
+      ["Etc/UTC", "Sat 17 Oct 2026, 18:32 UTC"],
+      ["Bogus/Zone", "Sat 17 Oct 2026, 18:32 UTC"],
+    ])("formatEmailDateTime in %s: %s", (tz, want) => {
+      expect(formatEmailDateTime(new Date("2026-10-17T18:32:00Z"), tz)).toBe(
+        want,
+      );
+    });
+
+    it("formatEmailDateTime names the zone's offset across the fall-back hour", () => {
+      const ny = "America/New_York";
+      expect(formatEmailDateTime(new Date("2026-11-01T05:30:00Z"), ny)).toBe(
+        "Sun 1 Nov 2026, 1:30 AM EDT (05:30 UTC)",
+      );
+      expect(formatEmailDateTime(new Date("2026-11-01T06:30:00Z"), ny)).toBe(
+        "Sun 1 Nov 2026, 1:30 AM EST (06:30 UTC)",
+      );
+    });
+
     it.each([
       [2 * DAY + 23 * HOUR + 59 * MIN, "Expires in 2 d 23 h"],
       [5 * HOUR + 12 * MIN, "Expires in 5 h 12 min"],
@@ -194,6 +225,9 @@ describe("ASCII output (no NBSP, no U+202F)", () => {
       formatLicenseDate(at),
       ...["America/New_York", "Europe/London", "Asia/Kolkata", "UTC"].map(
         (tz) => formatDeadline(at, tz),
+      ),
+      ...["America/New_York", "Asia/Kolkata", "UTC"].map((tz) =>
+        formatEmailDateTime(at, tz),
       ),
       formatCountdown(5 * HOUR + 12 * MIN),
       formatRelative(at, at),

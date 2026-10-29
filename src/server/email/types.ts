@@ -30,10 +30,14 @@ export type EmailMessage = {
   text: string;
 };
 
-/** A transport: console in dev and test (P04), Resend from P26. */
+/** Who delivers an email: email_log.provider's values (03 §3.8). */
+export type EmailProvider = "console" | "resend";
+
+/** A transport: console in dev and test (P04), Resend from P26. `providerMessageId` is null for the console. */
 export type EmailDriver = {
+  provider: EmailProvider;
   send(
     message: EmailMessage,
     options?: { idempotencyKey?: string },
-  ): Promise<void>;
+  ): Promise<{ providerMessageId: string | null }>;
 };

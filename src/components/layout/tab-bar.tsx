@@ -19,6 +19,7 @@ import {
   MORE_SHEET_KEYS,
   SHELL_PREFETCH,
 } from "./creator-nav";
+import { useInboxCount } from "./inbox-count";
 import { MoreSheet } from "./more-sheet";
 import { CountPill } from "./nav-bar";
 import { useKeepFocusAboveBar } from "./use-keep-focus-above-bar";
@@ -53,7 +54,7 @@ function CurrentBar() {
  */
 export function TabBar({
   current,
-  inboxCount,
+  inboxCount: fallback,
   signOut,
 }: {
   /** Defaults to the route of the current pathname; "more" for Licenses, Pricing and Settings. */
@@ -62,6 +63,7 @@ export function TabBar({
   signOut?: ReactNode;
 }) {
   const pathname = usePathname();
+  const inboxCount = useInboxCount(fallback);
   useKeepFocusAboveBar();
   const active = current ?? currentNavKey(pathname);
   const moreActive = MORE_SHEET_KEYS.some((key) => key === active);

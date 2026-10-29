@@ -1,9 +1,22 @@
-import { expect, type Locator, type Page } from "@playwright/test";
+import { randomUUID } from "node:crypto";
+import {
+  type Browser,
+  type BrowserContext,
+  expect,
+  type Locator,
+  type Page,
+} from "@playwright/test";
 import { PUBLISHED_COPY, REVIEW_COPY } from "../../../src/lib/videos/review";
 import { VIDEO_MENU_COPY } from "../../../src/lib/videos/video-page";
+import { type LicenseChoice, requestLicense } from "./buyer";
 import { signUpCreator } from "./creator";
 import { LIBRARY, libraryPostId, POST_01, tiles } from "./library";
-import { isServerAction, pressButton, requestEnded } from "./press";
+import {
+  isServerAction,
+  pressButton,
+  pressLocator,
+  requestEnded,
+} from "./press";
 import {
   answerRights,
   attachSample,
@@ -78,19 +91,20 @@ export async function publish(
 /**
  * A fresh creator with fake payouts and Demo linked publishes Demo post 01 through the UI (File with sample.mp4 →
  * Where posted with the source and the same-video tick → Rights, four answers (`rights`: No to both questions unless
- * given) → Review → Publish) and stays on the success view. Returns the creator's handle, the video's slug, the link to
- * share and the video's id.
+ * given) → Review → Publish) and stays on the success view. Returns the creator's address and handle, the video's slug,
+ * the link to share and the video's id.
  */
 export async function publishDemoVideo(
   page: Page,
   rights: Parameters<typeof answerRights>[1] = {},
 ): Promise<{
+  email: string;
   handle: string;
   slug: string;
   shareUrl: string;
   videoId: string;
 }> {
-  const { handle } = await signUpCreator(page, {
+  const { email, handle } = await signUpCreator(page, {
     payouts: true,
     connectDemo: true,
   });
@@ -108,5 +122,38 @@ export async function publishDemoVideo(
   await continueToRights(page, videoId);
   await answerRights(page, rights);
   await continueToReview(page, videoId);
-  return { handle, videoId, ...(await publish(page)) };
+  return { email, handle, videoId, ...(await publish(page)) };
+}
+
+/**
+ * A buyer licenses the video at `url` (a share link) in a fresh logged-out 390 × 844 context: requestLicense with
+ * `email` run-unique unless given, then Pay on the fake checkout, ending on /r "Waiting for @…". Returns the request's
+ * id, its buyer link as the email sends it (no session id), the context (the caller closes it) and the address.
+ */
+export async function buyLicense(
+  browser: Browser,
+  url: string,
+  {
+    email = `buyer+${randomUUID().slice(0, 8)}@example.com`,
+    ...choice
+  }: LicenseChoice,
+): Promise<{
+  requestId: string;
+  statusUrl: string;
+  context: BrowserContext;
+  email: string;
+}> {
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+  });
+  const page = await context.newPage();
+  const requestId = await requestLicense(page, url, { ...choice, email });
+  const paid = requestEnded(page, isServerAction);
+  await pressLocator(page.getByRole("button", { name: /^Pay CA\$/ }));
+  await paid;
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(
+    /^Waiting for @/,
+  );
+  const statusUrl = page.url().replace(/&session_id=[^&]*$/, "");
+  return { requestId, statusUrl, context, email };
 }

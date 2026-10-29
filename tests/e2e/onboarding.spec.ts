@@ -1,4 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
+import { INBOX_COPY } from "../../src/lib/licensing/inbox";
 import { collectConsoleErrors } from "./helpers/console";
 import {
   completeProfileStep,
@@ -174,6 +175,11 @@ test("skipping payouts shows the banner until payouts are on", async ({
   await expect(page.getByText(BANNER)).toBeVisible();
   await page.goto("/dashboard");
   await expect(page.getByText(BANNER)).toBeVisible();
+  // The empty Inbox with no live video yet: the way to make one (05 §6.3 callout 13).
+  await expect(page.getByText(INBOX_COPY.empty)).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: INBOX_COPY.makeLicensable }),
+  ).toHaveAttribute("href", "/dashboard/library");
 
   await page.getByRole("link", { name: "Set up payouts" }).click();
   await page.waitForURL("/dashboard/settings#payouts");

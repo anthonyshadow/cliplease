@@ -72,6 +72,23 @@ export function isTerminal(status: LicenseRequestStatus): boolean {
   return TERMINAL.has(status);
 }
 
+/** A request's status as a page names it: a stored one, or 'processing' while a claim is in flight (07 D26). */
+export type DisplayStatus = LicenseRequestStatus | "processing";
+
+/**
+ * What P17's pages show (07 D26): 'processing' while an approve or decline is claimed on a waiting request, else the
+ * stored status. No clock: an overdue request keeps waiting, its countdown at "Expires in 0 min", until expiry stores
+ * `expired`, so "not charged" copy never shows before the hold is released (07 D25; 04 §9.10; 02 §4.4 rule 3).
+ */
+export function displayStatus(r: {
+  status: LicenseRequestStatus;
+  paymentAction: PaymentAction | null;
+}): DisplayStatus {
+  return r.status === "awaiting_approval" && r.paymentAction
+    ? "processing"
+    : r.status;
+}
+
 /**
  * The status a page shows (07 D26): 'processing' while a claim on an awaiting_approval row is in flight (even past its
  * deadline), 'expired' for an awaiting_approval row at or past its deadline with no claim, else the stored status.
@@ -83,7 +100,7 @@ export function effectiveStatus(
     paymentAction: PaymentAction | null;
   },
   now: Date,
-): LicenseRequestStatus | "processing" {
+): DisplayStatus {
   if (r.status !== "awaiting_approval") return r.status;
   if (r.paymentAction) return "processing";
   if (r.expiresAt && now >= r.expiresAt) return "expired";

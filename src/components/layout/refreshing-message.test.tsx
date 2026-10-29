@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   REFRESH_EVERY_MS,
   REFRESH_TIMES,
-  RefreshingMessage,
+  useCheckingRefresh,
 } from "./refreshing-message";
 
 // Next's router is one object for the page's life.
@@ -17,11 +17,9 @@ vi.mock("next/navigation", async (actual) => ({
   useRouter: () => mocks.router,
 }));
 
-const TITLE = "Finishing checkout…";
-const BODY = "Nothing has been charged.";
-
-const spinner = (container: HTMLElement) =>
-  container.querySelector("h1 svg.animate-spin");
+function Probe({ active }: { active: boolean }) {
+  return <p>{useCheckingRefresh(active) ? "done" : "checking"}</p>;
+}
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -32,15 +30,11 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe("RefreshingMessage (02 §8.3, 05 §4.3)", () => {
-  it("refreshes every 3 s for 30 s, then shows the body in the spinner's place", () => {
+describe("useCheckingRefresh (02 §8.3, 05 §4.3)", () => {
+  it("refreshes every 3 s for 30 s, then reports it is done", () => {
     expect(REFRESH_EVERY_MS * REFRESH_TIMES).toBe(30_000);
-    const { container } = render(
-      <RefreshingMessage title={TITLE} body={BODY} />,
-    );
-    expect(screen.getByRole("heading", { level: 1, name: TITLE })).toBeTruthy();
-    expect(spinner(container)).not.toBeNull();
-    expect(screen.queryByText(BODY)).toBeNull();
+    render(<Probe active />);
+    expect(screen.getByText("checking")).toBeTruthy();
 
     act(() => vi.advanceTimersByTime(REFRESH_EVERY_MS - 1));
     expect(mocks.refresh).not.toHaveBeenCalled();
@@ -49,36 +43,34 @@ describe("RefreshingMessage (02 §8.3, 05 §4.3)", () => {
 
     act(() => vi.advanceTimersByTime(30_000 - REFRESH_EVERY_MS - 1));
     expect(mocks.refresh).toHaveBeenCalledTimes(REFRESH_TIMES - 1);
-    expect(screen.queryByText(BODY)).toBeNull();
+    expect(screen.getByText("checking")).toBeTruthy();
 
     // The tenth refresh, at 30 s, is the last.
     act(() => vi.advanceTimersByTime(1));
     expect(mocks.refresh).toHaveBeenCalledTimes(REFRESH_TIMES);
-    expect(screen.getByText(BODY)).toBeTruthy();
-    expect(spinner(container)).toBeNull();
+    expect(screen.getByText("done")).toBeTruthy();
 
     act(() => vi.advanceTimersByTime(60_000));
     expect(mocks.refresh).toHaveBeenCalledTimes(REFRESH_TIMES);
   });
 
-  it("stops refreshing once it unmounts (the page moved on)", () => {
-    const { unmount } = render(<RefreshingMessage title={TITLE} body={BODY} />);
-    act(() => vi.advanceTimersByTime(2 * REFRESH_EVERY_MS));
-    expect(mocks.refresh).toHaveBeenCalledTimes(2);
-    unmount();
+  it("never refreshes while inactive", () => {
+    render(<Probe active={false} />);
     act(() => vi.advanceTimersByTime(60_000));
-    expect(mocks.refresh).toHaveBeenCalledTimes(2);
+    expect(mocks.refresh).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("keeps the heading's name the title: the spinner is hidden", () => {
-    const { container } = render(
-      <RefreshingMessage title={TITLE} body={BODY} />,
-    );
-    const heading = screen.getByRole("heading", { level: 1 });
-    expect(heading.textContent).toBe(TITLE);
-    expect(
-      spinner(container)?.closest("[aria-hidden]")?.getAttribute("aria-hidden"),
-    ).toBe("true");
+  it("stops when the page moves on: inactive, or unmounted", () => {
+    const { rerender, unmount } = render(<Probe active />);
+    act(() => vi.advanceTimersByTime(2 * REFRESH_EVERY_MS));
+    expect(mocks.refresh).toHaveBeenCalledTimes(2);
+    rerender(<Probe active={false} />);
+    act(() => vi.advanceTimersByTime(60_000));
+    expect(mocks.refresh).toHaveBeenCalledTimes(2);
+    rerender(<Probe active />);
+    unmount();
+    act(() => vi.advanceTimersByTime(60_000));
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
-import { SHELL_GUTTER, SHELL_MAIN } from "./gutter";
+import { MESSAGE_COLUMN, SHELL_GUTTER, SHELL_MAIN } from "./gutter";
 import { Wordmark } from "./wordmark";
 
 // A plain module (no "use client"): public pages, the 404 and the error view render this frame without loading the
@@ -48,29 +48,17 @@ export function PublicShell({
   );
 }
 
-/**
- * A one-message page body: the 404 and the error views (05 §10), and /r's states. `children` follow the title; `icon`
- * (decorative, aria-hidden) leads it, so the heading's name stays the title. A long word (a handle) wraps.
- */
+/** A one-message page body: the 404 and the error views (05 §10). `children` follow the title; a long word wraps. */
 export function MessageBody({
   title,
-  icon,
   children,
 }: {
   title: string;
-  icon?: ReactNode;
   children?: ReactNode;
 }) {
   return (
-    <div className="mx-auto flex max-w-reading flex-col items-start gap-4 py-6 lg:py-12">
-      <h1 className="text-title-1 text-ink wrap-anywhere">
-        {icon ? (
-          <span aria-hidden className="mr-2 inline-flex align-middle">
-            {icon}
-          </span>
-        ) : null}
-        {title}
-      </h1>
+    <div className={MESSAGE_COLUMN}>
+      <h1 className="text-title-1 text-ink wrap-anywhere">{title}</h1>
       {children}
     </div>
   );

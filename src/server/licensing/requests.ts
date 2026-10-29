@@ -49,6 +49,7 @@ import {
   postingPlatformsColumn,
 } from "../videos/visibility";
 import { authorizationMismatches } from "./authorization";
+import { runEffects } from "./effects";
 import {
   applyTransition,
   ignoredEvent,
@@ -315,7 +316,8 @@ async function resubmitted(
 /**
  * T2 or T3 (02 §8.1 row 1; 03 T2, T3; 07 D27, D28, D32): a request in checkout whose card is held becomes
  * awaiting_approval, or abandoned when the hold, the video or the time it leaves is wrong. Stripe is read first, the
- * decision is one short transaction, and an abandoned hold is released after the commit. Anything else changes
+ * decision is one short transaction; after the commit its emails are sent (after the response) or the abandoned hold is
+ * released. Anything else changes
  * nothing: another status (a webhook's late or second event is audited), no session or PaymentIntent, a session of
  * another request, a PaymentIntent not held. `platforms`: the enabled social platforms (tests pass their own).
  */
@@ -366,6 +368,7 @@ export async function markAuthorized(
     actor,
     platforms,
   );
+  runEffects(result.effects);
   if (result.changed && reason) await releaseHold(result.row, reason, actor);
   return result;
 }

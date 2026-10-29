@@ -23,6 +23,7 @@ import { onWebhookEvent } from "../../src/server/payments/events";
 import { generateBuyerToken } from "../../src/server/tokens/buyer-token";
 import { unpublishVideo } from "../../src/server/videos/lifecycle";
 import { redirectTo } from "../helpers/actions";
+import { flushAfter } from "../helpers/after";
 import { auditsOf } from "../helpers/connect-flow";
 import {
   insertCreator,
@@ -59,12 +60,21 @@ vi.mock("@/server/payments/registry", async (importOriginal) => {
   };
 });
 
+// after() runs at once: an authorized request's emails go out (P17), and each test waits for them.
+vi.mock("next/server", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("next/server")>()),
+  after: (await import("../helpers/after")).runAfter,
+}));
+
 let scripted: ScriptedPayments;
 beforeEach(() => {
   scripted = createScriptedPayments();
   payments.current = scripted;
 });
-afterEach(() => vi.restoreAllMocks());
+afterEach(async () => {
+  await flushAfter();
+  vi.restoreAllMocks();
+});
 
 const WEBHOOK: Actor = { kind: "system", source: "webhook" };
 

@@ -454,6 +454,7 @@ test("J7.7–J7.13: Request license validates on press, prices on the server, op
   const dead = await buyer.goto(`/r/${requestId}?t=${"A".repeat(43)}`);
   expect(dead?.status()).toBe(404);
   expect(dead?.headers()["referrer-policy"]).toBe("no-referrer");
+  expect(dead?.headers()["x-robots-tag"]).toBe("noindex, nofollow");
   await expect(
     buyer.getByRole("heading", { level: 1, name: COPY.deadLink }),
   ).toBeVisible();

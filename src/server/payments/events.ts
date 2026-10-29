@@ -6,6 +6,7 @@ import type { Currency, LicenseRequestStatus } from "@/lib/domain/values";
 import { isUuid } from "@/lib/validation/uuid";
 import { writeAudit } from "../audit";
 import type { Actor } from "../auth/actor";
+import { runEffects } from "../licensing/effects";
 import { markAuthorized } from "../licensing/requests";
 import { applyTransition, ignoredEvent } from "../licensing/state-machine";
 import { errorName, logEvent } from "../log";
@@ -195,7 +196,7 @@ async function checkoutExpired(
     );
     return;
   }
-  await db.transaction((tx) =>
+  const result = await db.transaction((tx) =>
     applyTransition(
       tx,
       row.id,
@@ -204,6 +205,7 @@ async function checkoutExpired(
       WEBHOOK,
     ),
   );
+  runEffects(result.effects);
 }
 
 /**

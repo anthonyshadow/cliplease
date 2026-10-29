@@ -15,6 +15,7 @@ import {
   SHELL_PREFETCH,
 } from "./creator-nav";
 import { SHELL_GUTTER } from "./gutter";
+import { useInboxCount } from "./inbox-count";
 import { Bar, PublicNavBar } from "./public-shell";
 import { Wordmark } from "./wordmark";
 
@@ -60,11 +61,12 @@ export type NavBarProps =
 
 function CreatorLinks({
   current,
-  inboxCount,
+  inboxCount: fallback,
 }: {
   current?: CreatorNavKey;
   inboxCount?: number;
 }) {
+  const inboxCount = useInboxCount(fallback);
   return (
     <nav className="hidden lg:block">
       <ul className="flex items-center gap-6">

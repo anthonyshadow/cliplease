@@ -15,3 +15,7 @@ export const requestStatusPath = (
   `/r/${requestId}?t=${token}${Object.entries(extra)
     .map(([key, value]) => `&${key}=${value}`)
     .join("")}`;
+
+/** A request's page in the creator's dashboard (S15). */
+export const requestDetailPath = (requestId: string) =>
+  `/dashboard/requests/${requestId}`;

@@ -11,6 +11,10 @@ export const SHELL_MAIN = `mx-auto w-full max-w-app ${SHELL_GUTTER}`;
 export const READING_COLUMN =
   "mx-auto flex w-full max-w-reading flex-col gap-6 py-6 lg:py-12";
 
+/** A one-message page's column (05 §10's errors, /r): 640 px, centered, its blocks left-aligned. */
+export const MESSAGE_COLUMN =
+  "mx-auto flex w-full max-w-reading flex-col items-start gap-4 py-6 lg:py-12";
+
 /** A settings-like page's one column (07 D145: Settings, Connections): 640 px, left-aligned with the title at every tier. */
 export const SETTINGS_COLUMN =
   "flex w-full max-w-reading flex-col gap-6 py-6 lg:py-12";

@@ -10,12 +10,25 @@ import {
 } from "@/lib/licensing/transitions";
 import { type AuditEntry, writeAudit } from "../audit";
 import type { Actor } from "../auth/actor";
+import {
+  type RequestEmailTemplate,
+  requestEmailFacts,
+  requestEnvelope,
+} from "../email/request-emails";
+import { queueEmail } from "../email/send";
 
 // The license request state machine (02 §5.7; 03 §5.1; 07 §2.2, D47): the only writer of license_request.status.
 // Never call PaymentsDriver inside db.transaction (07 D24): callers decide, commit, then call out.
 
-/** Work a transition queues for after its commit. P17 adds the email outbox; until then none. */
+/** Work a transition queues for after its commit: an email_log row to send (runEffects). */
 export type Effect = { kind: "email"; emailLogId: string };
+
+/** The emails an accepted event queues (07 D34). P18 queues license-approved itself, after issueLicense. */
+const EMAILS: Partial<
+  Record<LicenseRequestEvent, readonly RequestEmailTemplate[]>
+> = {
+  authorized: ["request-new", "request-received"],
+};
 
 export type TransitionResult = {
   changed: boolean;
@@ -148,5 +161,30 @@ export async function applyTransition(
     entityId: requestId,
     data: { from, to, event },
   });
-  return { changed: true, from, to, effects: [], row };
+  const effects = await queueEmails(tx, requestId, EMAILS[event] ?? []);
+  return { changed: true, from, to, effects, row };
+}
+
+/** Queues `templates` for the request in the transition's transaction: one email_log row each, keyed `<template>/<id>`. */
+async function queueEmails(
+  tx: Tx,
+  requestId: string,
+  templates: readonly RequestEmailTemplate[],
+): Promise<Effect[]> {
+  if (templates.length === 0) return [];
+  const facts = await requestEmailFacts(tx, requestId);
+  if (!facts)
+    throw new Error("applyTransition: the request's emails have no recipient");
+  const effects: Effect[] = [];
+  for (const template of templates) {
+    const emailLogId = await queueEmail(tx, {
+      template,
+      entityType: "license_request",
+      entityId: requestId,
+      idempotencyKey: `${template}/${requestId}`,
+      ...requestEnvelope(template, facts),
+    });
+    if (emailLogId) effects.push({ kind: "email", emailLogId });
+  }
+  return effects;
 }

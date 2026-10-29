@@ -101,24 +101,40 @@ const DEADLINE_OPTIONS: Intl.DateTimeFormatOptions = {
   hour12: true,
   timeZoneName: "short",
 };
+const EMAIL_OPTIONS: Intl.DateTimeFormatOptions = {
+  ...DEADLINE_OPTIONS,
+  year: "numeric",
+};
+const utcEmailDayFormat = new Intl.DateTimeFormat("en-US", {
+  timeZone: UTC,
+  weekday: "short",
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+});
 const deadlineFormats = new Map<string, Intl.DateTimeFormat>();
+const emailFormats = new Map<string, Intl.DateTimeFormat>();
 
-/** The deadline format for `tz`, cached per zone; an unknown zone falls back to UTC (and isn't cached). */
-function deadlineFormat(tz: string): Intl.DateTimeFormat {
-  const cached = deadlineFormats.get(tz);
+/** `options` in `tz`, cached per zone in `cache`; an unknown zone falls back to UTC (and isn't cached). */
+function zonedFormat(
+  cache: Map<string, Intl.DateTimeFormat>,
+  options: Intl.DateTimeFormatOptions,
+  tz: string,
+): Intl.DateTimeFormat {
+  const cached = cache.get(tz);
   if (cached) return cached;
   let format: Intl.DateTimeFormat;
   try {
-    format = new Intl.DateTimeFormat("en-US", {
-      ...DEADLINE_OPTIONS,
-      timeZone: tz,
-    });
+    format = new Intl.DateTimeFormat("en-US", { ...options, timeZone: tz });
   } catch {
-    return deadlineFormat(UTC);
+    return zonedFormat(cache, options, UTC);
   }
-  deadlineFormats.set(tz, format);
+  cache.set(tz, format);
   return format;
 }
+
+const deadlineFormat = (tz: string) =>
+  zonedFormat(deadlineFormats, DEADLINE_OPTIONS, tz);
 
 function utcDay(d: Date): string {
   const p = partsOf(utcDayFormat, d);
@@ -140,6 +156,27 @@ export function formatLicenseDate(d: Date): string {
 export function formatDeadline(d: Date, tz: string): string {
   const p = partsOf(deadlineFormat(tz), d);
   return `${p.weekday} ${p.day} ${p.month}, ${p.hour}:${p.minute} ${p.dayPeriod} ${p.timeZoneName}`;
+}
+
+/**
+ * Emails, in the recipient's zone with the UTC time after it (07 D84): "Sat 17 Oct 2026, 2:32 PM EDT (18:32 UTC)"; the
+ * UTC date joins it when the dates differ: "Sun 18 Oct 2026, 12:02 AM GMT+5:30 (Sat 17 Oct, 18:32 UTC)". A UTC recipient,
+ * or an unknown zone, reads "Sat 17 Oct 2026, 18:32 UTC".
+ */
+export function formatEmailDateTime(at: Date, timeZone: string): string {
+  const format = zonedFormat(emailFormats, EMAIL_OPTIONS, timeZone);
+  const u = partsOf(utcEmailDayFormat, at);
+  const t = partsOf(utcTimeFormat, at);
+  const utcTime = `${t.hour}:${t.minute} UTC`;
+  if (format.resolvedOptions().timeZone === UTC) {
+    return `${u.weekday} ${u.day} ${u.month} ${u.year}, ${utcTime}`;
+  }
+  const p = partsOf(format, at);
+  const local = `${p.weekday} ${p.day} ${p.month} ${p.year}, ${p.hour}:${p.minute} ${p.dayPeriod} ${p.timeZoneName}`;
+  const sameDay = p.day === u.day && p.month === u.month && p.year === u.year;
+  return sameDay
+    ? `${local} (${utcTime})`
+    : `${local} (${u.weekday} ${u.day} ${u.month}, ${utcTime})`;
 }
 
 const HOUR_MIN = HOUR_MS / MINUTE_MS;
@@ -185,6 +222,11 @@ export function formatBytes(n: number, total?: number): string {
   const value = sizeIn(n, unit, decimalsBelow);
   if (total === undefined) return `${value} ${label}`;
   return `${value} of ${sizeIn(total, unit, decimalsBelow)} ${label}`;
+}
+
+/** Sentences joined by a space, the missing ones (null, "") left out: copy whose deadline sentence waits for the viewer's zone. */
+export function sentences(...parts: readonly (string | null)[]): string {
+  return parts.filter(Boolean).join(" ");
 }
 
 /** "A" · "A and B" · "A, B and C" (or "or"): the app's lists, with no serial comma. */

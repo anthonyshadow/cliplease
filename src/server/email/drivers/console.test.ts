@@ -29,10 +29,12 @@ describe("console email driver (07 D51)", () => {
     const consoleCalls = (
       ["log", "info", "warn", "error", "debug"] as const
     ).map((m) => vi.spyOn(console, m).mockImplementation(() => {}));
-    await createConsoleDriver({
+    const driver = createConsoleDriver({
       appEnv: "test",
       dir: path.join(dir, "emails"),
-    }).send(message);
+    });
+    expect(driver.provider).toBe("console");
+    expect(await driver.send(message)).toEqual({ providerMessageId: null });
 
     const printed = write.mock.calls.map(([chunk]) => String(chunk)).join("");
     expect(printed).toContain("To: maya@example.com");

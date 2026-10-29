@@ -34,6 +34,7 @@ export function createConsoleDriver({
     );
   }
   return {
+    provider: "console",
     async send({ template, to, subject, html, text }) {
       process.stdout.write(
         `\n--- email (${template}) ---\nTo: ${to}\nSubject: ${subject}\n\n${text}\n---\n`,
@@ -53,6 +54,7 @@ export function createConsoleDriver({
         { flag: "wx" },
       );
       await rename(temp, file);
+      return { providerMessageId: null };
     },
   };
 }

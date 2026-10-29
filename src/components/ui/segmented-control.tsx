@@ -26,15 +26,16 @@ export function SegmentedControl({
 }) {
   return (
     <nav aria-label={label} className={className}>
-      <ul className="flex h-9 rounded-full bg-fill p-0.5 pointer-coarse:h-11">
+      {/* 1fr columns: every segment as wide as the widest label, which never wraps (04 §9.8). */}
+      <ul className="grid h-9 auto-cols-fr grid-flow-col rounded-full bg-fill p-0.5 pointer-coarse:h-11">
         {items.map((item) => (
-          <li key={item.href} className="flex flex-1">
+          <li key={item.href} className="flex">
             <Link
               href={item.href}
               prefetch={prefetch}
               aria-current={item.current ? "page" : undefined}
               className={cn(
-                "hit-44 flex flex-1 items-center justify-center rounded-full px-3 text-callout font-semibold text-ink-2 transition-colors duration-250 ease-out",
+                "hit-44 flex flex-1 items-center justify-center whitespace-nowrap rounded-full px-3 text-callout font-semibold text-ink-2 transition-colors duration-250 ease-out",
                 item.current &&
                   "border border-transparent bg-action text-action-ink",
               )}

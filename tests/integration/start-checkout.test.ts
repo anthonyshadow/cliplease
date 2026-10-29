@@ -625,14 +625,28 @@ describe("the buyer's pages: the fake checkout and /r (05 §4.3, §10; owner ans
     expect(back?.[1]).toBe(row.id);
     const token = back?.[2] ?? "";
     expect(hashBuyerToken(token)).toBe(row.buyerTokenHash);
+    // Every field /r gets, and nothing else: no email, key, IP or Stripe id (07 D47; 02 §9.11).
     expect(await getBuyerRequest(row.id, token)).toEqual({
+      id: row.id,
       status: "checkout_pending",
+      displayStatus: "checkout_pending",
       statusReason: null,
+      useKey: "paid_social",
+      termKey: "y1",
+      territoryKey: "worldwide",
+      territoryCode: null,
+      licensePriceCents: 157500,
       amountTotalCents: DEMO_TOTAL,
       currency: "cad",
       expiresAt: null,
+      videoId: live.id,
+      title: live.title,
+      posterUrl: expect.stringMatching(
+        new RegExp(`^/api/media/posters/${live.id}\\?v=[0-9a-f]{8}$`),
+      ),
       handle: creator.handle,
       slug: live.slug,
+      licenseCode: null,
     });
     expect(await getBuyerRequest(row.id, "A".repeat(43))).toBeNull();
     expect(await getBuyerRequest(randomUUID(), token)).toBeNull();

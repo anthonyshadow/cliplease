@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { LICENSE_REQUEST_STATUSES } from "@/lib/domain/values";
 import {
   REQUEST_STATUS_COPY,
+  type RequestView,
   requestView,
   VIEW_COPY,
   viewTitle,
@@ -52,52 +53,137 @@ describe("requestView (05 §4.3, 07 D27)", () => {
     },
   );
 
-  it.each(
-    LICENSE_REQUEST_STATUSES.filter(
-      (s) =>
-        !["checkout_pending", "awaiting_approval", "abandoned"].includes(s),
-    ),
-  )("%s has no view before P17", (status) => {
-    for (const q of QUERIES) {
-      expect(requestView({ status, statusReason: null }, q)).toBeNull();
-    }
+  it.each([
+    ["approved", null, "approved"],
+    ["declined", null, "declined"],
+    ["declined", "creator_declined", "declined"],
+    ["declined", "video_disabled", "video_disabled"],
+    ["expired", null, "expired"],
+    ["capture_failed", "capture_error:card_declined", "capture_failed"],
+  ] as const)(
+    "a %s request (%s) is %s, whatever the query",
+    (status, statusReason, view) => {
+      for (const q of QUERIES) {
+        expect(requestView({ status, statusReason }, q)).toBe(view);
+      }
+    },
+  );
+
+  it.each(["renewal_pending", "renewal_canceled", "renewal_failed"] as const)(
+    "%s has no view: renewals live on My licenses (01 §4.8)",
+    (status) => {
+      for (const q of QUERIES) {
+        expect(requestView({ status, statusReason: null }, q)).toBeNull();
+      }
+    },
+  );
+
+  it("gives every status a view but the renewal ones", () => {
+    const viewless = LICENSE_REQUEST_STATUSES.filter(
+      (status) =>
+        requestView({ status, statusReason: null }, QUERIES[0]) === null,
+    );
+    expect(viewless).toEqual([
+      "renewal_pending",
+      "renewal_canceled",
+      "renewal_failed",
+    ]);
   });
 });
 
-describe("the views' words (01 §4.8, 07 D27)", () => {
-  it("titles each view, the waiting one by the creator", () => {
-    expect(viewTitle("waiting", "maya")).toBe("Waiting for @maya");
-    expect(viewTitle("canceled", "maya")).toBe("Checkout not completed");
-    expect(viewTitle("payment_failed", "maya")).toBe(
-      "Payment didn't go through",
-    );
-    expect(viewTitle("unavailable", "maya")).toBe("Checkout not completed");
-    expect(viewTitle("returning", "maya")).toBe("Finishing checkout…");
+describe("the views' words, verbatim from 01 §4.8 (07 D27, D28)", () => {
+  const facts = { handle: "maya", total: "CA$1,732.50", deadline: null };
+  const words = (view: RequestView, deadline: string | null = null) => ({
+    title: viewTitle(view, "maya"),
+    body: VIEW_COPY[view].body({ ...facts, deadline }),
+    backLink: VIEW_COPY[view].backLink,
   });
 
-  it.each(["canceled", "payment_failed", "unavailable"] as const)(
-    "%s ends checkout, nothing charged, with the way back",
-    (view) => {
-      expect(VIEW_COPY[view].backLink).toBe(true);
-      expect(VIEW_COPY[view].body).toMatch(/Nothing was charged\.$/);
-    },
-  );
+  it.each([
+    [
+      "finishing",
+      "Finishing checkout…",
+      "If you closed the payment page, you can start again from the license link. Nothing has been charged.",
+      false,
+    ],
+    [
+      "returning",
+      "Finishing checkout…",
+      "If you closed the payment page, you can start again from the license link. Nothing has been charged.",
+      false,
+    ],
+    [
+      "canceled",
+      "Checkout not completed",
+      "Checkout not completed. Nothing was charged.",
+      true,
+    ],
+    [
+      "payment_failed",
+      "Payment didn't go through",
+      "Payment didn't go through. Nothing was charged.",
+      true,
+    ],
+    [
+      "unavailable",
+      "Checkout not completed",
+      "This video isn't available for licensing right now. Nothing was charged.",
+      true,
+    ],
+    [
+      "approved",
+      "Approved",
+      "@maya approved. You were charged CA$1,732.50. Your file and license are ready.",
+      false,
+    ],
+    [
+      "declined",
+      "Not approved",
+      "@maya didn't approve this request. You haven't been charged, and the hold on your card has been released.",
+      false,
+    ],
+    [
+      "video_disabled",
+      "Not approved",
+      "This video is no longer available. You haven't been charged, and the hold on your card has been released.",
+      false,
+    ],
+    [
+      "capture_failed",
+      "Payment didn't go through",
+      "@maya approved, but your card couldn't be charged, so no license was issued. You haven't been charged. You can try again from the license link.",
+      true,
+    ],
+  ] as const)("%s: %s", (view, title, body, backLink) => {
+    expect(words(view)).toEqual({ title, body, backLink });
+  });
 
-  it.each(["finishing", "returning"] as const)(
-    "%s doesn't end checkout: no way back",
-    (view) => {
-      expect(VIEW_COPY[view].backLink).toBe(false);
-    },
-  );
-
-  it("names the deadline once it is known", () => {
-    expect(
-      COPY.waitingBody("maya", "CA$1,732.50", "Fri 30 Oct, 3:10 PM EDT"),
-    ).toBe(
-      "Your card has a hold of CA$1,732.50, not a charge. @maya has until Fri 30 Oct, 3:10 PM EDT to approve. We'll email you either way.",
-    );
-    expect(COPY.waitingBody("maya", "CA$1,732.50", null)).toBe(
+  it("waiting names the creator and, once known, the deadline", () => {
+    expect(words("waiting", "Fri 30 Oct, 3:10 PM EDT")).toEqual({
+      title: "Waiting for @maya",
+      body: "Your card has a hold of CA$1,732.50, not a charge. @maya has until Fri 30 Oct, 3:10 PM EDT to approve. We'll email you either way.",
+      backLink: false,
+    });
+    expect(words("waiting").body).toBe(
       "Your card has a hold of CA$1,732.50, not a charge. We'll email you either way.",
     );
+  });
+
+  it("expired names the deadline once known", () => {
+    expect(words("expired", "Fri 30 Oct, 3:10 PM EDT")).toEqual({
+      title: "No answer in time",
+      body: "@maya didn't answer by Fri 30 Oct, 3:10 PM EDT. You haven't been charged, and the hold on your card has been released.",
+      backLink: false,
+    });
+    expect(words("expired").body).toBe(
+      "You haven't been charged, and the hold on your card has been released.",
+    );
+  });
+
+  it("has the small words 04 and 05 give", () => {
+    expect(COPY.updatesItself).toBe("This page updates by itself.");
+    expect(COPY.processing).toBe("Processing…");
+    expect([COPY.scope, COPY.total]).toEqual(["Scope", "Total"]);
+    expect(COPY.backToLicense).toBe("Back to the license page");
   });
 });

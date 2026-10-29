@@ -3,10 +3,11 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { cache } from "react";
 import { z } from "zod";
-import { MessageBody } from "@/components/layout/public-shell";
-import { RefreshingMessage } from "@/components/layout/refreshing-message";
-import { WaitingBody } from "@/components/license/waiting-body";
+import { AutoRefresh } from "@/components/layout/auto-refresh";
+import { RequestStatusView } from "@/components/license/request-status-view";
+import { RequestSummary } from "@/components/license/request-summary";
 import { Button } from "@/components/ui/button";
+import { CountdownChip, StatusPill } from "@/components/ui/status-pill";
 import { formatMoney } from "@/lib/format";
 import {
   REQUEST_STATUS_COPY,
@@ -67,9 +68,10 @@ export async function generateMetadata(
 }
 
 /**
- * S03, the buyer's request status (01 §4.8; 05 §4.3): for P16a and P16b, finishing checkout, waiting for the creator,
- * and checkout not completed for each reason (07 D27). Always the stored status. No loading.tsx: a streamed route
- * answers 200, and a dead link must be a real 404 (owner answer Q-110 a).
+ * S03, the buyer's request status (01 §4.8, J7.17; 05 §4.3; 04 §11.3): every state's words, its stored status only (07
+ * D25), and the summary card. While the request waits, a neutral countdown (or "Processing…" while a capture or decline
+ * is claimed, 07 D26), and the page refreshes on focus and every 30 s. No loading.tsx: a streamed route answers 200, and
+ * a dead link must be a real 404 (owner answer Q-110 a). The Get file and license button comes with /l in P20.
  */
 export default async function RequestStatusPage(
   props: PageProps<"/r/[requestId]">,
@@ -77,24 +79,26 @@ export default async function RequestStatusPage(
   const page = await pageFor(props);
   if (!page) notFound();
   const { request, view } = page;
-  const title = viewTitle(view, request.handle);
-  if (view === "waiting") {
-    return (
-      <MessageBody title={title}>
-        <WaitingBody
-          handle={request.handle}
-          total={formatMoney(request.amountTotalCents, request.currency)}
-          expiresAt={request.expiresAt}
-        />
-      </MessageBody>
-    );
-  }
-  if (view === "returning") {
-    return <RefreshingMessage title={title} body={VIEW_COPY.returning.body} />;
-  }
+  const waiting = view === "waiting";
   return (
-    <MessageBody title={title}>
-      <p className="text-body text-ink-2">{VIEW_COPY[view].body}</p>
+    <RequestStatusView
+      view={view}
+      handle={request.handle}
+      total={formatMoney(request.amountTotalCents, request.currency)}
+      expiresAt={request.expiresAt}
+    >
+      {waiting ? (
+        <>
+          <AutoRefresh />
+          {request.displayStatus === "processing" ? (
+            <StatusPill>{COPY.processing}</StatusPill>
+          ) : request.expiresAt ? (
+            <CountdownChip expiresAt={request.expiresAt} tone="neutral" />
+          ) : null}
+          <p className="text-footnote text-ink-2">{COPY.updatesItself}</p>
+        </>
+      ) : null}
+      <RequestSummary request={request} />
       {VIEW_COPY[view].backLink ? (
         <Button asChild variant="secondary">
           <Link href={videoUrl(request.handle, request.slug)}>
@@ -102,6 +106,6 @@ export default async function RequestStatusPage(
           </Link>
         </Button>
       ) : null}
-    </MessageBody>
+    </RequestStatusView>
   );
 }

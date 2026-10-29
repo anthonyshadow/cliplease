@@ -1,5 +1,7 @@
 import { expect, type Page, type Route } from "@playwright/test";
+import type { RateOptionKey } from "../../../src/lib/domain/values";
 import { CHECKOUT_COPY } from "../../../src/lib/licensing/checkout-copy";
+import { LICENSE_PAGE_COPY } from "../../../src/lib/licensing/license-page";
 import {
   isServerAction,
   pressAndSettle,
@@ -35,13 +37,17 @@ export async function chooseDemoSelection(page: Page) {
   await choose(page, "territory", "worldwide");
 }
 
-/** Fills "Your details" with a valid licensee, name and email; the terms stay unticked. */
-export async function fillDetails(page: Page) {
-  await page
-    .getByLabel("Licensed to", { exact: true })
-    .fill("Daily Laughs Media LLC");
+/** The licensee every helper fills in. */
+export const E2E_LICENSEE = "Daily Laughs Media LLC";
+
+/** Fills "Your details" with a valid licensee, name and `email`; the terms stay unticked. */
+export async function fillDetails(
+  page: Page,
+  { email = "Ana.Buyer@Studio.COM" }: { email?: string } = {},
+) {
+  await page.getByLabel("Licensed to", { exact: true }).fill(E2E_LICENSEE);
   await page.getByLabel("Your name", { exact: true }).fill("Sam Lee");
-  await page.getByLabel("Email", { exact: true }).fill("Ana.Buyer@Studio.COM");
+  await page.getByLabel("Email", { exact: true }).fill(email);
 }
 
 /** The fake checkout's page for a new request (07 D35). */
@@ -76,15 +82,38 @@ export async function holdServerActions(page: Page) {
   };
 }
 
+/** A license's scope and the buyer's address: what a buyer chooses and types on the license page. */
+export type LicenseChoice = {
+  use: RateOptionKey;
+  term: RateOptionKey;
+  territory: RateOptionKey;
+  /** The country or region the select takes, for those territories. */
+  country?: string;
+  email?: string;
+};
+
 /**
- * Opens `shareUrl` as a buyer, asks for the demo selection with valid details and the terms ticked, and lands on the
- * fake checkout. Returns the new request's id.
+ * Opens `shareUrl` as a buyer, chooses the scope, fills valid details, ticks the terms, requests and lands on the fake
+ * checkout. Returns the new request's id.
  */
-export async function requestDemoLicense(page: Page, shareUrl: string) {
+export async function requestLicense(
+  page: Page,
+  shareUrl: string,
+  { use, term, territory, country, email }: LicenseChoice,
+) {
   await page.goto(shareUrl);
   await hydrated(page);
-  await chooseDemoSelection(page);
-  await fillDetails(page);
+  await choose(page, "use", use);
+  await choose(page, "term", term);
+  await choose(page, "territory", territory);
+  if (territory === "country" || territory === "region") {
+    if (!country)
+      throw new Error(`requestLicense: ${territory} needs a country`);
+    await page
+      .getByLabel(LICENSE_PAGE_COPY[territory].label, { exact: true })
+      .selectOption(country);
+  }
+  await fillDetails(page, { email });
   const terms = page.getByRole("checkbox");
   await terms.focus();
   await terms.press("Space");
@@ -92,6 +121,14 @@ export async function requestDemoLicense(page: Page, shareUrl: string) {
   await page.waitForURL(FAKE_CHECKOUT_URL);
   return page.url().split("/").at(-1) ?? "";
 }
+
+/** requestLicense with the demo selection (Paid social ads · 1 year · Worldwide). */
+export const requestDemoLicense = (page: Page, shareUrl: string) =>
+  requestLicense(page, shareUrl, {
+    use: "paid_social",
+    term: "y1",
+    territory: "worldwide",
+  });
 
 /**
  * From the fake checkout of `requestId`, opens Stripe's success URL before its event comes (02 §8.3): Cancel leads to

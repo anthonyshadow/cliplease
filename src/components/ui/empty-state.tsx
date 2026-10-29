@@ -3,7 +3,8 @@ import { cn } from "@/lib/utils";
 
 /**
  * 04 §9.24: centered, no illustration. `title` is two-tone `title-2` (pass the second half in a `text-ink-2` span);
- * at most one primary plus one tertiary action. Copy comes from 04 §11.9.
+ * at most one primary plus one tertiary action. Copy comes from 04 §11.9. Without a title it is the body alone, under a
+ * page title that already says it (the Inbox).
  */
 export function EmptyState({
   title,
@@ -13,7 +14,7 @@ export function EmptyState({
   headingId,
   className,
 }: {
-  title: ReactNode;
+  title?: ReactNode;
   /** The title's heading level: h1 when the empty state is the whole page (the Inbox placeholder). */
   as?: "h1" | "h2";
   /** The heading's id, for a page that moves the focus to its title (it then takes a programmatic focus). */
@@ -29,13 +30,15 @@ export function EmptyState({
         className,
       )}
     >
-      <Heading
-        id={headingId}
-        tabIndex={headingId ? -1 : undefined}
-        className="text-title-2 text-ink outline-none"
-      >
-        {title}
-      </Heading>
+      {title ? (
+        <Heading
+          id={headingId}
+          tabIndex={headingId ? -1 : undefined}
+          className="text-title-2 text-ink outline-none"
+        >
+          {title}
+        </Heading>
+      ) : null}
       {description ? (
         <p className="text-callout text-ink-2">{description}</p>
       ) : null}

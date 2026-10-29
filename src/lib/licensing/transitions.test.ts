@@ -5,6 +5,7 @@ import {
 } from "@/lib/domain/values";
 import { HOUR_MS } from "@/lib/time";
 import {
+  displayStatus,
   effectiveStatus,
   isTerminal,
   LICENSE_REQUEST_EVENTS,
@@ -89,6 +90,31 @@ describe("isTerminal (03 §5.1, 07 D117)", () => {
   it("keeps renewal_pending open although P22b fills its transitions", () => {
     expect(isTerminal("renewal_pending")).toBe(false);
     expect(Object.keys(TRANSITIONS.renewal_pending)).toEqual([]);
+  });
+});
+
+describe("displayStatus (07 D25, D26)", () => {
+  it("reads a claimed waiting request as processing", () => {
+    expect(
+      displayStatus({ status: "awaiting_approval", paymentAction: "capture" }),
+    ).toBe("processing");
+    expect(
+      displayStatus({ status: "awaiting_approval", paymentAction: "decline" }),
+    ).toBe("processing");
+  });
+
+  it.each(LICENSE_REQUEST_STATUSES.filter((s) => s !== "awaiting_approval"))(
+    "shows %s as stored, a claim left on the row or not",
+    (status) => {
+      expect(displayStatus({ status, paymentAction: "capture" })).toBe(status);
+      expect(displayStatus({ status, paymentAction: null })).toBe(status);
+    },
+  );
+
+  it("keeps an unclaimed waiting request waiting: it reads no clock", () => {
+    expect(
+      displayStatus({ status: "awaiting_approval", paymentAction: null }),
+    ).toBe("awaiting_approval");
   });
 });
 
