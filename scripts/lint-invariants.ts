@@ -4,10 +4,10 @@
 //   status-write          license_request.status is written only in src/server/licensing/state-machine.ts (an
 //                         update(licenseRequest).set(...) elsewhere, the table under any import name or as
 //                         schema.licenseRequest, must be an object literal without `status`).
-//   payments-in-tx        no call to the payments domain (src/server/payments/{index,registry,connect}) inside a
-//                         transaction callback: an imported function, a namespace import's, or a method of a driver
-//                         held in a variable set from paymentsDriver(…) or typed PaymentsDriver. Calls made through a
-//                         helper the callback invokes are not followed.
+//   payments-in-tx        no call that reaches Stripe inside a transaction callback: a payments-domain export
+//                         (src/server/payments/{index,registry,connect}), imported or through a namespace import; a
+//                         method of a driver held in a variable set from paymentsDriver(…) or typed PaymentsDriver; or
+//                         an imported function that reaches one of those, followed across src (callsOutIndex).
 //   postings-fetch        no fetch() under src/server/postings or src/lib/postings: pasted links are parsed, never
 //                         fetched (07 D67).
 //   vitest-in-src         only test files under src import vitest.
@@ -194,16 +194,150 @@ function exportsValue(statement: ts.Statement): boolean {
   );
 }
 
-/** `file`'s violations, `text` its contents, as path:line: rule: message lines. */
-export function violationsIn(file: string, text: string): string[] {
-  if (!RULE_WORDS.test(text)) return [];
-  const sf = ts.createSourceFile(
+/** Each module (its path without the extension) → the functions it exports that reach Stripe. */
+export type CallsOutIndex = ReadonlyMap<string, ReadonlySet<string>>;
+
+const moduleOf = (file: string) => file.replace(/\.tsx?$/, "");
+
+function parse(file: string, text: string): ts.SourceFile {
+  return ts.createSourceFile(
     file,
     text,
     ts.ScriptTarget.Latest,
     true,
     file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
   );
+}
+
+/**
+ * Whether a call in `sf` reaches Stripe: a payments-domain export, a function `index` lists for its module, one of the
+ * file's own functions in `local`, or a method of a payments driver the file holds.
+ */
+function stripeCallTest(
+  sf: ts.SourceFile,
+  imports: ReturnType<typeof importsOf>,
+  index: CallsOutIndex,
+  local: ReadonlySet<string> = new Set(),
+): (call: ts.CallExpression) => boolean {
+  const reaches = (module: string | null | undefined, name: string) =>
+    module != null &&
+    (isPaymentModule(module) ||
+      index.get(module)?.has(name) === true ||
+      index.get(`${module}/index`)?.has(name) === true);
+  /** The export `callee` names (an imported function, or a namespace import's member) when it reaches Stripe, or null. */
+  const stripeExport = (callee: ts.Expression): string | null => {
+    if (ts.isIdentifier(callee)) {
+      const imported = imports.named.get(callee.text);
+      return imported && reaches(imported.module, imported.exported)
+        ? imported.exported
+        : null;
+    }
+    return ts.isPropertyAccessExpression(callee) &&
+      ts.isIdentifier(callee.expression) &&
+      reaches(imports.namespaces.get(callee.expression.text), callee.name.text)
+      ? callee.name.text
+      : null;
+  };
+  // Read only for a method call that might be a driver's: the walk over the whole file is spared everywhere else.
+  let drivers: Set<string> | undefined;
+  return (call) => {
+    const callee = call.expression;
+    if (ts.isIdentifier(callee) && local.has(callee.text)) return true;
+    if (stripeExport(callee) !== null) return true;
+    if (
+      !ts.isPropertyAccessExpression(callee) ||
+      !ts.isIdentifier(callee.expression)
+    ) {
+      return false;
+    }
+    drivers ??= driverNames(sf, stripeExport);
+    return drivers.has(callee.expression.text);
+  };
+}
+
+/** The file's top-level functions (declarations and `const f = (…) => …`), with whether each is exported. */
+function topLevelFunctions(sf: ts.SourceFile) {
+  const out: { name: string; body: ts.Node; exported: boolean }[] = [];
+  for (const statement of sf.statements) {
+    const exported = exportsValue(statement);
+    if (
+      ts.isFunctionDeclaration(statement) &&
+      statement.name &&
+      statement.body
+    ) {
+      out.push({ name: statement.name.text, body: statement.body, exported });
+    } else if (ts.isVariableStatement(statement)) {
+      for (const d of statement.declarationList.declarations) {
+        const init = d.initializer;
+        if (
+          ts.isIdentifier(d.name) &&
+          init &&
+          (ts.isArrowFunction(init) || ts.isFunctionExpression(init))
+        ) {
+          out.push({ name: d.name.text, body: init.body, exported });
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/** Whether a call under `node` passes `test`. */
+function hasCall(node: ts.Node, test: (call: ts.CallExpression) => boolean) {
+  const find = (n: ts.Node): boolean =>
+    (ts.isCallExpression(n) && test(n)) || (ts.forEachChild(n, find) ?? false);
+  return find(node);
+}
+
+/**
+ * The functions each module exports that reach Stripe, over `sources` (path → text, test files left out): a function
+ * reaches it when it calls a payments-domain export or a driver's method, or a function that reaches it, in its own
+ * file or imported. Marked until nothing changes.
+ */
+export function callsOutIndex(
+  sources: Iterable<readonly [string, string]>,
+): CallsOutIndex {
+  const files = [...sources]
+    .filter(([file]) => !TEST_FILE.test(file))
+    .map(([file, text]) => {
+      const sf = parse(file, text);
+      return {
+        module: moduleOf(file),
+        sf,
+        imports: importsOf(file, sf),
+        functions: topLevelFunctions(sf),
+        local: new Set<string>(),
+      };
+    });
+  const index = new Map<string, Set<string>>();
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const f of files) {
+      const test = stripeCallTest(f.sf, f.imports, index, f.local);
+      for (const fn of f.functions) {
+        if (f.local.has(fn.name) || !hasCall(fn.body, test)) continue;
+        f.local.add(fn.name);
+        changed = true;
+        if (fn.exported) {
+          index.set(f.module, (index.get(f.module) ?? new Set()).add(fn.name));
+        }
+      }
+    }
+  }
+  return index;
+}
+
+/**
+ * `file`'s violations, `text` its contents, as path:line: rule: message lines. `index`: the functions outside the
+ * payments domain that reach Stripe (callsOutIndex over src).
+ */
+export function violationsIn(
+  file: string,
+  text: string,
+  index: CallsOutIndex = new Map(),
+): string[] {
+  if (!RULE_WORDS.test(text)) return [];
+  const sf = parse(file, text);
   const violations: string[] = [];
   const flag = (node: ts.Node, rule: string, message: string) => {
     const { line } = sf.getLineAndCharacterOfPosition(node.getStart(sf));
@@ -248,34 +382,7 @@ export function violationsIn(file: string, text: string): string[] {
     }
   }
 
-  /** The payments export `callee` names (an imported function, or a namespace import's member), or null. */
-  const paymentExport = (callee: ts.Expression): string | null => {
-    if (ts.isIdentifier(callee)) {
-      const imported = imports.named.get(callee.text);
-      return isPaymentModule(imported?.module)
-        ? (imported?.exported ?? null)
-        : null;
-    }
-    return ts.isPropertyAccessExpression(callee) &&
-      ts.isIdentifier(callee.expression) &&
-      isPaymentModule(imports.namespaces.get(callee.expression.text))
-      ? callee.name.text
-      : null;
-  };
-  // Read only for a method call inside a transaction: the walk over the whole file is spared everywhere else.
-  let drivers: Set<string> | undefined;
-  const isPaymentCall = (call: ts.CallExpression): boolean => {
-    const callee = call.expression;
-    if (paymentExport(callee) !== null) return true;
-    if (
-      !ts.isPropertyAccessExpression(callee) ||
-      !ts.isIdentifier(callee.expression)
-    ) {
-      return false;
-    }
-    drivers ??= driverNames(sf, paymentExport);
-    return drivers.has(callee.expression.text);
-  };
+  const isPaymentCall = stripeCallTest(sf, imports, index);
 
   const visit = (node: ts.Node, inTransaction: boolean): void => {
     if (ts.isCallExpression(node)) {
@@ -337,8 +444,15 @@ export function violationsIn(file: string, text: string): string[] {
 }
 
 if (require.main === module) {
-  const violations = sourceFiles().flatMap((file) =>
-    violationsIn(file, readFileSync(path.join(ROOT, file), "utf8")),
+  const sources = new Map(
+    sourceFiles().map((file) => [
+      file,
+      readFileSync(path.join(ROOT, file), "utf8"),
+    ]),
+  );
+  const index = callsOutIndex(sources);
+  const violations = [...sources].flatMap(([file, text]) =>
+    violationsIn(file, text, index),
   );
   for (const line of violations) console.log(line);
   process.exit(violations.length > 0 ? 1 : 0);

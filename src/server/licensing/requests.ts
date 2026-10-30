@@ -378,7 +378,8 @@ type AbandonReason = Extract<CancelReason, LicenseRequestEvent>;
 
 /**
  * After an abandon commits (07 D24, D27): cancels the hold, keyed by the attempt that abandon counted, so a retry sends
- * the same key. A cancel that fails or throws is audited; the hold then lapses at capture_before, uncharged.
+ * the same key. A cancel that fails (a thrown call comes back as transient: Stripe may or may not have canceled it) is
+ * audited; the hold then lapses at capture_before, uncharged.
  */
 async function releaseHold(
   row: LicenseRequest,
@@ -386,26 +387,19 @@ async function releaseHold(
   actor: Actor,
 ): Promise<void> {
   if (!row.stripePaymentIntentId) return;
-  let failure: { kind: string; code: string } | null;
-  try {
-    const outcome = await cancel(
-      row.currency,
-      row.id,
-      row.stripePaymentIntentId,
-      reason,
-      row.stripeAttempt,
-    );
-    failure = outcome.ok ? null : outcome;
-  } catch (error) {
-    // Stripe may or may not have canceled it.
-    failure = { kind: "ambiguous", code: errorName(error) };
-  }
-  if (!failure) return;
+  const outcome = await cancel(
+    row.currency,
+    row.id,
+    row.stripePaymentIntentId,
+    reason,
+    row.stripeAttempt,
+  );
+  if (outcome.ok) return;
   await writeAudit(db, actor, {
     action: "license_request.cancel_failed",
     entityType: "license_request",
     entityId: row.id,
-    data: { reason, kind: failure.kind, code: failure.code },
+    data: { reason, kind: outcome.kind, code: outcome.code },
   });
 }
 

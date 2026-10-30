@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { violationsIn } from "../../scripts/lint-invariants";
+import {
+  type CallsOutIndex,
+  callsOutIndex,
+  violationsIn,
+} from "../../scripts/lint-invariants";
 
 // The invariant lint's rules (AGENTS.md §5) on small sources: each one's catch, and what it leaves alone.
 
 /** The rules `text` breaks as file `file`, in order. */
-const rules = (file: string, text: string) =>
-  violationsIn(file, text).map((line) => line.split(": ")[1]);
+const rules = (file: string, text: string, index?: CallsOutIndex) =>
+  violationsIn(file, text, index).map((line) => line.split(": ")[1]);
 
 const SERVER = "src/server/licensing/example.ts";
 
@@ -34,6 +38,58 @@ describe("payments-in-tx", () => {
         });
       }`;
     expect(rules(SERVER, text)).toEqual(["payments-in-tx", "payments-in-tx"]);
+  });
+
+  it("flags a function elsewhere that reaches Stripe, by import or namespace", () => {
+    const index: CallsOutIndex = new Map([
+      ["src/server/licensing/state-machine", new Set(["reconcileFromStripe"])],
+      ["src/server/creators/profile", new Set(["refreshPayoutsStatus"])],
+    ]);
+    const text = `
+      import { reconcileFromStripe, applyTransition } from "./state-machine";
+      import * as profile from "@/server/creators/profile";
+      export async function f(db) {
+        await db.transaction(async (tx) => {
+          await reconcileFromStripe("r");
+          await profile.refreshPayoutsStatus("c");
+          await applyTransition(tx, "r");
+        });
+        await reconcileFromStripe("r");
+      }`;
+    expect(rules(SERVER, text, index)).toEqual([
+      "payments-in-tx",
+      "payments-in-tx",
+    ]);
+  });
+
+  it("indexes the functions that reach Stripe across files, through local and imported calls, and no others", () => {
+    const index = callsOutIndex([
+      [
+        "src/server/licensing/a.ts",
+        `import { capture } from "@/server/payments";
+        async function inner() { await capture("cad", "r", "pi", 1); }
+        export async function outer() { await inner(); }
+        export const quiet = async () => 1;`,
+      ],
+      [
+        "src/server/licensing/b.ts",
+        `import { outer } from "./a";
+        import type { PaymentsDriver } from "@/server/payments/driver";
+        export async function viaImport() { await outer(); }
+        export function viaDriver(driver: PaymentsDriver) { return driver.cancel("pi", "abandoned", "k"); }`,
+      ],
+      [
+        "src/server/licensing/b.test.ts",
+        `import { outer } from "./a";
+        export async function inTest() { await outer(); }`,
+      ],
+    ]);
+    expect(Object.fromEntries([...index].map(([m, n]) => [m, [...n]]))).toEqual(
+      {
+        "src/server/licensing/a": ["outer"],
+        "src/server/licensing/b": ["viaImport", "viaDriver"],
+      },
+    );
   });
 
   it("leaves a call outside the transaction alone, and a payments result's own methods inside it", () => {

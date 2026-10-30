@@ -14,7 +14,7 @@ import type {
   PublicPostings,
 } from "../../lib/postings/types";
 import { isUuid } from "../../lib/validation/uuid";
-import { primaryVerifiedPosting } from "../../lib/videos/ownership";
+import { buyerPostingOrder, shownPostingUrl } from "../../lib/videos/ownership";
 import type { Actor, CreatorActor } from "../auth/actor";
 import { postThumbnail } from "../library/queries";
 import { VideoNotFoundError } from "../videos/errors";
@@ -225,16 +225,10 @@ export type PublicPostingRow = Awaited<
 export function toPublicPostings(
   rows: readonly PublicPostingRow[],
 ): PublicPostings {
-  const byPosition = [...rows].sort((x, y) => x.position - y.position);
-  const verified = byPosition.filter((row) => row.verification === "verified");
-  const primaryRow = primaryVerifiedPosting(byPosition);
-  const ordered = [
-    ...verified,
-    ...byPosition.filter((row) => row.verification !== "verified"),
-  ];
+  const { ordered, primary } = buyerPostingOrder(rows);
   const postings = ordered.map(toPublicPosting);
   return {
-    primary: primaryRow ? postings[ordered.indexOf(primaryRow)] : null,
+    primary: primary ? postings[ordered.indexOf(primary)] : null,
     postings,
   };
 }
@@ -242,7 +236,7 @@ export function toPublicPostings(
 function toPublicPosting(row: PublicPostingRow): PublicPostingDTO {
   const verified = row.verification === "verified";
   const removed = verified && row.postRemovedAt !== null;
-  const url = row.showLink && !removed ? row.url : null;
+  const url = shownPostingUrl({ ...row, removed });
   return {
     platform: row.platform,
     label: postingPlatformLabel(row.platform, row.otherLabel),

@@ -5,10 +5,14 @@ import { licenseRequest, stripeEvent } from "@/db/schema";
 import type { Currency, LicenseRequestStatus } from "@/lib/domain/values";
 import { isUuid } from "@/lib/validation/uuid";
 import { writeAudit } from "../audit";
-import type { Actor } from "../auth/actor";
+import { WEBHOOK } from "../auth/actor";
 import { runEffects } from "../licensing/effects";
 import { markAuthorized } from "../licensing/requests";
-import { applyTransition, ignoredEvent } from "../licensing/state-machine";
+import {
+  applyTransition,
+  ignoredEvent,
+  reconcileFromStripe,
+} from "../licensing/state-machine";
 import { errorName, logEvent } from "../log";
 import type { PaymentsEvent } from "./driver";
 import { retrieveCheckout } from "./index";
@@ -16,8 +20,6 @@ import { retrieveCheckout } from "./index";
 // Stripe's events, as the webhook route (P25) and the dev fake checkout pass them (02 §8.1; 07 D24, D96). Each event is
 // claimed once in stripe_event, its request resolved, then routed; nothing here holds a transaction around a payments
 // call. Imported from this file, never through ./index: licensing/requests imports ./index.
-
-const WEBHOOK: Actor = { kind: "system", source: "webhook" };
 
 export type WebhookOutcome = "processed" | "duplicate" | "ignored";
 
@@ -134,8 +136,17 @@ async function handle(
         data: { from: row.status },
       });
       break;
+    case "payment_intent.succeeded":
+      // Always re-read the PaymentIntent (02 §8.1 step 3). A request still in checkout stored none yet: markAuthorized
+      // reads the session's and records a charge made before approval (owner answer Q-123 a; P25 builds the rest).
+      if (row.status === "checkout_pending") {
+        await markAuthorized(requestId, WEBHOOK);
+      } else {
+        await reconcileFromStripe(requestId, { actor: WEBHOOK });
+      }
+      break;
     default:
-      // payment_intent.succeeded and .canceled: P18 and P19.
+      // payment_intent.canceled: P19.
       return { outcome: "ignored", requestId, lastError: null };
   }
   return { outcome: "processed", requestId, lastError: null };

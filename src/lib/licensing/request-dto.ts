@@ -42,3 +42,20 @@ export type CreatorRequest = RequestFacts & {
 /** The inbox's two lists (05 §6.3). */
 export const INBOX_VIEWS = ["waiting", "history"] as const;
 export type InboxView = (typeof INBOX_VIEWS)[number];
+
+/** Why Approve didn't approve (02 §5.7, §8.2; 04 §11.5). P19g adds exclusive_conflict. */
+export type ApproveRefusal =
+  | "not_actionable"
+  | "expired"
+  | "retry"
+  | "capture_failed"
+  | "payouts_not_active"
+  | "original_missing";
+
+/**
+ * What Approve returns (02 §5.7): the license's code, or why not with the request's status as it is now (null when the
+ * request isn't the caller's to approve: nothing about it is told).
+ */
+export type ApproveResult =
+  | { ok: true; licenseCode: string }
+  | { ok: false; reason: ApproveRefusal; status: LicenseRequestStatus | null };

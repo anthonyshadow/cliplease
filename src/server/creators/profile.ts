@@ -12,7 +12,7 @@ import { handleProblem } from "@/lib/validation/handle";
 import { displayNameSchema } from "@/lib/validation/profile";
 import { normalizeTimeZone } from "@/lib/validation/time-zone";
 import { writeAudit } from "@/server/audit";
-import { type Actor, requireCreatorActor } from "@/server/auth/actor";
+import { type Actor, LAZY, requireCreatorActor } from "@/server/auth/actor";
 import type { CreatorContext, SessionUser } from "@/server/auth/session";
 import { uniqueViolationConstraint } from "@/server/db-errors";
 import { errorName, logEvent } from "@/server/log";
@@ -215,9 +215,6 @@ async function storePayoutsReading(
     .limit(1);
   return newer?.status ?? status;
 }
-
-/** A page load retries the negative-balance setting with nobody pressing anything for it. */
-const LAZY: Actor = { kind: "system", source: "lazy" };
 
 /** What a payouts read needs; a caller passes its creator context's copy, read with the session, to skip the select. */
 export type PayoutsRow = Pick<

@@ -156,6 +156,30 @@ export function primaryVerifiedPosting<
   return verified.find((p) => p.isSource) ?? verified[0] ?? null;
 }
 
+/**
+ * The buyer's order of a video's postings (07 D70): verified by position, then unverified by position; and the primary
+ * verified posting. The license page and the license record (P18) both show them this way.
+ */
+export function buyerPostingOrder<
+  T extends { isSource: boolean; verification: string; position: number },
+>(postings: readonly T[]): { ordered: T[]; primary: T | null } {
+  const byPosition = [...postings].sort((x, y) => x.position - y.position);
+  return {
+    ordered: [
+      ...byPosition.filter((p) => p.verification === "verified"),
+      ...byPosition.filter((p) => p.verification !== "verified"),
+    ],
+    primary: primaryVerifiedPosting(byPosition),
+  };
+}
+
+/** A posting's link as buyers may follow it: shown by the creator, and not a verified post the platform removed (07 D70). */
+export const shownPostingUrl = (p: {
+  showLink: boolean;
+  url: string | null;
+  removed: boolean;
+}): string | null => (p.showLink && !p.removed ? p.url : null);
+
 /** What a badge is built from: the primary verified posting (07 D70), or none. */
 type BadgeSource = {
   primary: Pick<

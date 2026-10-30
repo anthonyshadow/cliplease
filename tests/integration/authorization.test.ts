@@ -6,12 +6,7 @@ import {
   fakeCheckoutPay,
 } from "../../src/app/dev/fake-checkout/[requestId]/actions";
 import { db, pool } from "../../src/db/client";
-import {
-  emailLog,
-  licenseRequest,
-  stripeEvent,
-  video,
-} from "../../src/db/schema";
+import { emailLog, stripeEvent, video } from "../../src/db/schema";
 import type { LicenseRequest, Video } from "../../src/db/schema/types";
 import type { Currency } from "../../src/lib/domain/values";
 import { DAY_MS, HOUR_MS } from "../../src/lib/time";
@@ -34,6 +29,7 @@ import {
   insertCreator,
   insertLicenseRequest,
   publishVideo,
+  requestRow,
 } from "../helpers/factories";
 import { captureLogEvents } from "../helpers/logs";
 import {
@@ -99,15 +95,6 @@ async function pendingRequest(target?: Video) {
   return { row, token: key.token, live };
 }
 
-async function requestRow(id: string): Promise<LicenseRequest> {
-  const [row] = await db
-    .select()
-    .from(licenseRequest)
-    .where(eq(licenseRequest.id, id));
-  if (!row) throw new Error("no request");
-  return row;
-}
-
 async function eventRow(id: string) {
   const [row] = await db
     .select()
@@ -146,6 +133,7 @@ const paymentIntentEvent = (
   type:
     | "payment_intent.amount_capturable_updated"
     | "payment_intent.succeeded"
+    | "payment_intent.canceled"
     | "payment_intent.payment_failed",
 ): PaymentsEvent => ({
   ...base(),
@@ -420,7 +408,8 @@ describe("the hold's length and the video (03 T2, T3; 07 D27, D81)", () => {
         { ok: false, kind: "permanent", code: "resource_missing" },
         { kind: "permanent", code: "resource_missing" },
       ],
-      [new Error("socket hang up"), { kind: "ambiguous", code: "Error" }],
+      // A thrown cancel comes back as transient from the wrapper (P18): Stripe may or may not have canceled it.
+      [new Error("socket hang up"), { kind: "transient", code: "Error" }],
     ] as const;
     for (const [outcome, recorded] of failures) {
       const { row } = await pendingRequest();
@@ -689,9 +678,9 @@ describe("events that change nothing (02 §8.1; 03 T12)", () => {
 
   it("ignores the event types later prompts handle, and Stripe's others", async () => {
     const { row } = await pendingRequest();
-    const succeeded = paymentIntentEvent(row, "payment_intent.succeeded");
-    expect(await onWebhookEvent(succeeded, "cad")).toBe("ignored");
-    expect(await eventRow(succeeded.id)).toMatchObject({
+    const canceled = paymentIntentEvent(row, "payment_intent.canceled");
+    expect(await onWebhookEvent(canceled, "cad")).toBe("ignored");
+    expect(await eventRow(canceled.id)).toMatchObject({
       processedAt: expect.any(Date),
       licenseRequestId: row.id,
     });
@@ -709,23 +698,30 @@ describe("events that change nothing (02 §8.1; 03 T12)", () => {
     expect((await requestRow(row.id)).status).toBe("checkout_pending");
   });
 
-  it("only records a PaymentIntent already charged during checkout (owner answer Q-123 a)", async () => {
-    const { row } = await pendingRequest();
-    scripted.script({ getAuthorization: { status: "succeeded" } });
-    expect(await onWebhookEvent(completed(row), "cad")).toBe("processed");
-    expect((await requestRow(row.id)).status).toBe("checkout_pending");
-    expect(await auditsOf(row.id, "license_request.ignored_event")).toEqual([
-      {
-        data: {
-          from: "checkout_pending",
-          event: "authorized",
-          piStatus: "succeeded",
+  it.each(["checkout.session.completed", "payment_intent.succeeded"] as const)(
+    "only records a PaymentIntent already charged during checkout, from %s (owner answer Q-123 a)",
+    async (type) => {
+      const { row } = await pendingRequest();
+      scripted.script({ getAuthorization: { status: "succeeded" } });
+      const event =
+        type === "payment_intent.succeeded"
+          ? paymentIntentEvent(row, type)
+          : completed(row);
+      expect(await onWebhookEvent(event, "cad")).toBe("processed");
+      expect((await requestRow(row.id)).status).toBe("checkout_pending");
+      expect(await auditsOf(row.id, "license_request.ignored_event")).toEqual([
+        {
+          data: {
+            from: "checkout_pending",
+            event: "authorized",
+            piStatus: "succeeded",
+          },
+          actorType: "stripe",
         },
-        actorType: "stripe",
-      },
-    ]);
-    expect(cancels()).toEqual([]);
-  });
+      ]);
+      expect(cancels()).toEqual([]);
+    },
+  );
 });
 
 describe("another platform account's event (07 D96)", () => {

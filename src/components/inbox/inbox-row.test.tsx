@@ -1,35 +1,51 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { Toaster } from "@/components/ui/toast";
 import { formatDeadline } from "@/lib/format";
-import type { CreatorRequest } from "@/lib/licensing/request-dto";
+import { approveOutcome } from "@/lib/licensing/inbox";
+import type {
+  ApproveResult,
+  CreatorRequest,
+} from "@/lib/licensing/request-dto";
+import {
+  pressApprove,
+  WAITING_REQUEST,
+} from "../../../tests/helpers/inbox-fixtures";
+import { InboxList } from "./inbox-list";
 import { InboxRow } from "./inbox-row";
 import { RequestFacts } from "./request-facts";
 
-afterEach(cleanup);
+const mocks = vi.hoisted(() => ({
+  approveRequest: vi.fn(),
+  refresh: vi.fn(),
+}));
+vi.mock("@/app/(dashboard)/dashboard/actions", () => ({
+  approveRequest: mocks.approveRequest,
+}));
+vi.mock("next/navigation", async (actual) => ({
+  ...(await actual<typeof import("next/navigation")>()),
+  useRouter: () => ({ refresh: mocks.refresh }),
+}));
 
-const EXPIRES_AT = "2026-10-30T19:10:00.000Z";
-const waiting: CreatorRequest = {
-  id: "7d3c0a52-5b1e-4f7e-9f61-0d6f4a1b2c3d",
-  status: "awaiting_approval",
-  displayStatus: "awaiting_approval",
-  statusReason: null,
-  scope: "Paid social ads · 1 year · Worldwide",
-  licensePriceCents: 157500,
-  amountTotalCents: 173250,
-  currency: "cad",
-  expiresAt: EXPIRES_AT,
-  videoId: "0b9c5b6e-5b8f-4a52-9d3b-7c1d2e3f4a5b",
-  title: "First snow",
-  posterUrl: null,
-  handle: "maya",
-  slug: "first-snow",
-  licenseCode: null,
-  licenseeName: "Daily Laughs Media LLC",
-  contactName: "Jordan Lee",
-  intendedUse: "Instagram + TikTok ads, Q4 campaign",
-  createdAt: "2026-10-27T19:10:00.000Z",
-};
+afterEach(() => {
+  cleanup();
+  vi.clearAllMocks();
+});
+
+/** The action answering `result` (the domain's, as data). */
+const answers = (result: ApproveResult) =>
+  mocks.approveRequest.mockResolvedValue({ ok: true, data: result });
+
+const waiting = WAITING_REQUEST;
+const EXPIRES_AT = waiting.expiresAt as string;
 const viewerDeadline = formatDeadline(
   new Date(EXPIRES_AT),
   Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -63,13 +79,16 @@ describe("InboxRow (04 §9.11; 05 §6.3)", () => {
     expect(container.querySelector("time")?.getAttribute("datetime")).toBe(
       EXPIRES_AT,
     );
-    expect(row.getByRole("button", { name: "Details" })).toBeTruthy();
+    // Once per tier (the other copy hidden by CSS, which jsdom doesn't load).
+    expect(row.getAllByRole("button", { name: "Details" })).toHaveLength(2);
+    expect(row.getByRole("button", { name: "Approve" })).toBeTruthy();
   });
 
-  it("reads Processing… for a claimed request, with no countdown (07 D26)", () => {
+  it("reads Processing… for a claimed request, with no countdown and no Approve (07 D26)", () => {
     const { container } = inList({ ...waiting, displayStatus: "processing" });
     expect(screen.getByText("Processing…")).toBeTruthy();
     expect(container.querySelector("time")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
   });
 
   it("shows a History row's price without 'You get', its pill, its code and no Details", () => {
@@ -87,6 +106,7 @@ describe("InboxRow (04 §9.11; 05 §6.3)", () => {
     expect(screen.getByText("Approved")).toBeTruthy();
     expect(screen.getByText("CL-7K3M-9QXA")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Details" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
   });
 
   it("shows an expired request's line with its deadline", () => {
@@ -97,6 +117,190 @@ describe("InboxRow (04 §9.11; 05 §6.3)", () => {
         `Expired. No answer by ${viewerDeadline}. The buyer wasn't charged.`,
       ),
     ).toBeTruthy();
+  });
+});
+
+describe("InboxRow after Approve (05 §6.3 States; 04 §10.3)", () => {
+  it("keeps an approved row's waiting layout with the Approved pill, the seal before You get and the code line", () => {
+    const { container } = render(
+      <ul>
+        <InboxRow
+          request={waiting}
+          outcome={approveOutcome(
+            { ok: true, licenseCode: "CL-7K3M-9QXA" },
+            waiting,
+          )}
+        />
+      </ul>,
+    );
+    expect(
+      screen.getByText("Paid social ads · 1 year · Worldwide"),
+    ).toBeTruthy();
+    const youGet = screen.getByText("First snow · You get CA$1,575.00");
+    expect(youGet.querySelector("svg")?.getAttribute("width")).toBe("16");
+    expect(screen.getByText("Approved")).toBeTruthy();
+    expect(screen.getByText("License CL-7K3M-9QXA issued")).toBeTruthy();
+    expect(container.querySelector("time")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Details" })).toBeNull();
+  });
+
+  it("keeps the countdown after a late tap and says only that it expired (07 D25)", () => {
+    const { container } = render(
+      <ul>
+        <InboxRow
+          request={waiting}
+          outcome={approveOutcome(
+            { ok: false, reason: "expired", status: "awaiting_approval" },
+            waiting,
+          )}
+        />
+      </ul>,
+    );
+    expect(container.querySelector("time")).not.toBeNull();
+    expect(screen.getByText("This request expired.")).toBeTruthy();
+    expect(screen.queryByText(/wasn't charged/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+  });
+
+  it("calls Approve once with the request, then shows retry's line, describes the focused status with it, and enables Approve again", async () => {
+    answers({ ok: false, reason: "retry", status: "awaiting_approval" });
+    const { container } = inList(waiting);
+    await pressApprove();
+    expect(mocks.approveRequest).toHaveBeenCalledWith({
+      requestId: waiting.id,
+    });
+    const line = screen.getByText(
+      "Couldn't reach the payment service. Try again.",
+    );
+    const status = container.querySelector("[data-row-status]");
+    expect(document.activeElement).toBe(status);
+    expect(status?.getAttribute("aria-describedby")).toBe(line.id);
+    expect(
+      (screen.getByRole("button", { name: "Approve" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
+  });
+
+  it("links payout setup and names the deadline when payouts aren't active (01 J8.3)", async () => {
+    answers({
+      ok: false,
+      reason: "payouts_not_active",
+      status: "awaiting_approval",
+    });
+    inList(waiting);
+    await pressApprove();
+    expect(
+      screen.getByText(
+        `Finish payout setup to approve. This request stays open until ${viewerDeadline}.`,
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("link", { name: "Set up payouts" }).getAttribute("href"),
+    ).toBe("/dashboard/settings#payouts");
+  });
+
+  it("names the support address when the original is missing (P18 Q1)", async () => {
+    answers({
+      ok: false,
+      reason: "original_missing",
+      status: "awaiting_approval",
+    });
+    inList(waiting);
+    await pressApprove();
+    expect(
+      screen
+        .getByRole("link", { name: "support@example.com" })
+        .getAttribute("href"),
+    ).toBe("mailto:support@example.com");
+  });
+});
+
+describe("InboxList's settled rows (02 §4.4 rule 2; 07 D160)", () => {
+  const other: CreatorRequest = {
+    ...waiting,
+    id: "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d",
+    licenseeName: "Second Buyer Inc.",
+  };
+
+  it("keeps an approved row in place after the action's refresh drops it, and lets it go at the next focus refresh", async () => {
+    answers({ ok: true, licenseCode: "CL-7K3M-9QXA" });
+    const view = render(
+      <>
+        <Toaster />
+        <InboxList rows={[waiting, other]} empty={null} />
+      </>,
+    );
+    await pressApprove(view.container.querySelector("li") as HTMLElement);
+    // The server's refresh no longer lists it…
+    view.rerender(
+      <>
+        <Toaster />
+        <InboxList rows={[other]} empty={null} />
+      </>,
+    );
+    const names = () =>
+      [...view.container.querySelectorAll("[data-licensee]")].map(
+        (n) => n.textContent,
+      );
+    expect(names()).toEqual(["Daily Laughs Media LLC", "Second Buyer Inc."]);
+    expect(screen.getByText("License CL-7K3M-9QXA issued")).toBeTruthy();
+    // The polite toast, with its seal (04 §9.23).
+    expect(
+      screen
+        .getByText(
+          "Approved. CA$1,575.00 is on its way to your Stripe balance.",
+        )
+        .closest("li")
+        ?.querySelector("svg"),
+    ).not.toBeNull();
+    // …until the window takes the focus again.
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    expect(mocks.refresh).toHaveBeenCalled();
+    expect(names()).toEqual(["Second Buyer Inc."]);
+  });
+
+  it("shows the empty state only once no row is held", async () => {
+    answers({ ok: true, licenseCode: "CL-7K3M-9QXA" });
+    const view = render(<InboxList rows={[waiting]} empty={<p>Empty</p>} />);
+    await pressApprove();
+    view.rerender(<InboxList rows={[]} empty={<p>Empty</p>} />);
+    expect(screen.queryByText("Empty")).toBeNull();
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    expect(screen.getByText("Empty")).toBeTruthy();
+  });
+
+  it("holds a row while its action runs: a refresh during Approving… changes nothing", async () => {
+    let answer: (value: unknown) => void = () => {};
+    mocks.approveRequest.mockReturnValue(
+      new Promise((resolve) => {
+        answer = resolve;
+      }),
+    );
+    const view = render(<InboxList rows={[waiting, other]} empty={null} />);
+    act(() => {
+      fireEvent.click(
+        screen.getAllByRole("button", { name: "Approve" })[0] as HTMLElement,
+      );
+    });
+    view.rerender(<InboxList rows={[other]} empty={null} />);
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    expect(screen.getAllByText("Approving…").length).toBeGreaterThan(0);
+    expect(view.container.querySelectorAll("[data-inbox-row]")).toHaveLength(2);
+    await act(async () => {
+      answer({
+        ok: true,
+        data: { ok: false, reason: "retry", status: "awaiting_approval" },
+      });
+    });
+    // Not settled: the row follows the server's rows again.
+    expect(view.container.querySelectorAll("[data-inbox-row]")).toHaveLength(1);
   });
 });
 

@@ -1,8 +1,8 @@
 import { APP_NAME } from "@/lib/app-name";
 import { REQUEST_STATUS_COPY } from "@/lib/licensing/request-status";
 
-// The request emails' words (05 §8; 01 §4.8). The subject is also the headline (05 §8 callout 2); the licensee name in
-// it can't hold a web address (WEB_ADDRESS_RE, owner answer Q-136 a). Button labels, footers and the test-mode line
+// The request and license emails' words (05 §8; 01 §4.8). The subject is also the headline (05 §8 callout 2); the
+// licensee name in it can't hold a web address (WEB_ADDRESS_RE, owner answer Q-136 a). Button labels, footers and the test-mode line
 // were proposed copy, confirmed by the owner (Q-124 a, Q-125 a). Pure: the templates and the sender share it.
 
 export const REQUEST_EMAIL_COPY = {
@@ -16,6 +16,16 @@ export const REQUEST_EMAIL_COPY = {
     `Set up payouts to approve before ${deadline}.`,
   /** 05 §8 callout 3: the status page's waiting sentence, word for word (07 D49). */
   receivedBody: REQUEST_STATUS_COPY.waitingBody,
+  /** license-approved (05 §8): the subject names the code, never a link or key (07 D34). */
+  approvedSubject: (code: string) => `Approved: your license ${code} is ready`,
+  /** /r's approved sentence, word for word (01 §4.8). */
+  approvedBody: REQUEST_STATUS_COPY.approvedBody,
+  /** 05 §8 callout 10, 07 D98: under the first paragraph. */
+  amountsIn: (label: string) => `Amounts in ${label}.`,
+  licenseLine: (code: string) => `License ${code}`,
+  /** 05 §8 callout 7: followed by the {APP_URL}/verify/{code} link and a period. */
+  verifyLead: "Anyone can check this license at",
+  getFileAndLicense: "Get file and license",
   reviewRequest: "Review request",
   seeRequestStatus: "See request status",
   orOpen: "Or open:",

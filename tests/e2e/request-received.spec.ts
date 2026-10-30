@@ -2,6 +2,7 @@ import { expect, type Page, test } from "@playwright/test";
 import { formatMoney } from "../../src/lib/format";
 import { INBOX_COPY } from "../../src/lib/licensing/inbox";
 import { REQUEST_STATUS_COPY } from "../../src/lib/licensing/request-status";
+import { BARE_DOLLAR } from "../helpers/money";
 import { readLatestEmail } from "../helpers/read-latest-email";
 import { E2E_LICENSEE } from "./helpers/buyer";
 import { collectConsoleErrors } from "./helpers/console";
@@ -19,7 +20,6 @@ test.afterEach(cleanCreatedVideos);
 
 const cad = (cents: number) => formatMoney(cents, "cad");
 /** A dollar amount with no currency before it (07 D98): "$1,732.50" but not "CA$1,732.50". */
-const BARE_DOLLAR = /(^|[^A-Z])\$\d/;
 const SCOPE = "Paid social ads · 1 year · Worldwide";
 
 const mainText = (page: Page) => page.locator("main").innerText();

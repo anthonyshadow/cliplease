@@ -132,4 +132,19 @@ describe("RequestStatusView (05 §4.3, 01 §4.8)", () => {
     act(() => vi.advanceTimersByTime(60_000));
     expect(mocks.refresh).not.toHaveBeenCalled();
   });
+
+  it("puts the static 40 px seal above the approved ending only (04 §10.2)", () => {
+    const { container, rerender } = render(
+      <RequestStatusView view="approved" {...props} />,
+    );
+    const seal = container.querySelector("svg");
+    expect(seal?.getAttribute("aria-hidden")).toBe("true");
+    expect(seal?.getAttribute("width")).toBe("40");
+    expect(heading().textContent).toBe(COPY.approvedTitle);
+    expect(
+      screen.getByText(COPY.approvedBody("maya", "CA$1,732.50")),
+    ).toBeTruthy();
+    rerender(<RequestStatusView view="capture_failed" {...props} />);
+    expect(container.querySelector("svg")).toBeNull();
+  });
 });

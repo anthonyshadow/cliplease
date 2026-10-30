@@ -3,6 +3,7 @@
 // payment_method.automatically_updated event arrive with P22c and P22e, CREATOR_FIXABLE_TRANSFER_CODES with P24.
 import "server-only";
 import type { Currency, PayoutsStatus } from "@/lib/domain/values";
+import { errorName } from "../log";
 
 export type PiStatus =
   | "requires_payment_method"
@@ -47,6 +48,17 @@ export type MoneyCallFailure = {
   kind: "transient" | "permanent";
   code: string;
 };
+
+/** A money call's outcome, or a transient failure named after what it threw: Stripe may or may not have acted (07 D25). */
+export async function settled<T>(
+  call: () => Promise<T | MoneyCallFailure>,
+): Promise<T | MoneyCallFailure> {
+  try {
+    return await call();
+  } catch (error) {
+    return { ok: false, kind: "transient", code: errorName(error) };
+  }
+}
 
 /** How long a Checkout Session stays open (07 §2.3; Stripe allows 30 min – 24 h). The request's checkout_expires_at. */
 export const CHECKOUT_SESSION_TTL_MINUTES = 60;

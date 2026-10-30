@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { StrictMode } from "react";
 import { afterEach, describe, expect, it } from "vitest";
-import { Toaster, ToastOnMount } from "./toast";
+import { Toaster, ToastOnMount, toast } from "./toast";
 
 function Page({ message }: { message: string }) {
   return (
@@ -27,5 +27,26 @@ describe("ToastOnMount", () => {
     expect(
       screen.getAllByText("That account is already connected."),
     ).toHaveLength(1);
+  });
+});
+
+describe("toast's seal (04 §9.23)", () => {
+  it("leads the approval toast with the decorative 16 px seal, and no other toast", () => {
+    render(<Toaster />);
+    act(() =>
+      toast("Approved. CA$1,575.00 is on its way to your Stripe balance.", {
+        seal: true,
+      }),
+    );
+    act(() => toast("Link copied."));
+    const approved = screen
+      .getByText("Approved. CA$1,575.00 is on its way to your Stripe balance.")
+      .closest("li");
+    const seal = approved?.querySelector("svg");
+    expect(seal?.getAttribute("aria-hidden")).toBe("true");
+    expect(seal?.getAttribute("width")).toBe("16");
+    expect(
+      screen.getByText("Link copied.").closest("li")?.querySelector("svg"),
+    ).toBeNull();
   });
 });

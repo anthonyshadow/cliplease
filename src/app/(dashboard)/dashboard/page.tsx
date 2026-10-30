@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { z } from "zod";
-import { InboxList } from "@/components/inbox/inbox-list";
+import { INBOX_TITLE_ID, InboxList } from "@/components/inbox/inbox-list";
 import { FinishPayoutsBanner } from "@/components/layout/finish-payouts-banner";
 import { WIDE_COLUMN } from "@/components/layout/gutter";
 import { SyncInboxCount } from "@/components/layout/inbox-count";
@@ -18,6 +18,9 @@ import { latestLiveShareUrl } from "@/server/videos/public";
 
 export const metadata: Metadata = { title: INBOX_COPY.inbox };
 
+/** Approve's Server Action runs with this page's limit: up to a Stripe capture and the license (07 D26). */
+export const maxDuration = 60;
+
 /** `?view=`: Waiting (the default, and anything unknown) or History. */
 const Query = z.object({
   view: z.enum(INBOX_VIEWS).catch("waiting"),
@@ -26,8 +29,8 @@ const Query = z.object({
 /**
  * S14, the Inbox (05 §6.3; 04 §9.11, §11.5; 01 J8): the two-tone count, Waiting · History, the payouts Banner, then the
  * list card or the empty state, in the max-w-app column at every tier (07 D146, D149). Waiting is soonest deadline first;
- * History the 20 newest decided requests. The list refreshes on focus and every 30 s. Approve and Decline come in P18
- * and P19.
+ * History the 20 newest decided requests. The list refreshes on focus and every 30 s. Each waiting row has Approve
+ * (P19 adds Decline).
  */
 export default async function InboxPage({
   searchParams,
@@ -42,7 +45,11 @@ export default async function InboxPage({
     <div className={WIDE_COLUMN}>
       <SyncInboxCount count={waiting} />
       <div className="flex flex-col items-start gap-4">
-        <h1 className="text-title-1 text-ink">
+        <h1
+          id={INBOX_TITLE_ID}
+          tabIndex={-1}
+          className="text-title-1 text-ink outline-none"
+        >
           {INBOX_COPY.title}{" "}
           <span className="text-ink-2">
             {waiting > 0

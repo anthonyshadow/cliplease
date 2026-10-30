@@ -1,15 +1,19 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { PayoutsWaiting } from "@/components/inbox/payouts-waiting";
+import {
+  REQUEST_STATUS_ID,
+  RequestActions,
+} from "@/components/inbox/request-actions";
 import { RequestFacts } from "@/components/inbox/request-facts";
 import {
   RequestOutcome,
   RequestStatus,
 } from "@/components/inbox/request-status-line";
+import { LicenseIssuedLine } from "@/components/inbox/result-line";
 import { SETTINGS_COLUMN } from "@/components/layout/gutter";
 import { PosterThumb } from "@/components/license/poster-thumb";
-import { Button } from "@/components/ui/button";
+import { SetUpPayoutsLink } from "@/components/payouts/set-up-payouts-link";
 import { Notice } from "@/components/ui/notice";
 import { BackLink } from "@/components/videos/back-link";
 import { INBOX_COPY } from "@/lib/licensing/inbox";
@@ -21,12 +25,16 @@ import { getRequestForCreator } from "@/server/licensing/queries";
 /** The tab names the Inbox the page belongs to (owner answer Q-126 a). */
 export const metadata: Metadata = { title: INBOX_COPY.inbox };
 
+/** Approve's Server Action runs with this page's limit: up to a Stripe capture and the license (07 D26). */
+export const maxDuration = 60;
+
 /**
  * S15, one request on its own page (05 §6.4; 04 §9.11): the request-new email's link and the Inbox's "Open request". The
  * heading, the countdown or the pill (with a decided request's line), then the facts card, in one max-w-reading column
  * left-aligned with the title at every tier (07 D145). While payouts aren't active a waiting request says it stays open
  * until its deadline (07 D77). Another creator's request, an unknown id, and a request the creator never sees (in
- * checkout, abandoned, a renewal) are a 404. The action row under the card comes with P18 (Approve) and P19 (Decline).
+ * checkout, abandoned, a renewal) are a 404. The action row under the card: Approve (P19 adds Decline); an approved
+ * request reads "License {code} issued" under its pill.
  */
 export default async function RequestDetailPage({
   params,
@@ -48,8 +56,17 @@ export default async function RequestDetailPage({
         <h1 className="text-title-2 text-ink wrap-anywhere">
           {INBOX_COPY.detailHeading(request.licenseeName, request.title)}
         </h1>
-        <RequestStatus request={request} />
-        <RequestOutcome request={request} />
+        <div
+          id={REQUEST_STATUS_ID}
+          tabIndex={-1}
+          className="flex flex-col items-start gap-3 outline-none"
+        >
+          <RequestStatus request={request} />
+          {request.licenseCode ? (
+            <LicenseIssuedLine code={request.licenseCode} />
+          ) : null}
+          <RequestOutcome request={request} />
+        </div>
       </div>
       <section
         aria-label={request.title}
@@ -64,18 +81,14 @@ export default async function RequestDetailPage({
         <RequestFacts request={request} />
       </section>
       {payoutsDeadline ? (
-        <Notice
-          action={
-            <Button asChild variant="link">
-              <Link href="/dashboard/settings#payouts">
-                {INBOX_COPY.setUpPayouts}
-              </Link>
-            </Button>
-          }
-        >
+        <Notice action={<SetUpPayoutsLink />}>
           <PayoutsWaiting expiresAt={payoutsDeadline} />
         </Notice>
       ) : null}
+      <RequestActions
+        request={request}
+        payoutsNotice={payoutsDeadline !== null}
+      />
     </div>
   );
 }

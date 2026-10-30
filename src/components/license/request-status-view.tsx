@@ -2,6 +2,7 @@
 
 import { LoaderCircle } from "lucide-react";
 import { type ReactNode, useState } from "react";
+import { ClearedSeal } from "@/components/cleared/cleared-seal";
 import { MESSAGE_COLUMN } from "@/components/layout/gutter";
 import { useCheckingRefresh } from "@/components/layout/refreshing-message";
 import { FocusedHeading } from "@/components/ui/focused-heading";
@@ -16,6 +17,7 @@ const HEADING = "text-title-1 text-ink wrap-anywhere";
  * One component at one place for every view, so a refresh that brings a new status cross-fades the title and body
  * (250 ms) and moves the focus to the new title, back at the top (FocusedHeading, remounted with the title); the first
  * view, as the page loaded, neither fades nor takes the focus.
+ * The approved ending has the static 40 px seal above its title (04 §10.2; the draw-in is [H8]).
  * A deadline is formatted in the viewer's zone after mount: until then its sentence is left out (02 §4.4). "Finishing
  * checkout…" refreshes every 3 s with a spinner, and after 30 s says what to do instead.
  */
@@ -61,6 +63,9 @@ export function RequestStatusView({
           changed && "animate-cross-fade",
         )}
       >
+        {view === "approved" ? (
+          <ClearedSeal size={40} className="self-center" />
+        ) : null}
         {changed ? (
           <FocusedHeading className={HEADING}>{heading}</FocusedHeading>
         ) : (

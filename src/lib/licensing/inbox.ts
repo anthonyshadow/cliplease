@@ -1,7 +1,8 @@
-import { sentences } from "@/lib/format";
-import type { CreatorRequest } from "./request-dto";
+import { formatMoney, sentences } from "@/lib/format";
+import { GENERIC_ERROR_MESSAGE } from "@/lib/result";
+import type { ApproveResult, CreatorRequest } from "./request-dto";
 import { REQUEST_STATUS_COPY } from "./request-status";
-import type { DisplayStatus } from "./transitions";
+import { type DisplayStatus, isTerminal } from "./transitions";
 
 // The creator's Inbox and request page (S14, S15; 04 §9.11, §11.5; 05 §6.3, §6.4; 01 J8): their words, and what each
 // request shows. Deadlines are formatted in the viewer's zone after mount (07 D84): a sentence that names one is left
@@ -61,6 +62,22 @@ export const INBOX_COPY = {
     "Payment didn't go through. No license was issued and the buyer wasn't charged.",
   videoDisabledLine:
     "This video was disabled, so the request was declined. The buyer wasn't charged.",
+  approve: "Approve",
+  approving: "Approving…",
+  /** 04 §11.5, 07 D99: the creator's approval toast. */
+  approvedToast: (price: string) =>
+    `Approved. ${price} is on its way to your Stripe balance.`,
+  /** 04 §11.5: the settled row and the request page; P20 adds " · View license". */
+  licenseIssued: (code: string) => `License ${code} issued`,
+  /**
+   * Approve after the deadline, before the hold is released: 07 D25 keeps "The buyer wasn't charged." for the stored
+   * expiry (owner answer, P18 Q2).
+   */
+  approveExpired: "This request expired.",
+  retry: "Couldn't reach the payment service. Try again.",
+  /** P18 Q1 (owner answer): followed by the support address as a link. */
+  originalMissing:
+    "The original file for this video is missing, so this request can't be approved yet. Questions?",
 } as const;
 
 /** A request's pill (04 §9.9, 01 §3.0), or null while it waits on its countdown. */
@@ -101,4 +118,118 @@ export function outcomeLine(
     return { text: INBOX_COPY.videoDisabledLine, danger: false };
   }
   return null;
+}
+
+/**
+ * A line a row or the request page shows for an action's result. `recorded`: the decided request's own record shows it
+ * too (as an issued license's code always does), so the request page leaves it to the record.
+ */
+export type ResultLine =
+  | { kind: "issued"; code: string }
+  | { kind: "text"; text: string; danger: boolean; recorded?: true }
+  | { kind: "payouts" }
+  | { kind: "original_missing" };
+
+/**
+ * What a row shows after an action (05 §6.3 States; 04 §11.5): `settles` keeps the row in place, as it was, until the
+ * next refresh (02 §4.4 rule 2); `pill` replaces the countdown (null keeps it; Approved brings the 16 px seal before
+ * "You get"); `line` the result where the buttons were; `toast` the polite toast. P19 adds Decline's outcomes.
+ */
+export type RowOutcome = {
+  settles: boolean;
+  pill: DisplayStatus | null;
+  line: ResultLine | null;
+  toast: string | null;
+};
+
+const outcome = (o: Partial<RowOutcome> = {}): RowOutcome => ({
+  settles: false,
+  pill: null,
+  line: null,
+  toast: null,
+  ...o,
+});
+
+/** An approval shows the cleared seal: on the row, and in its toast (04 §10.3, §9.23). */
+export const showsSeal = (o: RowOutcome | null) => o?.pill === "approved";
+
+/**
+ * Approve's result (or the action's own failure, `null`), as `request` shows it: approved with the seal, the code line
+ * and the toast; capture_failed and a race lost to a decision settle with that status's pill and no toast (J8.8); the
+ * deadline settles with the countdown kept (07 D25); retry, payouts and a missing original leave the row live with
+ * their line; a claim still running settles nothing (the refresh shows Processing…).
+ */
+export function approveOutcome(
+  result: ApproveResult | null,
+  request: Pick<CreatorRequest, "licensePriceCents" | "currency">,
+): RowOutcome {
+  if (!result) {
+    return outcome({
+      line: { kind: "text", text: GENERIC_ERROR_MESSAGE, danger: false },
+    });
+  }
+  if (result.ok) {
+    return outcome({
+      settles: true,
+      pill: "approved",
+      line: { kind: "issued", code: result.licenseCode },
+      toast: INBOX_COPY.approvedToast(
+        formatMoney(request.licensePriceCents, request.currency),
+      ),
+    });
+  }
+  switch (result.reason) {
+    case "expired":
+      return outcome({
+        settles: true,
+        line: { kind: "text", text: INBOX_COPY.approveExpired, danger: false },
+      });
+    case "capture_failed":
+      return outcome({
+        settles: true,
+        pill: "capture_failed",
+        line: {
+          kind: "text",
+          text: INBOX_COPY.captureFailedLine,
+          danger: true,
+          recorded: true,
+        },
+      });
+    case "retry":
+      return outcome({
+        line: { kind: "text", text: INBOX_COPY.retry, danger: false },
+      });
+    case "payouts_not_active":
+      return outcome({ line: { kind: "payouts" } });
+    case "original_missing":
+      return outcome({ line: { kind: "original_missing" } });
+    case "not_actionable": {
+      const { status } = result;
+      if (status === null) return approveOutcome(null, request);
+      return isTerminal(status)
+        ? outcome({ settles: true, pill: status })
+        : outcome();
+    }
+  }
+}
+
+/**
+ * The result line the request page adds (05 §6.4): none that the page's record shows (a recorded line, or once the
+ * refreshed request has a code or a stored line), nor the payouts sentence while the page's payouts Notice shows it. A
+ * line the record never carries stays after the refresh (P19's "Declined. The buyer wasn't charged.").
+ */
+export function requestPageLine(
+  outcome: RowOutcome | null,
+  request: Pick<CreatorRequest, "licenseCode" | "status" | "statusReason">,
+  payoutsNotice: boolean,
+): ResultLine | null {
+  const line = outcome?.line;
+  if (
+    !line ||
+    line.kind === "issued" ||
+    (line.kind === "text" && line.recorded)
+  )
+    return null;
+  if (request.licenseCode || outcomeLine(request, null)) return null;
+  return line.kind === "payouts" && payoutsNotice ? null : line;
 }

@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import {
   Body,
   Button,
@@ -19,8 +20,9 @@ export type EmailAudience = "buyer" | "creator";
 
 /**
  * Every outbox email's frame (05 §8): the wordmark as text, the headline (the subject's message), the paragraphs, the
- * context block (video title, scope), one table-based ink button with its URL printed under it, then the footer and the
- * test-mode line. No images, one link target.
+ * context block (video title, scope), one table-based ink button with its URL printed under it, then the footer (with
+ * any `footerLines` above the reason, as license-approved's public record link) and the test-mode line. No images, one
+ * button.
  */
 export function EmailLayout({
   headline,
@@ -28,12 +30,14 @@ export function EmailLayout({
   context,
   button,
   audience,
+  footerLines = [],
 }: {
   headline: string;
   paragraphs: readonly string[];
   context: readonly string[];
   button: { label: string; url: string };
   audience: EmailAudience;
+  footerLines?: readonly ReactNode[];
 }) {
   return (
     <Html lang="en">
@@ -68,6 +72,12 @@ export function EmailLayout({
             </Link>
           </Text>
           <Hr style={s.hairline} />
+          {footerLines.map((line, i) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: a fixed list, never reordered
+            <Text key={i} style={{ ...s.footnote, margin: "0 0 12px" }}>
+              {line}
+            </Text>
+          ))}
           <Text style={s.footnote}>
             {audience === "buyer" ? COPY.buyerReason : COPY.creatorReason}
             <br />

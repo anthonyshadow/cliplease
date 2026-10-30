@@ -6,8 +6,8 @@ import { db } from "../../src/db/client";
 import { emailLog, licenseRequest, user } from "../../src/db/schema";
 import type { CreatorProfile, LicenseRequest } from "../../src/db/schema/types";
 import { formatEmailDateTime } from "../../src/lib/format";
-import { DAY_MS, HOUR_MS } from "../../src/lib/time";
-import type { Actor } from "../../src/server/auth/actor";
+import { HOUR_MS } from "../../src/lib/time";
+import { WEBHOOK } from "../../src/server/auth/actor";
 import {
   queueEmail,
   recipientHash,
@@ -17,20 +17,17 @@ import {
 import type { EmailDriver } from "../../src/server/email/types";
 import { env } from "../../src/server/env";
 import { applyTransition } from "../../src/server/licensing/state-machine";
-import {
-  findRequestForBuyer,
-  generateBuyerToken,
-} from "../../src/server/tokens/buyer-token";
+import { findRequestForBuyer } from "../../src/server/tokens/buyer-token";
 import { redirectTo } from "../helpers/actions";
 import { flushAfter } from "../helpers/after";
 import {
-  insertCreator,
-  insertLicenseRequest,
-  publishVideo,
-} from "../helpers/factories";
+  approvableVideo,
+  authorizeRequest,
+  pendingCheckoutRequest,
+} from "../helpers/approval-fixtures";
+import { insertCreator } from "../helpers/factories";
 import { captureLogEvents } from "../helpers/logs";
 import { readLatestEmail } from "../helpers/read-latest-email";
-import { readyUpload } from "../helpers/ready-videos";
 
 // The email outbox (P17; 02 §5.10; 03 §3.8, I21; 07 D34, D47, D84): the authorized transition queues request-new and
 // request-received in its own transaction, they are sent after the response (after() runs at once here), and the
@@ -75,7 +72,6 @@ beforeEach(() => {
 });
 afterEach(flushAfter);
 
-const WEBHOOK: Actor = { kind: "system", source: "webhook" };
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 
 /** A checkout_pending request with a real key, on a fresh creator's published video. */
@@ -84,43 +80,14 @@ async function pendingRequest(
   requestOverrides: Partial<LicenseRequest> = {},
 ) {
   const creator = await insertCreator(creatorOverrides);
-  const live = await publishVideo(await readyUpload(creator.id));
-  const id = randomUUID();
-  const key = generateBuyerToken(id);
-  const row = await insertLicenseRequest(live, {
-    id,
-    stripeCheckoutSessionId: `cs_fake_${id}`,
-    buyerTokenHash: key.hash,
-    buyerTokenEnc: key.enc,
-    buyerTimeZone: "America/Toronto",
-    ...requestOverrides,
-  });
+  const live = await approvableVideo(creator.id);
+  const { row, token } = await pendingCheckoutRequest(live, requestOverrides);
   const [owner] = await db
     .select({ email: user.email })
     .from(user)
     .where(eq(user.id, creator.userId));
   if (!owner) throw new Error("no user");
-  return { row, token: key.token, creator, live, creatorEmail: owner.email };
-}
-
-/** T2 in its own transaction, as markAuthorized commits it. */
-function authorize(id: string) {
-  const authorizedAt = new Date();
-  return db.transaction((tx) =>
-    applyTransition(
-      tx,
-      id,
-      "authorized",
-      {
-        stripePaymentIntentId: `pi_fake_${id}`,
-        stripeChargeId: `ch_fake_${id}`,
-        authorizedAt,
-        captureBefore: new Date(authorizedAt.getTime() + 7 * DAY_MS),
-        expiresAt: new Date(authorizedAt.getTime() + 72 * HOUR_MS),
-      },
-      WEBHOOK,
-    ),
-  );
+  return { row, token, creator, live, creatorEmail: owner.email };
 }
 
 async function waitingRequest(
@@ -128,7 +95,7 @@ async function waitingRequest(
   requestOverrides: Partial<LicenseRequest> = {},
 ) {
   const pending = await pendingRequest(creatorOverrides, requestOverrides);
-  const result = await authorize(pending.row.id);
+  const result = await authorizeRequest(pending.row.id);
   return { ...pending, result, ids: result.effects.map((e) => e.emailLogId) };
 }
 
@@ -208,7 +175,7 @@ describe("queueing (07 D34; 02 §5.10 step 1)", () => {
 
   it("a replayed event adds no row, and a key already queued inserts nothing", async () => {
     const { row } = await waitingRequest();
-    const replay = await authorize(row.id);
+    const replay = await authorizeRequest(row.id);
     expect(replay).toMatchObject({ changed: false, effects: [] });
     const again = await db.transaction((tx) =>
       queueEmail(tx, {

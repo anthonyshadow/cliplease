@@ -12,6 +12,7 @@ import { TokenCipherError } from "@/server/crypto/token-cipher";
 import { env } from "@/server/env";
 import { errorName, logEvent } from "@/server/log";
 import { createConsoleDriver } from "./drivers/console";
+import { composeLicenseApprovedEmail } from "./license-emails";
 import { composeRequestEmail } from "./request-emails";
 import { signInCodeSubject } from "./subjects";
 import type { EmailDriver, EmailProvider, EmailTemplateId } from "./types";
@@ -275,6 +276,10 @@ async function compose(row: EmailLog): Promise<Message | null> {
     case "request-new":
     case "request-received": {
       const email = await composeRequestEmail(db, template, row.entityId);
+      return email && { template, ...email };
+    }
+    case "license-approved": {
+      const email = await composeLicenseApprovedEmail(db, row.entityId);
       return email && { template, ...email };
     }
     default:

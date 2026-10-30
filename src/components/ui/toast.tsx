@@ -2,6 +2,7 @@
 
 import { Toast } from "radix-ui";
 import { useEffect, useRef, useSyncExternalStore } from "react";
+import { ClearedSeal } from "@/components/cleared/cleared-seal";
 
 // 04 §9.23: Radix Toast. A small module store lets toast() run from any client component; mount <Toaster /> once
 // (root layout). Polite (`type="background"`), 4 s (8 s with an action), pauses on hover and focus.
@@ -11,6 +12,8 @@ type ToastItem = {
   id: number;
   message: string;
   action?: ToastAction;
+  /** The creator's approval toast leads with the 16 px seal (04 §9.23). */
+  seal?: boolean;
   open: boolean;
 };
 
@@ -43,10 +46,19 @@ function close(id: number) {
 }
 
 /** Shows a monochrome toast. Never the only record of something important (04 §9.23). */
-export function toast(message: string, options?: { action?: ToastAction }) {
+export function toast(
+  message: string,
+  options?: { action?: ToastAction; seal?: boolean },
+) {
   items = [
     ...items,
-    { id: nextId++, message, action: options?.action, open: true },
+    {
+      id: nextId++,
+      message,
+      action: options?.action,
+      seal: options?.seal,
+      open: true,
+    },
   ];
   emit();
 }
@@ -85,6 +97,7 @@ export function Toaster() {
           type="background"
           className="flex min-h-11 max-w-[26rem] items-center gap-4 rounded-full border border-transparent bg-ink px-5 py-2 text-callout font-semibold text-canvas shadow-overlay animate-toast-in data-[state=closed]:animate-fade-out"
         >
+          {item.seal ? <ClearedSeal size={16} /> : null}
           <Toast.Description>{item.message}</Toast.Description>
           {item.action ? (
             <Toast.Action

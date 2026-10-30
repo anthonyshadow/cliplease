@@ -22,6 +22,12 @@ export type Actor =
 
 export type CreatorActor = Extract<Actor, { kind: "creator" }>;
 
+/** The system doing work a page load or a reconcile triggers, with no cron or webhook behind it. */
+export const LAZY: Actor = { kind: "system", source: "lazy" };
+
+/** Stripe's events, as the webhook route and the dev fake checkout deliver them. */
+export const WEBHOOK: Actor = { kind: "system", source: "webhook" };
+
 /** `a` as a creator actor; any other actor here is a programming error. */
 export function requireCreatorActor(a: Actor): CreatorActor {
   if (a.kind !== "creator") throw new Error("a creator actor is required");

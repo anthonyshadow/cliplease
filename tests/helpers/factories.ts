@@ -42,6 +42,7 @@ import { LICENSE_V1_VERSION } from "../../src/lib/legal/license-v1-summary";
 import type { LicenseSnapshotV1 } from "../../src/lib/licensing/snapshot";
 import { defaultRateOptions } from "../../src/lib/pricing/presets";
 import { DAY_MS, HOUR_MS } from "../../src/lib/time";
+import { generateLicenseCode } from "../../src/server/codes/license-code";
 
 /** Random lowercase hex, for unique test values. */
 export const randomHex = (bytes: number) => randomBytes(bytes).toString("hex");
@@ -53,7 +54,6 @@ export const uniqueTestHandle = () => `t.${randomHex(4)}`;
 export const instagramReelUrl = (linkKey: string) =>
   `https://www.instagram.com/reel/${linkKey}/`;
 
-const CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"; // Crockford base32, as license_code_format allows
 const TEST_CREATOR_NAME = "Test Creator";
 const TEST_VIDEO_TITLE = "Test video";
 // Every test request and its license snapshot: organic social, 30 days, one country (Canada).
@@ -283,6 +283,16 @@ export async function videoRow(id: string): Promise<Video> {
   return row;
 }
 
+/** The license request's row as stored, failing the test when there is none. */
+export async function requestRow(id: string): Promise<LicenseRequest> {
+  const [row] = await db
+    .select()
+    .from(licenseRequest)
+    .where(eq(licenseRequest.id, id));
+  if (!row) throw new Error("no request");
+  return row;
+}
+
 /**
  * An unverified Instagram posting ('not_found') at the video's next free position, with a random link. Set `url` and
  * `linkKey` together (video_posting_link_key), or both to null with `unverifiedReason: "no_link"`. The position is
@@ -358,12 +368,6 @@ export async function insertMoneyMovement(
   });
 }
 
-function randomLicenseCode(): string {
-  const part = () =>
-    Array.from(randomBytes(4), (b) => CODE_ALPHABET[b % 32]).join("");
-  return `CL-${part()}-${part()}`;
-}
-
 /** A minimal, typed v1 snapshot (self-attested, no postings). License issuing (P18) builds the real one. */
 function testSnapshot(
   request: LicenseRequest,
@@ -421,7 +425,7 @@ export async function insertLicense(
   overrides: Partial<NewLicense> = {},
   executor: Pick<typeof db, "insert"> = db,
 ): Promise<License> {
-  const code = overrides.code ?? randomLicenseCode();
+  const code = overrides.code ?? generateLicenseCode();
   const startsAt = overrides.startsAt ?? new Date();
   const endsAt =
     overrides.endsAt === undefined

@@ -1,6 +1,11 @@
 import "server-only";
 import type { Currency } from "@/lib/domain/values";
-import type { Authorization, CreateCheckoutInput } from "./driver";
+import {
+  type Authorization,
+  type CreateCheckoutInput,
+  type StripeCallOutcome,
+  settled,
+} from "./driver";
 import {
   type CancelReason,
   cancelKey,
@@ -11,6 +16,8 @@ import { paymentsDriver } from "./registry";
 
 // The domain's payment calls (02 §5.8, 07 §8.2, D95): the currency comes first and picks that platform account's driver;
 // callers pass license_request.currency. Never called inside db.transaction (07 D24): claim and commit, then call.
+// capture and cancel never throw: a thrown call or a timeout comes back as a transient failure, and the caller's
+// reconcileFromStripe reads what really happened (07 D25). A configuration error (a currency not enabled) still throws.
 
 export { type CancelReason, transferGroupFor } from "./keys";
 
@@ -40,10 +47,10 @@ export async function capture(
   requestId: string,
   paymentIntentId: string,
   attempt: number,
-) {
-  return paymentsDriver(currency).capture(
-    paymentIntentId,
-    captureKey(requestId, attempt),
+): Promise<StripeCallOutcome> {
+  const driver = paymentsDriver(currency);
+  return settled(() =>
+    driver.capture(paymentIntentId, captureKey(requestId, attempt)),
   );
 }
 
@@ -54,10 +61,13 @@ export async function cancel(
   paymentIntentId: string,
   reason: CancelReason,
   attempt: number,
-) {
-  return paymentsDriver(currency).cancel(
-    paymentIntentId,
-    stripeCancelReason(reason),
-    cancelKey(requestId, reason, attempt),
+): Promise<StripeCallOutcome> {
+  const driver = paymentsDriver(currency);
+  return settled(() =>
+    driver.cancel(
+      paymentIntentId,
+      stripeCancelReason(reason),
+      cancelKey(requestId, reason, attempt),
+    ),
   );
 }

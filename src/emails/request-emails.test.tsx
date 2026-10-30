@@ -3,6 +3,7 @@ import {
   requestNewSubject,
   requestReceivedSubject,
 } from "@/server/email/subjects";
+import { BARE_DOLLAR } from "../../tests/helpers/money";
 import { renderEmail } from "./render";
 import { RequestNew, type RequestNewProps } from "./request-new";
 import { RequestReceived, type RequestReceivedProps } from "./request-received";
@@ -14,7 +15,6 @@ const CREATOR_URL =
 // 17 Oct 2026 18:32 UTC: Sat 17 Oct 2026, 2:32 PM EDT in New York (07 D84).
 const EXPIRES = new Date("2026-10-17T18:32:00Z");
 const SCOPE = "Paid social ads · 1 year · Worldwide";
-const BARE_DOLLAR = /(^|[^A-Z])\$\d/;
 
 const received: RequestReceivedProps = {
   handle: "maya",

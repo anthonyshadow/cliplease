@@ -5,7 +5,7 @@ import { creatorProfile, user } from "@/db/schema";
 import { writeAudit } from "@/server/audit";
 import type { Actor } from "@/server/auth/actor";
 import { errorName, logEvent } from "@/server/log";
-import type { MoneyCallFailure, PaymentsDriver } from "./driver";
+import { type PaymentsDriver, settled } from "./driver";
 import { paymentsDriver } from "./registry";
 
 /**
@@ -105,12 +105,9 @@ export async function ensureNegativeBalanceDebits({
   driver: PaymentsDriver;
   actor: Actor;
 }): Promise<void> {
-  let result: { ok: true } | MoneyCallFailure;
-  try {
-    result = await driver.enableNegativeBalanceDebits(accountId);
-  } catch (error) {
-    result = { ok: false, kind: "transient", code: errorName(error) };
-  }
+  const result = await settled(() =>
+    driver.enableNegativeBalanceDebits(accountId),
+  );
   if (result.ok) {
     await db
       .update(creatorProfile)

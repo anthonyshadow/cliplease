@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { signInPath } from "@/lib/sign-in";
+import { PAYOUTS_SETTINGS_PATH } from "@/lib/urls";
 import {
   getCreatorContext,
   getSessionUser,
@@ -46,7 +47,7 @@ export async function GET(request: Request) {
     !IN_APP_FETCH_SITES.has(fetchSite)
   ) {
     return NextResponse.redirect(
-      new URL("/dashboard/settings#payouts", env.APP_URL),
+      new URL(PAYOUTS_SETTINGS_PATH, env.APP_URL),
       303,
     );
   }

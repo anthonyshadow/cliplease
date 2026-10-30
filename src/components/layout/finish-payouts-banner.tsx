@@ -1,9 +1,7 @@
-import Link from "next/link";
 import { PayoutsWaiting } from "@/components/inbox/payouts-waiting";
+import { SetUpPayoutsLink } from "@/components/payouts/set-up-payouts-link";
 import { Banner } from "@/components/ui/banner";
-import { Button } from "@/components/ui/button";
 import type { PayoutsStatus } from "@/lib/domain/values";
-import { INBOX_COPY } from "@/lib/licensing/inbox";
 
 /**
  * The persistent payouts Banner on the creator's Library and Inbox while payouts aren't on (07 D74, 04 §11.5): info tone,
@@ -27,13 +25,7 @@ export function FinishPayoutsBanner({
     <Banner
       tone={soonestExpiresAt ? "warning" : "info"}
       className={className}
-      action={
-        <Button asChild variant="link">
-          <Link href="/dashboard/settings#payouts">
-            {INBOX_COPY.setUpPayouts}
-          </Link>
-        </Button>
-      }
+      action={<SetUpPayoutsLink />}
     >
       {soonestExpiresAt ? (
         <PayoutsWaiting expiresAt={soonestExpiresAt} />
