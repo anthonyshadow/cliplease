@@ -12,6 +12,7 @@ import { NEW_VIDEO_PATH, videoStepHref } from "@/lib/videos/steps";
 import { titleMessage } from "@/lib/videos/title";
 import { requireCreator, toActor } from "@/server/auth/session";
 import { getLibraryPost } from "@/server/library/queries";
+import { redactErrors } from "@/server/rethrow-redacted";
 import {
   createVideoFromPost as createVideoFromPostFor,
   createVideoFromUpload as createVideoFromUploadFor,
@@ -25,14 +26,19 @@ export async function createVideoFromUpload(
   _previous: CreateVideoState,
   formData: FormData,
 ): Promise<CreateVideoState> {
-  const ctx = await requireCreator(NEW_VIDEO_PATH);
-  const title = formText(formData, "title");
-  const parsed = createVideoSchema.safeParse({ title });
-  if (!parsed.success) {
-    return fieldError("invalid_input", "title", titleMessage(title));
-  }
-  const { videoId } = await createVideoFromUploadFor(toActor(ctx), parsed.data);
-  redirect(videoStepHref(videoId, "file"));
+  return redactErrors("video.create_failed", async () => {
+    const ctx = await requireCreator(NEW_VIDEO_PATH);
+    const title = formText(formData, "title");
+    const parsed = createVideoSchema.safeParse({ title });
+    if (!parsed.success) {
+      return fieldError("invalid_input", "title", titleMessage(title));
+    }
+    const { videoId } = await createVideoFromUploadFor(
+      toActor(ctx),
+      parsed.data,
+    );
+    redirect(videoStepHref(videoId, "file"));
+  });
 }
 
 export type MakeLicensableState = MakeLicensableRefusal | null;
@@ -48,25 +54,27 @@ export async function createVideoFromPost(
   _previous: MakeLicensableState,
   formData: FormData,
 ): Promise<MakeLicensableState> {
-  const ctx = await requireCreator();
-  const parsed = makeLicensableInput.safeParse({
-    socialPostId: formText(formData, "socialPostId"),
+  return redactErrors("video.make_licensable_failed", async () => {
+    const ctx = await requireCreator();
+    const parsed = makeLicensableInput.safeParse({
+      socialPostId: formText(formData, "socialPostId"),
+    });
+    if (!parsed.success) notFound();
+    const actor = toActor(ctx);
+    const post = await getLibraryPost(actor, parsed.data.socialPostId);
+    if (!post) notFound();
+    let videoId: string;
+    try {
+      ({ videoId } = await createVideoFromPostFor(actor, post.id));
+    } catch (error) {
+      const code = makeLicensableErrorCode(error);
+      if (code === null) throw error;
+      if (code === "not_found") notFound();
+      return {
+        ok: false,
+        error: { code, message: makeLicensableMessage(code, post.platform) },
+      };
+    }
+    redirect(videoStepHref(videoId, "file"));
   });
-  if (!parsed.success) notFound();
-  const actor = toActor(ctx);
-  const post = await getLibraryPost(actor, parsed.data.socialPostId);
-  if (!post) notFound();
-  let videoId: string;
-  try {
-    ({ videoId } = await createVideoFromPostFor(actor, post.id));
-  } catch (error) {
-    const code = makeLicensableErrorCode(error);
-    if (code === null) throw error;
-    if (code === "not_found") notFound();
-    return {
-      ok: false,
-      error: { code, message: makeLicensableMessage(code, post.platform) },
-    };
-  }
-  redirect(videoStepHref(videoId, "file"));
 }

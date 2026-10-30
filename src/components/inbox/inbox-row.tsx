@@ -7,7 +7,6 @@ import { Disclosure } from "@/components/ui/disclosure";
 import { formatMoney } from "@/lib/format";
 import { INBOX_COPY } from "@/lib/licensing/inbox";
 import type { CreatorRequest } from "@/lib/licensing/request-dto";
-import { scopeLabel } from "@/lib/licensing/selection";
 import { requestDetailPath } from "@/lib/urls";
 import { RequestFacts } from "./request-facts";
 import { RequestOutcome, RequestStatus } from "./request-status-line";
@@ -39,7 +38,7 @@ export function InboxRow({ request }: { request: CreatorRequest }) {
         </p>
         {waiting ? (
           <p className="text-callout text-ink-2 wrap-anywhere">
-            {scopeLabel(request)}
+            {request.scope}
           </p>
         ) : null}
         <p className="text-footnote text-ink-2 tabular-nums wrap-anywhere">

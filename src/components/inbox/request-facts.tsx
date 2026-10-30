@@ -5,7 +5,6 @@ import { useViewerDeadline } from "@/components/ui/use-viewer-deadline";
 import { formatMoney } from "@/lib/format";
 import { INBOX_COPY } from "@/lib/licensing/inbox";
 import type { CreatorRequest } from "@/lib/licensing/request-dto";
-import { scopeLabel } from "@/lib/licensing/selection";
 
 const FACT = INBOX_COPY.facts;
 
@@ -25,7 +24,7 @@ export function RequestFacts({ request }: { request: CreatorRequest }) {
   if (request.intendedUse) {
     facts.push({ label: FACT.plannedUse, value: request.intendedUse });
   }
-  facts.push({ label: FACT.scope, value: scopeLabel(request) });
+  facts.push({ label: FACT.scope, value: request.scope });
   if (waiting || request.status === "approved") {
     facts.push({
       label: FACT.youGet,

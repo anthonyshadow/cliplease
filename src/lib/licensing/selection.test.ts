@@ -312,6 +312,23 @@ describe("repairSelection (01 J7.10: an option gone after a refresh)", () => {
     expect(repaired.selection).toEqual(defaultSelection(big, FEE));
     expect(repaired.gone).toEqual(["use", "term", "territory"]);
   });
+
+  it("keeps the buyer's country through that fallback when the first load's choice keeps their territory", () => {
+    const big = options(card({ paid_social: 100000, y1: 100000 }), {
+      basePriceOverrideCents: 1_000_000,
+    });
+    const france: Selection = {
+      ...PAID_YEAR_WORLD,
+      territory: "country",
+      territoryCode: "FR",
+    };
+    const first = defaultSelection(big, FEE);
+    expect(first?.territory).toBe("country");
+    expect(repairSelection(big, france, FEE)).toEqual({
+      selection: { ...first, territoryCode: "FR" },
+      gone: ["use", "term"],
+    });
+  });
 });
 
 describe("withOption and territoryToChoose", () => {

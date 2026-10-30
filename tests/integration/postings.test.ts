@@ -54,8 +54,10 @@ import {
   SocialRateLimitError,
   SocialUpstreamError,
 } from "../../src/server/social/errors";
+import { linkAccount } from "../../src/server/social/link";
 import {
   mockProvider,
+  mockTokensFor,
   setMockScenarioForTests,
 } from "../../src/server/social/providers/mock";
 import { createVideoFromPost } from "../../src/server/videos/create";
@@ -74,6 +76,7 @@ import { bareCreator, mockNextHeaders } from "../helpers/auth";
 import {
   accountRow,
   auditsOf,
+  type Demo,
   demoAccount,
   postNumber,
   postsOf,
@@ -2781,69 +2784,92 @@ describe("getPublicPostings (the buyer's DTOs, 07 D70)", () => {
   });
 });
 
-describe("a Disconnect while a posting is checked or written (03 §9.3)", () => {
-  /** getPost answers, then the account is disconnected before the check writes anything. */
-  function disconnectDuringGetPost(d: {
-    account: SocialAccount;
-    actor: Actor;
-  }) {
-    const realGet = mockProvider.getPost.bind(mockProvider);
-    return spyGetPost().mockImplementationOnce(async (...args) => {
-      const live = await realGet(...args);
-      await disconnectSocialAccount(d.account.id, d.actor);
-      return live;
-    });
-  }
-
-  /** The account's posts the Library could show. */
-  const availablePostsOf = async (accountId: string) =>
-    (await postsOf(accountId)).filter((post) => post.status === "available");
-
-  it("saves the link as check_failed and leaves the post out of the Library when Disconnect lands during the check", async () => {
-    const { d, upload, post } = await syncedUpload();
-    disconnectDuringGetPost(d);
-
-    await saveOk(d.actor, upload.id, [demoPaste(post.permalink)]);
-
-    expect(await postingAt(upload.id, 1)).toMatchObject({
-      verification: "unverified",
-      unverifiedReason: "check_failed",
-      socialAccountId: null,
-      socialPostId: null,
-    });
-    expect(await availablePostsOf(d.account.id)).toEqual([]);
+/** A Disconnect, then a Reconnect of the same account (a new connected_at), as Connect does it. */
+async function disconnectAndReconnect(d: Demo) {
+  await disconnectSocialAccount(d.account.id, d.actor);
+  const tokens = mockTokensFor(d.userId, "reconnected");
+  await linkAccount({
+    creatorId: d.account.creatorId,
+    platform: "mock",
+    tokens,
+    profile: await mockProvider.getProfile(tokens.accessToken),
   });
+}
 
-  it("saves the link as check_failed when Disconnect lands between the check and the save's write", async () => {
-    const { d, upload, post } = await syncedUpload();
-    const transaction = db.transaction.bind(db);
-    let calls = 0;
-    vi.spyOn(db, "transaction").mockImplementation(async (run, config) => {
-      calls += 1;
-      // The check's own write is the first transaction, the save's the second; Disconnect's is the third.
-      if (calls === 2) await disconnectSocialAccount(d.account.id, d.actor);
-      return transaction(run, config);
+describe.each([
+  {
+    what: "Disconnect",
+    race: (d: Demo) => disconnectSocialAccount(d.account.id, d.actor),
+    transactions: 3,
+  },
+  {
+    what: "Disconnect and Reconnect",
+    race: disconnectAndReconnect,
+    transactions: 4,
+  },
+])(
+  "a $what while a posting is checked or written (03 §9.3)",
+  ({ what, race, transactions }) => {
+    /** getPost answers, then the race runs before the check writes anything. */
+    function raceDuringGetPost(d: Demo) {
+      const realGet = mockProvider.getPost.bind(mockProvider);
+      return spyGetPost().mockImplementationOnce(async (...args) => {
+        const live = await realGet(...args);
+        await race(d);
+        return live;
+      });
+    }
+
+    /** The account's posts the Library could show. */
+    const availablePostsOf = async (accountId: string) =>
+      (await postsOf(accountId)).filter((post) => post.status === "available");
+
+    it(`saves the link as check_failed, its post out of the Library, after a ${what} during the check`, async () => {
+      const { d, upload, post } = await syncedUpload();
+      raceDuringGetPost(d);
+
+      await saveOk(d.actor, upload.id, [demoPaste(post.permalink)]);
+
+      expect(await postingAt(upload.id, 1)).toMatchObject({
+        verification: "unverified",
+        unverifiedReason: "check_failed",
+        socialAccountId: null,
+        socialPostId: null,
+      });
+      expect(await availablePostsOf(d.account.id)).toEqual([]);
     });
 
-    await saveOk(d.actor, upload.id, [demoPaste(post.permalink)]);
+    it(`saves the link as check_failed, its post out of the Library, after a ${what} between the check and the save's write`, async () => {
+      const { d, upload, post } = await syncedUpload();
+      const transaction = db.transaction.bind(db);
+      let calls = 0;
+      vi.spyOn(db, "transaction").mockImplementation(async (run, config) => {
+        calls += 1;
+        // The check's own write is the first transaction and the save's the second; the race's run in between.
+        if (calls === 2) await race(d);
+        return transaction(run, config);
+      });
 
-    expect(calls).toBe(3);
-    expect(await postingAt(upload.id, 1)).toMatchObject({
-      verification: "unverified",
-      unverifiedReason: "check_failed",
-      socialPostId: null,
+      await saveOk(d.actor, upload.id, [demoPaste(post.permalink)]);
+
+      expect(calls).toBe(transactions);
+      expect(await postingAt(upload.id, 1)).toMatchObject({
+        verification: "unverified",
+        unverifiedReason: "check_failed",
+        socialPostId: null,
+      });
+      expect(await availablePostsOf(d.account.id)).toEqual([]);
     });
-    expect(await availablePostsOf(d.account.id)).toEqual([]);
-  });
 
-  it("refuses Make licensable as needs_reconnect, writing nothing, when Disconnect lands after the live check", async () => {
-    const d = await syncedDemo();
-    const post = await postNumber(d.account.id, "01");
-    disconnectDuringGetPost(d);
+    it(`refuses Make licensable as needs_reconnect, writing nothing, after a ${what} that follows the live check`, async () => {
+      const d = await syncedDemo();
+      const post = await postNumber(d.account.id, "01");
+      raceDuringGetPost(d);
 
-    await expect(createVideoFromPost(d.actor, post.id)).rejects.toBeInstanceOf(
-      NeedsReconnectError,
-    );
-    expect(await videosOf(d.account.creatorId)).toEqual([]);
-  });
-});
+      await expect(
+        createVideoFromPost(d.actor, post.id),
+      ).rejects.toBeInstanceOf(NeedsReconnectError);
+      expect(await videosOf(d.account.creatorId)).toEqual([]);
+    });
+  },
+);

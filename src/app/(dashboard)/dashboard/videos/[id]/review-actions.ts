@@ -18,6 +18,7 @@ import { videoHref, videoStepHref } from "@/lib/videos/steps";
 import { titleMessage } from "@/lib/videos/title";
 import { requireCreator, toActor } from "@/server/auth/session";
 import { refreshPayoutsStatus as readPayoutsStatus } from "@/server/creators/profile";
+import { redactErrors } from "@/server/rethrow-redacted";
 import {
   attestRights as attest,
   updateVideoDetails as updateDetails,
@@ -32,7 +33,8 @@ import {
 
 // The Rights and Review steps' Server Actions (02 §6.1): Rights' Continue (attestRights), the Review's Title and Link
 // rows (updateVideoDetails) and the payouts Notice's Check again (refreshPayoutsStatus). Thin: Zod at the boundary, the
-// session gate, the domain, and its refusals in words. redirect() and notFound() throw, so they stay outside every try.
+// session gate, the domain, and its refusals in words. redirect() and notFound() throw, so they stay outside every try
+// but redactErrors', which lets them through.
 
 /** The form's four answers: both boxes ticked ("on") and both questions answered (02 §6.1 as posted). */
 const rightsInput = z.object({
@@ -50,35 +52,43 @@ export async function attestRights(
   _previous: ActionResult | null,
   formData: FormData,
 ): Promise<ActionResult> {
-  const videoId = formText(formData, "videoId");
-  if (!isUuid(videoId)) notFound();
-  const parsed = rightsInput.safeParse({
-    ownsRights: formText(formData, "ownsRights"),
-    notReupload: formText(formData, "notReupload"),
-    containsMusic: formText(formData, "containsMusic"),
-    identifiablePeople: formText(formData, "identifiablePeople"),
-  });
-  if (!parsed.success) return formError("invalid_input", RIGHTS_COPY.answerAll);
-  const ctx = await requireCreator(videoStepHref(videoId, "rights"));
-  let status: VideoStatus;
-  try {
-    status = await attest(toActor(ctx), {
-      videoId,
-      ownsRights: true,
-      containsMusic: parsed.data.containsMusic === "yes",
-      identifiablePeople: parsed.data.identifiablePeople === "yes",
+  return redactErrors("video.attest_rights_failed", async () => {
+    const videoId = formText(formData, "videoId");
+    if (!isUuid(videoId)) notFound();
+    const parsed = rightsInput.safeParse({
+      ownsRights: formText(formData, "ownsRights"),
+      notReupload: formText(formData, "notReupload"),
+      containsMusic: formText(formData, "containsMusic"),
+      identifiablePeople: formText(formData, "identifiablePeople"),
     });
-  } catch (error) {
-    if (error instanceof RightsLockedError) {
-      return formError("rights_locked", RIGHTS_LOCK_COPY[error.lock]);
+    if (!parsed.success) {
+      return formError("invalid_input", RIGHTS_COPY.answerAll);
     }
-    if (error instanceof VideoDisabledError) return formError("video_disabled");
-    if (!(error instanceof VideoNotFoundError)) throw error;
-    notFound();
-  }
-  redirect(
-    status === "draft" ? videoStepHref(videoId, "review") : videoHref(videoId),
-  );
+    const ctx = await requireCreator(videoStepHref(videoId, "rights"));
+    let status: VideoStatus;
+    try {
+      status = await attest(toActor(ctx), {
+        videoId,
+        ownsRights: true,
+        containsMusic: parsed.data.containsMusic === "yes",
+        identifiablePeople: parsed.data.identifiablePeople === "yes",
+      });
+    } catch (error) {
+      if (error instanceof RightsLockedError) {
+        return formError("rights_locked", RIGHTS_LOCK_COPY[error.lock]);
+      }
+      if (error instanceof VideoDisabledError) {
+        return formError("video_disabled");
+      }
+      if (!(error instanceof VideoNotFoundError)) throw error;
+      notFound();
+    }
+    redirect(
+      status === "draft"
+        ? videoStepHref(videoId, "review")
+        : videoHref(videoId),
+    );
+  });
 }
 
 /** The details action's shape, checked before anything reads it (a Server Action takes any value). */
@@ -98,41 +108,45 @@ export async function updateVideoDetails(input: {
   title?: string;
   slug?: string;
 }): Promise<ActionResult> {
-  const shaped = detailsInput.safeParse(input);
-  if (!shaped.success) return formError("invalid_input");
-  const { videoId, title } = shaped.data;
-  if (!isUuid(videoId)) notFound();
-  const parsed = videoDetailsSchema.safeParse(shaped.data);
-  if (!parsed.success) {
-    const { issues } = parsed.error;
-    const slugIssue = issues.find((issue) => issue.path[0] === "slug");
-    const fields = [
-      ...(title !== undefined && issues.some((i) => i.path[0] === "title")
-        ? [["title", titleMessage(title)] as const]
-        : []),
-      ...(slugIssue ? [["slug", slugIssue.message] as const] : []),
-    ];
-    return fields.length > 0
-      ? fieldErrors("invalid_input", fields)
-      : formError("invalid_input");
-  }
-  // Back to the video after a sign-in: a draft's Review, or the page of a video past its draft.
-  const ctx = await requireCreator(videoHref(videoId));
-  try {
-    await updateDetails(toActor(ctx), parsed.data);
-  } catch (error) {
-    if (error instanceof SlugTakenError) {
-      return fieldError("slug_taken", "slug", SLUG_COPY.taken);
+  return redactErrors("video.details_failed", async () => {
+    const shaped = detailsInput.safeParse(input);
+    if (!shaped.success) return formError("invalid_input");
+    const { videoId, title } = shaped.data;
+    if (!isUuid(videoId)) notFound();
+    const parsed = videoDetailsSchema.safeParse(shaped.data);
+    if (!parsed.success) {
+      const { issues } = parsed.error;
+      const slugIssue = issues.find((issue) => issue.path[0] === "slug");
+      const fields = [
+        ...(title !== undefined && issues.some((i) => i.path[0] === "title")
+          ? [["title", titleMessage(title)] as const]
+          : []),
+        ...(slugIssue ? [["slug", slugIssue.message] as const] : []),
+      ];
+      return fields.length > 0
+        ? fieldErrors("invalid_input", fields)
+        : formError("invalid_input");
     }
-    if (error instanceof SlugLockedError) {
-      return fieldError("slug_locked", "slug", SLUG_COPY.locked);
+    // Back to the video after a sign-in: a draft's Review, or the page of a video past its draft.
+    const ctx = await requireCreator(videoHref(videoId));
+    try {
+      await updateDetails(toActor(ctx), parsed.data);
+    } catch (error) {
+      if (error instanceof SlugTakenError) {
+        return fieldError("slug_taken", "slug", SLUG_COPY.taken);
+      }
+      if (error instanceof SlugLockedError) {
+        return fieldError("slug_locked", "slug", SLUG_COPY.locked);
+      }
+      if (error instanceof VideoDisabledError) {
+        return formError("video_disabled");
+      }
+      if (!(error instanceof VideoNotFoundError)) throw error;
+      notFound();
     }
-    if (error instanceof VideoDisabledError) return formError("video_disabled");
-    if (!(error instanceof VideoNotFoundError)) throw error;
-    notFound();
-  }
-  refresh();
-  return { ok: true, data: undefined };
+    refresh();
+    return { ok: true, data: undefined };
+  });
 }
 
 /**
@@ -143,16 +157,18 @@ export async function updateVideoDetails(input: {
 export async function refreshPayoutsStatus(): Promise<
   ActionResult<{ payoutsStatus: PayoutsStatus }>
 > {
-  const ctx = await requireCreator();
-  let payoutsStatus: PayoutsStatus;
-  try {
-    payoutsStatus = await readPayoutsStatus(ctx.creator.id, {
-      maxAgeMs: 0,
-      row: ctx.creator,
-    });
-  } catch {
-    return formError("failed");
-  }
-  if (payoutsStatus !== ctx.creator.payoutsStatus) refresh();
-  return { ok: true, data: { payoutsStatus } };
+  return redactErrors("payouts.refresh_failed", async () => {
+    const ctx = await requireCreator();
+    let payoutsStatus: PayoutsStatus;
+    try {
+      payoutsStatus = await readPayoutsStatus(ctx.creator.id, {
+        maxAgeMs: 0,
+        row: ctx.creator,
+      });
+    } catch {
+      return formError("failed");
+    }
+    if (payoutsStatus !== ctx.creator.payoutsStatus) refresh();
+    return { ok: true, data: { payoutsStatus } };
+  });
 }

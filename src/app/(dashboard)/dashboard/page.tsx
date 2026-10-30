@@ -14,7 +14,7 @@ import { INBOX_VIEWS, type InboxView } from "@/lib/licensing/request-dto";
 import { PUBLISHED_COPY } from "@/lib/videos/review";
 import { requireCreator } from "@/server/auth/session";
 import { listInbox, waitingSummary } from "@/server/licensing/queries";
-import { latestLiveShareUrl } from "@/server/videos/queries";
+import { latestLiveShareUrl } from "@/server/videos/public";
 
 export const metadata: Metadata = { title: INBOX_COPY.inbox };
 
@@ -73,7 +73,7 @@ export default async function InboxPage({
       <InboxList
         key={view}
         rows={rows}
-        empty={rows.length === 0 ? await emptyState(view, creator.id) : null}
+        empty={rows.length === 0 ? await emptyState(view, creator) : null}
       />
     </div>
   );
@@ -81,13 +81,16 @@ export default async function InboxPage({
 
 /**
  * The empty list, under the page's own title: History has nothing decided yet (owner answer Q-127 a); Waiting asks for a
- * share, with Copy link for the latest live video, or the way to make one (05 §6.3 callout 13).
+ * share, with Copy link for the latest live video a buyer can open, or the way to make one (05 §6.3 callout 13).
  */
-async function emptyState(view: InboxView, creatorId: string) {
+async function emptyState(
+  view: InboxView,
+  creator: { id: string; handle: string },
+) {
   if (view === "history") {
     return <EmptyState description={INBOX_COPY.historyEmpty} />;
   }
-  const url = await latestLiveShareUrl(creatorId);
+  const url = await latestLiveShareUrl(creator);
   return (
     <EmptyState
       description={INBOX_COPY.empty}

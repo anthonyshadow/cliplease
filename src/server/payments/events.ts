@@ -52,10 +52,12 @@ export async function onWebhookEvent(
       .where(eq(stripeEvent.id, e.id));
     return handled.outcome;
   } catch (error) {
+    // Fenced on processed_at: the claim takes an unfinished event again (P25 adds the lease), so another delivery of it
+    // may have finished meanwhile, and its outcome stands.
     await db
       .update(stripeEvent)
       .set({ lastError: failureOf(error) })
-      .where(eq(stripeEvent.id, e.id));
+      .where(and(eq(stripeEvent.id, e.id), isNull(stripeEvent.processedAt)));
     throw error;
   }
 }

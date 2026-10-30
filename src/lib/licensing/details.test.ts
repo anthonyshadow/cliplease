@@ -17,6 +17,17 @@ describe("detailsFieldError (the form's blur checks; owner answer Q-109 a)", () 
     ).toBeNull();
   });
 
+  it("refuses a web address in the licensee name, as the server does (owner answer Q-136 a)", () => {
+    expect(
+      detailsFieldError("licenseeName", "Confirm at evil.example/verify"),
+    ).toBe(DETAILS_COPY.licenseeWebAddress);
+    expect(detailsFieldError("licenseeName", "https://evil.example")).toBe(
+      DETAILS_COPY.licenseeWebAddress,
+    );
+    expect(detailsFieldError("licenseeName", "Booking.com B.V.")).toBeNull();
+    expect(detailsFieldError("contactName", "www.evil.example")).toBeNull();
+  });
+
   it("asks for an email like name@example.com, and lets the use be empty", () => {
     expect(detailsFieldError("buyerEmail", "sam@")).toBe(DETAILS_COPY.email);
     expect(detailsFieldError("buyerEmail", " sam@dailylaughs.com ")).toBeNull();

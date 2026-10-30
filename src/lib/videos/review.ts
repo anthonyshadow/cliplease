@@ -92,6 +92,12 @@ export const COVER_IMAGE_ID = "cover-image";
 export const LINK_ROW_ID = "video-link";
 export const ORIGINAL_FILE_ID = "original-file";
 
+/** `no_enabled_option`'s row, also the way to the prices from a live video no buyer can license (owner answer Q-137 a). */
+export const TURN_ON_AN_OPTION = {
+  label: "Turn on at least one use, term and territory",
+  href: "/dashboard/pricing",
+} as const;
+
 /**
  * A blocker's row: what to do and where it's done. A page of the app, an anchor on the Review, or a connect to start
  * (ReviewBlockers builds that link with connectStartHref, coming back to `returnTo`).
@@ -136,10 +142,7 @@ export function publishBlockerRows(
       "Answer the rights questions",
       videoStepHref(videoId, "rights"),
     ),
-    no_enabled_option: page(
-      "Turn on at least one use, term and territory",
-      "/dashboard/pricing",
-    ),
+    no_enabled_option: page(TURN_ON_AN_OPTION.label, TURN_ON_AN_OPTION.href),
     invalid_slug: anchor("Fix the link", LINK_ROW_ID),
   } satisfies Record<
     Exclude<PublishBlocker, "disabled_by_admin" | "reconnect_account">,

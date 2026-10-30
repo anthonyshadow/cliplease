@@ -12,6 +12,7 @@ import {
   InvalidRateCardError,
   saveRateCard as saveCard,
 } from "@/server/pricing/rate-card";
+import { redactErrors } from "@/server/rethrow-redacted";
 
 const refused = (fields: Record<string, string>) =>
   fieldErrors("invalid_input", Object.entries(fields));
@@ -23,17 +24,21 @@ const refused = (fields: Record<string, string>) =>
 export async function saveRateCard(
   input: RateCardInput,
 ): Promise<ActionResult> {
-  const ctx = await requireCreator("/dashboard/pricing");
-  const parsed = rateCardInputSchema(ctx.creator.payoutCurrency).safeParse(
-    input,
-  );
-  if (!parsed.success) return refused(rateCardFieldErrors(parsed.error, input));
-  try {
-    await saveCard(toActor(ctx), parsed.data);
-  } catch (error) {
-    if (error instanceof InvalidRateCardError) return refused(error.fields);
-    throw error;
-  }
-  refresh();
-  return { ok: true, data: undefined };
+  return redactErrors("pricing.save_failed", async () => {
+    const ctx = await requireCreator("/dashboard/pricing");
+    const parsed = rateCardInputSchema(ctx.creator.payoutCurrency).safeParse(
+      input,
+    );
+    if (!parsed.success) {
+      return refused(rateCardFieldErrors(parsed.error, input));
+    }
+    try {
+      await saveCard(toActor(ctx), parsed.data);
+    } catch (error) {
+      if (error instanceof InvalidRateCardError) return refused(error.fields);
+      throw error;
+    }
+    refresh();
+    return { ok: true, data: undefined };
+  });
 }

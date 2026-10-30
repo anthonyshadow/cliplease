@@ -174,7 +174,8 @@ const GROUPS = ["use", "term", "territory"] as const;
 /**
  * `selection` again once the options changed under it (the page refreshed after an option_disabled, 01 J7.10): each
  * group whose option is gone moves to its first offered option; if that doesn't fit under the cap, the first load's
- * choice. `gone` names the groups that moved ("That option isn't available anymore."); none when it still fits.
+ * choice, with the buyer's country or region kept when that choice keeps their territory (a code never changes the
+ * price). `gone` names the groups that moved ("That option isn't available anymore."); none when it still fits.
  */
 export function repairSelection(
   options: EffectiveOptions,
@@ -192,7 +193,11 @@ export function repairSelection(
   }
   if (licenseCents(options, next, feeBps) === null) {
     // The loader 404s a video where nothing fits, so the first load's choice exists whenever this page renders.
-    next = defaultSelection(options, feeBps) ?? next;
+    const first = defaultSelection(options, feeBps) ?? next;
+    next =
+      first.territory === selection.territory
+        ? { ...first, territoryCode: selection.territoryCode }
+        : first;
   }
   return {
     selection: next,

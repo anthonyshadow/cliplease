@@ -22,6 +22,8 @@ export const VIDEO_PAGE_COPY = {
   turnOn: "Turn on",
   turningOn: "Turning on…",
   off: "Buyers can't see this video right now.",
+  /** A live video none of whose combinations can be bought, in place of its share link (owner answer Q-137 a). */
+  cantLicense: "Buyers can't license this video right now.",
   replaceLocked:
     "Can't replace while the video is live, or once a request or license exists.",
   /** After a Details edit (05 §6.7 States; approved with P05's Settings, Q-07). */
@@ -80,6 +82,15 @@ export const fromPriceLine = (
 /** A video's link is offered while it is Live or Off (05 §6.7, §6.8): never for a draft or a disabled video. */
 export const offersShareLink = (status: VideoStatus) =>
   status === "published" || status === "unpublished";
+
+/**
+ * A live video no combination of whose options can be bought (no From price, so its license page 404s): its page and
+ * its card say so in place of the share link (owner answer Q-137 a).
+ */
+export const isUnlicensable = (
+  status: VideoStatus,
+  fromPriceCents: number | null,
+) => status === "published" && fromPriceCents === null;
 
 /**
  * 01 J3.9's banner for a verified posting whose post the platform removed: "This post was removed from Instagram on 14

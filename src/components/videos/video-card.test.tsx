@@ -97,6 +97,33 @@ describe("CreatorVideoCard (04 §9.27; 05 §6.8)", () => {
     expect(within(item).queryByText(/^From /)).toBeNull();
     expect(within(item).queryByRole("img")).toBeNull();
   });
+
+  it("says a live video no buyer can license can't be licensed, with the way to the prices, in place of Copy link (owner answer Q-137 a)", () => {
+    const item = card({ ...LIVE, fromPriceCents: null });
+    expect(
+      within(item).getByText("Buyers can't license this video right now."),
+    ).toBeTruthy();
+    expect(
+      within(item)
+        .getByRole("link", {
+          name: "Turn on at least one use, term and territory",
+        })
+        .getAttribute("href"),
+    ).toBe("/dashboard/pricing");
+    expect(
+      within(item).queryByRole("button", { name: "Copy link" }),
+    ).toBeNull();
+  });
+
+  it("keeps an Off video's Copy link whatever its prices", () => {
+    const item = card({ ...LIVE, status: "unpublished", fromPriceCents: null });
+    expect(
+      within(item).getByRole("button", { name: "Copy link" }),
+    ).toBeTruthy();
+    expect(
+      within(item).queryByText("Buyers can't license this video right now."),
+    ).toBeNull();
+  });
 });
 
 describe("CreatorVideoCard's Menu (05 §6.8 callout 4)", () => {

@@ -184,8 +184,8 @@ function canonicalSourceUrl(post: {
  * 5. the live getPost, outside any transaction, through withAccessToken (07 D12 b: one retry after a concurrent
  *    refresh, then needs_reconnect → NeedsReconnectError): no post → NotOnAccountError, private → NotPublicError. A
  *    platform failure or rate limit is let out as it is (the generic retry);
- * 6. one transaction: the account still `connected` under a share lock, else NeedsReconnectError (a Disconnect since
- *    step 3 wins, 03 §9.3); the self_attested draft (title from the post, 01 J5.12; a unique slug), its source posting
+ * 6. one transaction: the account still `connected` through the connection step 1 read, under a share lock, else
+ *    NeedsReconnectError (a Disconnect since step 3 wins, even one a Reconnect followed, 03 §9.3); the self_attested draft (title from the post, 01 J5.12; a unique slug), its source posting
  *    with every verified field, the link hidden when the live or cached post is unlisted (07 D18), auditNewlyVerified (a
  *    `video_posting.conflict` audit when other creators hold unverified pastes of the post, 07 D68),
  *    refreshVideoOwnership (→ verified_owner, 07 D66) and an ids-only `video.created` audit. The video row holds no
@@ -231,8 +231,11 @@ export async function createVideoFromPost(
   const now = new Date();
   try {
     await db.transaction(async (tx) => {
-      // A Disconnect since step 3 wins (03 §9.3): it may have deleted the post. One after this waits for the commit.
-      const connected = await lockConnectedAccounts(tx, [post.accountId]);
+      // A Disconnect since step 3 wins (03 §9.3), even one a Reconnect followed: it may have deleted the post. One after
+      // this waits for the commit.
+      const connected = await lockConnectedAccounts(tx, [
+        { id: post.accountId, connectedAt: post.connectedAt },
+      ]);
       if (!connected.has(post.accountId)) throw new NeedsReconnectError();
       await insertVideoWithUniqueSlug(tx, {
         id: videoId,

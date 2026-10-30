@@ -51,8 +51,8 @@ export type CreatorContext = {
 /**
  * The session, once per request. The read never extends it: a Server Component can't write the cookie, so the expiry
  * would move in the database but not in the browser. SessionRefresh extends it through the auth route instead. A failed
- * read reaches every page, action and route that starts here as a plain error (rethrowRedacted): its query's message
- * holds the session token.
+ * read reaches every page, action and route that starts here as a plain error (rethrowRedacted). Better Auth has
+ * already logged its query error through the redacted logger (auth.ts) and thrown its own error, without the token.
  */
 const readSession = cache(async () => {
   try {

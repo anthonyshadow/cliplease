@@ -6,6 +6,7 @@ import { db } from "../../src/db/client";
 import { creatorProfile, video } from "../../src/db/schema";
 import { videoUrl } from "../../src/lib/urls";
 import { REVIEW_COPY } from "../../src/lib/videos/review";
+import { MUSIC_DISABLED_USES } from "../../src/lib/videos/rights";
 import { env } from "../../src/server/env";
 import { VideoNotFoundError } from "../../src/server/videos/errors";
 import { listPublicVideos } from "../../src/server/videos/public";
@@ -345,5 +346,27 @@ describe("listPublicVideos (03 §7.5; 07 D72)", () => {
       new RegExp(`^/api/media/posters/${first.id}\\?v=[0-9a-f]{8}$`),
     );
     expect(JSON.stringify(videos)).not.toMatch(OBJECT_KEY);
+  });
+
+  it("leaves out a live video none of whose combinations can be bought, which the creator's card marks (owner answer Q-137 a)", async () => {
+    const { creator, actor } = await pricedCreator(["organic_social"]);
+    const open = await readyUpload(creator.id);
+    await publishVideo(actor, { videoId: open.id });
+    const music = await readyUpload(creator.id);
+    await publishVideo(actor, { videoId: music.id });
+    // With Organic social off on the rate card, music's rule (01 J5.14) leaves no use.
+    await db
+      .update(video)
+      .set({ containsMusic: true, disabledUses: [...MUSIC_DISABLED_USES] })
+      .where(eq(video.id, music.id));
+
+    expect((await listPublicVideos(creator.id)).map((v) => v.id)).toEqual([
+      open.id,
+    ]);
+    const { videos } = await listCreatorVideos(actor);
+    expect(videos.find((v) => v.id === music.id)?.fromPriceCents).toBeNull();
+    expect(videos.find((v) => v.id === open.id)?.fromPriceCents).toEqual(
+      expect.any(Number),
+    );
   });
 });

@@ -770,6 +770,27 @@ describe("a failure while handling an event (02 §8.1 step 4)", () => {
     });
     expect((await requestRow(row.id)).status).toBe("awaiting_approval");
   });
+
+  it("leaves an event another delivery finished meanwhile as that delivery left it", async () => {
+    const { row } = await pendingRequest();
+    const event = completed(row);
+    vi.spyOn(
+      scripted.driverFor("cad"),
+      "getAuthorization",
+    ).mockImplementationOnce(async () => {
+      // The other delivery of this event finishes while this one is still asking Stripe.
+      await db
+        .update(stripeEvent)
+        .set({ processedAt: new Date() })
+        .where(eq(stripeEvent.id, event.id));
+      throw new Error("boom");
+    });
+    await expect(onWebhookEvent(event, "cad")).rejects.toThrow("boom");
+    expect(await eventRow(event.id)).toMatchObject({
+      processedAt: expect.any(Date),
+      lastError: null,
+    });
+  });
 });
 
 describe("applyTransition (02 §5.7)", () => {

@@ -6,6 +6,7 @@ import type { ComponentProps } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { formatBytes } from "@/lib/format";
 import type { PublishBlocker } from "@/lib/videos/review";
+import { MUSIC_DISABLED_USES } from "@/lib/videos/rights";
 import { effectiveOptions } from "@/server/pricing/rate-card";
 import { creatorVideoFixture } from "../../../tests/helpers/creator-video-fixture";
 import { savedPosting } from "../../../tests/helpers/postings-fixtures";
@@ -250,6 +251,41 @@ describe("VideoPageView (S19; 05 §6.7)", () => {
     cleanup();
     page({ postings: removed, video: { ...LIVE, status: "disabled" } });
     expect(screen.queryByText(/This post was removed/)).toBeNull();
+  });
+
+  it("a live video no buyer can license: the line and the way to the prices in place of its link (owner answer Q-137 a)", () => {
+    // With Organic social off on the rate card, music's rule (01 J5.14) leaves no use.
+    const noUse = effectiveOptions(
+      rateCardFixture((o) =>
+        o.key === "organic_social" ? { enabled: false } : {},
+      ),
+      {
+        disabledUses: [...MUSIC_DISABLED_USES],
+        basePriceOverrideCents: null,
+      },
+    );
+    page({
+      publish: {
+        blockers: [],
+        reconnectPlatforms: [],
+        options: noUse,
+        disabledReason: null,
+      },
+    });
+    expect(
+      screen.getByText("Buyers can't license this video right now."),
+    ).toBeTruthy();
+    expect(
+      screen
+        .getByRole("link", {
+          name: "Turn on at least one use, term and territory",
+        })
+        .getAttribute("href"),
+    ).toBe("/dashboard/pricing");
+    expect(screen.queryByRole("button", { name: "Copy" })).toBeNull();
+    expect(
+      screen.queryByRole("link", { name: /View license page/ }),
+    ).toBeNull();
   });
 
   it("hides Rights' Edit once a license is sold, and says why", () => {

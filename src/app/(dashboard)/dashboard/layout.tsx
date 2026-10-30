@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { AppShell } from "@/components/layout/app-shell";
 import { InboxCountProvider } from "@/components/layout/inbox-count";
 import { NavBar } from "@/components/layout/nav-bar";
@@ -19,7 +20,7 @@ export default async function DashboardLayout({
   // client navigation (SyncInboxCount).
   const { count } = await waitingSummary(ctx.creator.id);
   return (
-    <InboxCountProvider count={count}>
+    <InboxCountProvider count={count} readId={randomUUID()}>
       <AppShell
         nav={
           <NavBar

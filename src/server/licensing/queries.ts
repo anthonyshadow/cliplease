@@ -8,6 +8,7 @@ import type {
   CreatorRequest,
   InboxView,
 } from "@/lib/licensing/request-dto";
+import { scopeLabel } from "@/lib/licensing/selection";
 import { displayStatus } from "@/lib/licensing/transitions";
 import { isUuid } from "@/lib/validation/uuid";
 import { enabledPlatforms } from "../social/registry";
@@ -88,10 +89,7 @@ function factsOf(r: FactsRow, posterUrl: string | null) {
     status: r.status,
     displayStatus: displayStatus(r),
     statusReason: r.statusReason,
-    useKey: r.useKey,
-    termKey: r.termKey,
-    territoryKey: r.territoryKey,
-    territoryCode: r.territoryCode,
+    scope: scopeLabel(r),
     licensePriceCents: r.licensePriceCents,
     amountTotalCents: r.amountTotalCents,
     currency: r.currency,

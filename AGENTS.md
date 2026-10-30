@@ -61,7 +61,8 @@ database (Docker Desktop) and migrates it; `.env.test.local` (git-ignored) point
   `.data/last-green`. Every integration and e2e run migrates the test database to the head of `drizzle/` first.
 - `bun run check:step0 [specs]`: the same fast checks (typecheck through unit) always. When the files, the test env
   files and the Node and Bun versions are exactly those of the last green `check:full`, it skips integration and e2e;
-  otherwise it runs the integration tests the changes reach and the given specs (all when none).
+  otherwise it runs the integration tests the changes reach (all of them when the test env files or the versions
+  changed) and the given specs (all when none).
 
 ## 3. Always stop and ask when…
 - A credential, API key, account, domain or paid service is needed (never invent or reuse keys).

@@ -1,8 +1,4 @@
-import type {
-  Currency,
-  LicenseRequestStatus,
-  RateOptionKey,
-} from "@/lib/domain/values";
+import type { Currency, LicenseRequestStatus } from "@/lib/domain/values";
 import type { DisplayStatus } from "./transitions";
 
 // What the request pages get of a request (02 §4.1; 03 §7.1, §7.6): plain values, instants as ISO strings, mapped field
@@ -15,10 +11,8 @@ type RequestFacts = {
   displayStatus: DisplayStatus;
   /** Why it ended (07 D27, D28): the copy for abandoned and declined requests depends on it. */
   statusReason: string | null;
-  useKey: RateOptionKey;
-  termKey: RateOptionKey;
-  territoryKey: RateOptionKey;
-  territoryCode: string | null;
+  /** "Paid social ads · 1 year · France" (scopeLabel), built on the server: the pages' client code loads no countries. */
+  scope: string;
   licensePriceCents: number;
   amountTotalCents: number;
   currency: Currency;

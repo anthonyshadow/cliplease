@@ -38,6 +38,25 @@ describe("StartCheckoutSchema (02 §5.7; P15)", () => {
     ]);
   });
 
+  it("refuses a licensee name that holds a web address, keeping a company named by its domain (owner answer Q-136 a)", () => {
+    for (const licenseeName of [
+      "Payout on hold, confirm at evil.example/verify",
+      "See https://evil.example",
+      "www.evil.example",
+      "HTTP://EVIL.EXAMPLE",
+    ]) {
+      expect(issue({ licenseeName })).toEqual([
+        "licenseeName",
+        DETAILS_COPY.licenseeWebAddress,
+      ]);
+    }
+    for (const licenseeName of ["Booking.com B.V.", "AC/DC Productions"]) {
+      expect(issue({ licenseeName })).toBeNull();
+    }
+    // The contact name never reaches an email subject or /verify.
+    expect(issue({ contactName: "www.evil.example" })).toBeNull();
+  });
+
   it("trims the email before checking it; normalizeEmail stores it lowercased (07 D126)", () => {
     expect(
       StartCheckoutSchema.parse({

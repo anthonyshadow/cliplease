@@ -294,7 +294,7 @@ export type CreatorVideoCardDTO = {
   height: number | null;
   /** The sm badge from the primary verified posting, else self-attested (07 D70, D89). */
   badge: BadgeInput;
-  /** "From {price}" in `currency` (fromPriceCents), null when no combination can be bought. */
+  /** "From {price}" in `currency` (fromPriceCents), null when no combination can be bought (isUnlicensable). */
   fromPriceCents: number | null;
   currency: Currency;
   /** A draft's Continue: its first incomplete step. */
@@ -369,18 +369,4 @@ export async function listCreatorVideos(
     }),
   );
   return { handle: creator.handle, videos };
-}
-
-/** The share link of the creator's latest live video: the empty Inbox's Copy link (05 §6.3 callout 13), or null. */
-export async function latestLiveShareUrl(
-  creatorId: string,
-): Promise<string | null> {
-  const [row] = await db
-    .select({ handle: creatorProfile.handle, slug: video.slug })
-    .from(video)
-    .innerJoin(creatorProfile, eq(creatorProfile.id, video.creatorId))
-    .where(and(eq(video.creatorId, creatorId), eq(video.status, "published")))
-    .orderBy(desc(video.publishedAt), desc(video.id))
-    .limit(1);
-  return row ? shareUrl(row.handle, row.slug) : null;
 }

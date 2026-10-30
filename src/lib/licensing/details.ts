@@ -7,8 +7,17 @@ import { EMAIL_MAX, EMAIL_MESSAGE, EMAIL_RE } from "../validation/email";
 export const NAME_MAX = 120;
 export const INTENDED_USE_MAX = 200;
 
+/**
+ * A web address in a licensee name: a scheme, "www." or a domain followed by a path ("evil.example/claim"). The name
+ * reaches the creator's email subject and headline, /verify and the license PDF, so it can't carry one (owner answer
+ * Q-136 a); a bare domain such as "Booking.com" is a company's name and stays.
+ */
+export const WEB_ADDRESS_RE = /:\/\/|www\.|[a-z0-9-]\.[a-z]{2,}\//i;
+
 export const DETAILS_COPY = {
   licenseeEmpty: "Enter who the license is for.",
+  /** Owner answer Q-136 a. */
+  licenseeWebAddress: "Enter a name without a web address.",
   nameEmpty: "Enter your name.",
   nameLong: `Use ${NAME_MAX} characters or fewer.`,
   email: EMAIL_MESSAGE,
@@ -47,7 +56,10 @@ export function detailsFieldError(
       ? DETAILS_COPY.licenseeEmpty
       : DETAILS_COPY.nameEmpty;
   }
-  return text.length > NAME_MAX ? DETAILS_COPY.nameLong : null;
+  if (text.length > NAME_MAX) return DETAILS_COPY.nameLong;
+  return field === "licenseeName" && WEB_ADDRESS_RE.test(text)
+    ? DETAILS_COPY.licenseeWebAddress
+    : null;
 }
 
 /** Everything on the page that can carry an error, in the page's order: the territory's select, the four fields, the terms box. */

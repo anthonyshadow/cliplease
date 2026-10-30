@@ -291,7 +291,7 @@ async function verified(
 ): Promise<PostingCheckResult> {
   if (post.visibility === "private") throw new NotPublicError();
   const row = await db.transaction(async (tx) => {
-    if (!(await lockConnectedAccounts(tx, [account.id])).has(account.id)) {
+    if (!(await lockConnectedAccounts(tx, [account])).has(account.id)) {
       return null;
     }
     await upsertPosts(tx, account, [post], new Date());

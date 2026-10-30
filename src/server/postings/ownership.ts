@@ -91,28 +91,43 @@ export function assertPostingAvailable(
   return assertPostingsAvailable(exec, [target]);
 }
 
+/** An account as a caller read it before its platform call: which one, and the connection (connected_at) it used. */
+export type AccountConnection = { id: string; connectedAt: Date };
+
 /**
- * Of `accountIds`, the ones still `connected`, each held FOR SHARE until the transaction ends (03 §9.3): a Disconnect
- * that committed first is seen here, and one that comes later waits for this write, then spares the posts it
- * references. Taken after the video's lock (video → account → post, the order sync and Disconnect also keep from the
+ * Of `accounts`, the ids still `connected` through the connection the caller read, each held FOR SHARE until the
+ * transaction ends (03 §9.3): a Disconnect that committed first is seen here, even one a Reconnect has followed (a new
+ * connected_at: the Disconnect may have deleted the posts the caller is about to reference), and one that comes later
+ * waits for this write, then spares the posts it references. An id read through two connections counts only when both
+ * are current. Taken after the video's lock (video → account → post, the order sync and Disconnect also keep from the
  * account on).
  */
 export async function lockConnectedAccounts(
   tx: Pick<typeof db, "select">,
-  accountIds: readonly string[],
+  accounts: readonly AccountConnection[],
 ): Promise<ReadonlySet<string>> {
-  if (accountIds.length === 0) return new Set();
+  if (accounts.length === 0) return new Set();
   const rows = await tx
-    .select({ id: socialAccount.id })
+    .select({ id: socialAccount.id, connectedAt: socialAccount.connectedAt })
     .from(socialAccount)
     .where(
       and(
-        inArray(socialAccount.id, [...accountIds]),
+        inArray(
+          socialAccount.id,
+          accounts.map((account) => account.id),
+        ),
         eq(socialAccount.status, "connected"),
       ),
     )
     .for("share");
-  return new Set(rows.map((row) => row.id));
+  const current = new Map(
+    rows.map((row) => [row.id, row.connectedAt.getTime()]),
+  );
+  const connected = new Set(accounts.map(({ id }) => id));
+  for (const { id, connectedAt } of accounts) {
+    if (current.get(id) !== connectedAt.getTime()) connected.delete(id);
+  }
+  return connected;
 }
 
 /**

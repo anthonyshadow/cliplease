@@ -59,6 +59,7 @@ import {
   saveVideoPostings as saveVideoPostingsFor,
   saveVideoPostingsInput,
 } from "@/server/postings/save";
+import { redactErrors } from "@/server/rethrow-redacted";
 import { mockEnabled } from "@/server/social/registry";
 import { confirmSameVideo, withdrawSameVideo } from "@/server/videos/edit";
 import {
@@ -97,8 +98,8 @@ import { shareUrl } from "@/server/videos/visibility";
 //   - Check again pressed within 30 s of the posting's last check (the server's POSTING_CHECK_COOLDOWN_MS), with no
 //     account on its platform linked or synced since: `checked_recently` with POSTINGS_COPY.checkedRecently, which the row shows as a helper, not an error (Q-84 a).
 // Moving on is redirect(): a draft to ?step=rights, an unpublished video to its page (videoHref). redirect() and
-// notFound() throw, so they stay outside every try that maps a refusal. Nothing here fetches a pasted link (07 D67): the
-// domain parses it and matches it by id.
+// notFound() throw, so they stay outside every try that maps a refusal (redactErrors lets them through). Nothing here
+// fetches a pasted link (07 D67): the domain parses it and matches it by id.
 
 /**
  * The same-video tick's two fields (Zod at the boundary, AGENTS.md §8): ticked or not, and the verified posts the block
@@ -350,84 +351,88 @@ export async function saveVideoPostings(
   _previous: SavePostingsState,
   formData: FormData,
 ): Promise<SavePostingsState> {
-  const form = postingsFromFormData(formData);
-  const { videoId } = form;
-  const ctx = await requireCreator(
-    isUuid(videoId) ? videoStepHref(videoId, "postings") : "/dashboard/videos",
-  );
-  const actor = toActor(ctx);
-  const facts = await stepFactsNow(actor, videoId);
-  if (postingsStepMode(facts.status) !== "edit") {
-    return formError("postings_locked", POSTINGS_COPY.locked);
-  }
-  const allowMock = mockEnabled();
-  const parsed = saveVideoPostingsInput.safeParse({
-    videoId,
-    notPosted: form.notPosted,
-    postings: form.postings,
-    sourceShowLink: form.sourceShowLink,
-  });
-  if (!parsed.success) return inputError(parsed.error, form, allowMock);
-  const tick = sameVideoInput.safeParse(form);
-  if (!tick.success) return formError("invalid_input");
-  const input = parsed.data;
-  const before = await listVideoPostings(actor, videoId);
-  if (
-    isNothingChosen({
-      hasSource: before.some((posting) => posting.isSource),
-      rowCount: input.postings.length,
-      notPosted: input.notPosted,
-    })
-  ) {
-    return fieldError(
-      "nothing_chosen",
-      PLATFORMS_FIELD,
-      POSTINGS_COPY.nothingChosen,
+  return redactErrors("video.postings_save_failed", async () => {
+    const form = postingsFromFormData(formData);
+    const { videoId } = form;
+    const ctx = await requireCreator(
+      isUuid(videoId)
+        ? videoStepHref(videoId, "postings")
+        : "/dashboard/videos",
     );
-  }
-
-  const changed = postingsInputChanged(before, input, { allowMock });
-  let after = before;
-  let current = facts;
-  if (changed || facts.postingsConfirmedAt === null) {
-    const saved = await savePostings(actor, input, form, allowMock);
-    if (!saved.ok) return saved;
-    after = saved.data.postings;
-    current = saved.data.facts;
-  }
-
-  // The tick answers for exactly the posts the block showed: a stale, tampered or missing key changes nothing (07 D69).
-  const key = verifiedPostingsKey(after);
-  const sawThesePosts = key !== "" && tick.data.verifiedKey === key;
-  if (sawThesePosts && tick.data.sameVideo !== current.sameVideoConfirmed) {
-    const set = await setTick(actor, videoId, tick.data.sameVideo, current);
-    if (!set.ok) {
-      refresh();
-      return set;
+    const actor = toActor(ctx);
+    const facts = await stepFactsNow(actor, videoId);
+    if (postingsStepMode(facts.status) !== "edit") {
+      return formError("postings_locked", POSTINGS_COPY.locked);
     }
-    current = set.data;
-  }
+    const allowMock = mockEnabled();
+    const parsed = saveVideoPostingsInput.safeParse({
+      videoId,
+      notPosted: form.notPosted,
+      postings: form.postings,
+      sourceShowLink: form.sourceShowLink,
+    });
+    if (!parsed.success) return inputError(parsed.error, form, allowMock);
+    const tick = sameVideoInput.safeParse(form);
+    if (!tick.success) return formError("invalid_input");
+    const input = parsed.data;
+    const before = await listVideoPostings(actor, videoId);
+    if (
+      isNothingChosen({
+        hasSource: before.some((posting) => posting.isSource),
+        rowCount: input.postings.length,
+        notPosted: input.notPosted,
+      })
+    ) {
+      return fieldError(
+        "nothing_chosen",
+        PLATFORMS_FIELD,
+        POSTINGS_COPY.nothingChosen,
+      );
+    }
 
-  const outcome = postingsStepOutcome({
-    complete: videoStepFacts(current).postingsDone,
-    changed,
-    needsAttention: after.some(needsAttention),
+    const changed = postingsInputChanged(before, input, { allowMock });
+    let after = before;
+    let current = facts;
+    if (changed || facts.postingsConfirmedAt === null) {
+      const saved = await savePostings(actor, input, form, allowMock);
+      if (!saved.ok) return saved;
+      after = saved.data.postings;
+      current = saved.data.facts;
+    }
+
+    // The tick answers for exactly the posts the block showed: a stale, tampered or missing key changes nothing (07 D69).
+    const key = verifiedPostingsKey(after);
+    const sawThesePosts = key !== "" && tick.data.verifiedKey === key;
+    if (sawThesePosts && tick.data.sameVideo !== current.sameVideoConfirmed) {
+      const set = await setTick(actor, videoId, tick.data.sameVideo, current);
+      if (!set.ok) {
+        refresh();
+        return set;
+      }
+      current = set.data;
+    }
+
+    const outcome = postingsStepOutcome({
+      complete: videoStepFacts(current).postingsDone,
+      changed,
+      needsAttention: after.some(needsAttention),
+    });
+    if (outcome === "next") {
+      redirect(
+        current.status === "draft"
+          ? videoStepHref(videoId, "rights")
+          : videoHref(videoId),
+      );
+    }
+    refresh();
+    return {
+      ok: true,
+      data: {
+        sameVideoMissing:
+          !tick.data.sameVideo && sawThesePosts && !current.sameVideoConfirmed,
+      },
+    };
   });
-  if (outcome === "next") {
-    redirect(
-      current.status === "draft"
-        ? videoStepHref(videoId, "rights")
-        : videoHref(videoId),
-    );
-  }
-  refresh();
-  return {
-    ok: true,
-    data: {
-      sameVideoMissing:
-        !tick.data.sameVideo && sawThesePosts && !current.sameVideoConfirmed,
-    },
-  };
 }
 
 const recheckInput = z.object({ postingId: z.uuid() });
@@ -443,23 +448,25 @@ const recheckInput = z.object({ postingId: z.uuid() });
 export async function recheckPosting(input: {
   postingId: string;
 }): Promise<ActionResult<{ posting: OwnerPostingDTO }>> {
-  const ctx = await requireCreator();
-  const parsed = recheckInput.safeParse(input);
-  if (!parsed.success) return formError("invalid_input");
-  let result: ActionResult<{ posting: OwnerPostingDTO }>;
-  try {
-    const posting = await recheckPostingFor(toActor(ctx), parsed.data);
-    result = { ok: true, data: { posting } };
-  } catch (error) {
-    const refused =
-      error instanceof VideoNotFoundError
-        ? { code: "not_found", message: GENERIC_ERROR_MESSAGE }
-        : postingRefusal(error);
-    if (refused === null) throw error;
-    result = formError(refused.code, refused.message);
-  }
-  refresh();
-  return result;
+  return redactErrors("video.posting_recheck_failed", async () => {
+    const ctx = await requireCreator();
+    const parsed = recheckInput.safeParse(input);
+    if (!parsed.success) return formError("invalid_input");
+    let result: ActionResult<{ posting: OwnerPostingDTO }>;
+    try {
+      const posting = await recheckPostingFor(toActor(ctx), parsed.data);
+      result = { ok: true, data: { posting } };
+    } catch (error) {
+      const refused =
+        error instanceof VideoNotFoundError
+          ? { code: "not_found", message: GENERIC_ERROR_MESSAGE }
+          : postingRefusal(error);
+      if (refused === null) throw error;
+      result = formError(refused.code, refused.message);
+    }
+    refresh();
+    return result;
+  });
 }
 
 const videoInput = z.object({ videoId: z.uuid() });
@@ -473,24 +480,26 @@ const videoInput = z.object({ videoId: z.uuid() });
 export async function publishVideo(input: {
   videoId: string;
 }): Promise<ActionResult<{ shareUrl: string }>> {
-  const parsed = videoInput.safeParse(input);
-  if (!parsed.success) notFound();
-  const { videoId } = parsed.data;
-  const ctx = await requireCreator(videoStepHref(videoId, "review"));
-  let result: PublishResult;
-  try {
-    result = await publish(toActor(ctx), { videoId });
-  } catch (error) {
-    if (!(error instanceof VideoNotFoundError)) throw error;
-    notFound();
-  }
-  refresh();
-  return result.ok
-    ? {
-        ok: true,
-        data: { shareUrl: shareUrl(ctx.creator.handle, result.slug) },
-      }
-    : formError("publish_blocked", REVIEW_COPY.blockersTitle);
+  return redactErrors("video.publish_failed", async () => {
+    const parsed = videoInput.safeParse(input);
+    if (!parsed.success) notFound();
+    const { videoId } = parsed.data;
+    const ctx = await requireCreator(videoStepHref(videoId, "review"));
+    let result: PublishResult;
+    try {
+      result = await publish(toActor(ctx), { videoId });
+    } catch (error) {
+      if (!(error instanceof VideoNotFoundError)) throw error;
+      notFound();
+    }
+    refresh();
+    return result.ok
+      ? {
+          ok: true,
+          data: { shareUrl: shareUrl(ctx.creator.handle, result.slug) },
+        }
+      : formError("publish_blocked", REVIEW_COPY.blockersTitle);
+  });
 }
 
 /**
@@ -500,18 +509,20 @@ export async function publishVideo(input: {
 export async function unpublishVideo(input: {
   videoId: string;
 }): Promise<ActionResult> {
-  const parsed = videoInput.safeParse(input);
-  if (!parsed.success) notFound();
-  const { videoId } = parsed.data;
-  const ctx = await requireCreator(videoHref(videoId));
-  try {
-    await unpublish(toActor(ctx), videoId);
-  } catch (error) {
-    if (!(error instanceof VideoNotFoundError)) throw error;
-    notFound();
-  }
-  refresh();
-  return { ok: true, data: undefined };
+  return redactErrors("video.unpublish_failed", async () => {
+    const parsed = videoInput.safeParse(input);
+    if (!parsed.success) notFound();
+    const { videoId } = parsed.data;
+    const ctx = await requireCreator(videoHref(videoId));
+    try {
+      await unpublish(toActor(ctx), videoId);
+    } catch (error) {
+      if (!(error instanceof VideoNotFoundError)) throw error;
+      notFound();
+    }
+    refresh();
+    return { ok: true, data: undefined };
+  });
 }
 
 /**
@@ -523,15 +534,17 @@ export async function unpublishVideo(input: {
 export async function deleteDraftVideo(input: {
   videoId: string;
 }): Promise<ActionResult> {
-  const parsed = videoInput.safeParse(input);
-  if (!parsed.success) notFound();
-  const ctx = await requireCreator(CREATOR_NAV.videos.href);
-  try {
-    await deleteDraft(toActor(ctx), parsed.data.videoId);
-  } catch (error) {
-    if (!(error instanceof VideoNotDraftError)) throw error;
-    refresh();
-    return formError("video_not_draft");
-  }
-  redirect(CREATOR_NAV.videos.href, RedirectType.replace);
+  return redactErrors("video.delete_draft_failed", async () => {
+    const parsed = videoInput.safeParse(input);
+    if (!parsed.success) notFound();
+    const ctx = await requireCreator(CREATOR_NAV.videos.href);
+    try {
+      await deleteDraft(toActor(ctx), parsed.data.videoId);
+    } catch (error) {
+      if (!(error instanceof VideoNotDraftError)) throw error;
+      refresh();
+      return formError("video_not_draft");
+    }
+    redirect(CREATOR_NAV.videos.href, RedirectType.replace);
+  });
 }

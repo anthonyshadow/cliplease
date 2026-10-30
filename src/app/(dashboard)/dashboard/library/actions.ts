@@ -9,9 +9,10 @@ import {
   LibraryQSchema,
 } from "@/lib/library/filter";
 import type { LibraryPostDTO } from "@/lib/library/post";
-import { type ActionResult, GENERIC_ERROR_MESSAGE } from "@/lib/result";
+import { type ActionResult, formError } from "@/lib/result";
 import { requireCreator, toActor } from "@/server/auth/session";
 import { queryLibraryPage } from "@/server/library/queries";
+import { redactErrors } from "@/server/rethrow-redacted";
 
 // Show more (05 §6.1 callout 14): the next 24 tiles for the same filters. It reads the page only; the summaries and chip
 // counts on screen stay as they are.
@@ -29,15 +30,12 @@ export async function loadMoreLibraryPosts(
 ): Promise<
   ActionResult<{ posts: LibraryPostDTO[]; nextCursor: string | null }>
 > {
-  const parsed = loadMoreInput.safeParse(input);
-  if (!parsed.success) {
-    return {
-      ok: false,
-      error: { code: "invalid_input", message: GENERIC_ERROR_MESSAGE },
-    };
-  }
-  const ctx = await requireCreator(LIBRARY_PATH);
-  const { platform, account, q, cursor } = parsed.data;
-  const filter: LibraryFilter = { platform, accountId: account, q, cursor };
-  return { ok: true, data: await queryLibraryPage(toActor(ctx), filter) };
+  return redactErrors("library.load_more_failed", async () => {
+    const parsed = loadMoreInput.safeParse(input);
+    if (!parsed.success) return formError("invalid_input");
+    const ctx = await requireCreator(LIBRARY_PATH);
+    const { platform, account, q, cursor } = parsed.data;
+    const filter: LibraryFilter = { platform, accountId: account, q, cursor };
+    return { ok: true, data: await queryLibraryPage(toActor(ctx), filter) };
+  });
 }

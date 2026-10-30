@@ -2,7 +2,6 @@ import { FactList } from "@/components/ui/fact-list";
 import { formatMoney } from "@/lib/format";
 import type { BuyerStatus } from "@/lib/licensing/request-dto";
 import { REQUEST_STATUS_COPY as COPY } from "@/lib/licensing/request-status";
-import { scopeLabel } from "@/lib/licensing/selection";
 import { PosterThumb } from "./poster-thumb";
 
 /**
@@ -28,7 +27,7 @@ export function RequestSummary({ request }: { request: BuyerStatus }) {
       </div>
       <FactList
         facts={[
-          { label: COPY.scope, value: scopeLabel(request) },
+          { label: COPY.scope, value: request.scope },
           {
             label: COPY.total,
             value: formatMoney(request.amountTotalCents, request.currency),

@@ -129,6 +129,57 @@ D5); their follow-ups for prompts still to do are under "Follow-ups from archive
 - Decisions: see Decisions (2026-10-29, Simplify) in `progress/decisions.md`.
 - Open questions: none.
 
+### Review — Code review of M4 and the audit fixes ✅ (2026-10-29)
+> Not a plan prompt: the owner ran `/code-review` at max effort over P14a–P17 and the audit commit (f158298..016d578): 15 findings, 11 confirmed and 4 plausible. They then asked for them fixed, asking first about the licensee name in the email subject and any copy change (Q-136–Q-138, all a). Nothing in P18's scope was started. Status line unchanged.
+- Done:
+  - **check.sh:** the schema-drift check requires drizzle-kit's "No schema changes" line (without a terminal a rename prompt wrote nothing and exited 0, so the check passed). `full` records the environment (the test env files, Node and Bun) on its own line, and step0 runs every integration test when it changed (vitest `--changed` sees only git, so it ran none). AGENTS.md §2 says so.
+  - **lint:invariants:** reads only files on disk (a tracked file deleted but not staged crashed it). `payments-in-tx` also sees a driver held in a variable set from `paymentsDriver(…)` or typed `PaymentsDriver`. `status-write` also sees the table under an import alias or as `schema.licenseRequest`. New rule `redacted-action`. `violationsIn` is exported and unit-tested.
+  - **Redaction in every action (Q-138 a):** the 23 Server Actions in 10 files each have the body `return redactErrors(event, …)` (`src/server/rethrow-redacted.ts`). `rethrowRedacted` lets an error it already redacted through (no second log line), and with APP_ENV=development the original error. The session-read comments no longer say the query error holds the token: Better Auth logs it through the redacted logger and throws its own.
+  - **Live videos no buyer can license (Q-137 a):** `isLicensable` (selection.ts), `videoFromPrice(…).licensable`. `listPublicVideos` leaves them out, since their license page 404s. `latestLiveShareUrl` moved to `public.ts` as the grid's first, which also skips a Demo-posting video while Demo is off. The video page and the Videos card show `UnlicensableNotice` ("Buyers can't license this video right now." and the blocker's "Turn on at least one use, term and territory" link to Prices) in place of the share link.
+  - **Licensee names (Q-136 a):** `WEB_ADDRESS_RE` (a scheme, "www." or a domain followed by a path) refuses a licensee name on blur, on submit and in `StartCheckoutSchema` with "Enter a name without a web address.". "Booking.com B.V." passes. The subject's wording is unchanged.
+  - **Races:** `lockConnectedAccounts` takes each account with the `connected_at` its caller read, so a Disconnect followed by a Reconnect counts as the Disconnect. Make licensable then refuses with needs_reconnect, and a save's or a check's verified link becomes check_failed; before, the insert referenced the deleted post (FK 23503). The webhook catch's `last_error` update is fenced on `processed_at IS NULL`; the claim's lease stays P25's.
+  - **Smaller fixes:**
+    - The Inbox badge takes every layout render's count (a per-render `readId`), not only a changed one.
+    - `repairSelection` keeps the buyer's country or region when the first load's choice keeps their territory.
+    - The request DTOs carry `scope`, built on the server, so the Inbox's client code no longer loads selection.ts and the countries.
+    - request-received's body is `REQUEST_STATUS_COPY.waitingBody` (05 §8 callout 3; the words were already the same).
+    - The scripted payments double logs every driver method.
+    - `startTestRun` empties the database before it migrates (`emptyPublicTables` `ifAny`).
+  - **Tests, new or extended:**
+    - Unit: `tests/unit/lint-invariants.test.ts` (8), `rethrow-redacted.test.ts` (+4), `inbox-count.test.tsx` (new), `video-card.test.tsx` (+2), `video-page.test.tsx` (+1), `selection.test.ts` (+1), `details.test.ts` (+1), `checkout.test.ts` (+1), `test-database.test.ts` (+2).
+    - Integration: `postings.test.ts` (+3 Disconnect-and-Reconnect races), `authorization.test.ts` (+1, a delivery finished meanwhile), `publish.test.ts` (+1), `inbox-queries.test.ts` (+1).
+    - Each fix was checked against the old code: the three race tests fail with the old account check, the fenced-catch test fails unfenced, and a column rename fails the drift check (it passed before). The lint runs clean with a tracked file deleted but not staged.
+- Verified: `bun run typecheck` ✅ · `bun run lint` ✅ (709 files) · `bun run lint:tokens` ✅ · `bun run lint:invariants` ✅ · schema drift ✅ · `bun run check:full` ✅ in 4 min 39 s (3371 unit in 163 files; 674 integration in 37 files; 255 e2e passed, 3 skipped by project), recorded in `.data/last-green` with its new `environment=` line. The first run failed one integration test, which pins every field /r gets and lacked the new `scope`; the test was updated. Not seen in a browser: the notice's state (a live video with nothing to buy) has no e2e test; the page and card render tests cover it.
+- Decisions: see Decisions (2026-10-29, Code review) in `progress/decisions.md`.
+- Open questions: none.
+- Follow-ups for later prompts: none new (P25's lease on the event claim stands).
+
+### Review — Simplify pass over the code-review fixes ✅ (2026-10-30)
+> Not a plan prompt: the owner ran `/simplify` on the uncommitted fixes above. No behavior or copy change. Status line unchanged.
+- Done:
+  - **Review:** 4 reviewers (reuse, simplification, efficiency, altitude) over the fixes' diff (57 files, 3 new). All four found the same duplicate first: `licensable` restated the From price.
+  - **One rule for "can be licensed":**
+    - `isLicensable` and the `licensable` fields are gone. `fromPriceCents` is null exactly when no combination fits, because the cheapest combination takes each group's lowest multiplier.
+    - The public side asks one `licenseOffer` in `src/server/videos/public.ts`: published, visible, a poster and a first selection. `readLicensePageData`, `listPublicVideos` and `latestLiveShareUrl` all use it.
+    - `latestLiveShareUrl` reads only what `licenseOffer` needs: no postings join and no badges, since the empty Inbox asks again on every refresh.
+    - The creator side asks `isUnlicensable(status, fromPriceCents)` (`src/lib/videos/video-page.ts`) on the page and the card.
+    - The notice is a `Notice` (04 §9.21). Its link is `TURN_ON_AN_OPTION` (label and href), shared with the blocker row.
+  - **Leaner:**
+    - The request DTOs drop `useKey`, `termKey`, `territoryKey` and `territoryCode`, which nothing read once `scope` came.
+    - `emptyPublicTables` returns on a database with no tables, so the `ifAny` flag and its refusal are gone.
+    - `lockConnectedAccounts` keeps one Set.
+    - The invariant lint reads the imports once (`importsOf`, `paymentExport`), and walks a file for drivers only when a method call sits inside a transaction.
+    - check.sh hashes the environment once per use; the recorded fingerprint's input is unchanged.
+    - Five refusals use `formError`.
+    - The scripted double logs its two scripted reads through `logged`, and its `key` field is documented as a cancel's.
+  - **Tests:**
+    - The Disconnect and the Disconnect-and-Reconnect races are one `describe.each`; both now also check the Library.
+    - The music fixtures use `MUSIC_DISABLED_USES`, and `publishVideo`'s `extra` backdates.
+  - **Skipped:** one validator for the license form's rules (the Zod schema calling `detailsFieldError`). The parallel rules predate these fixes, and the page loads no Zod.
+- Verified: `bun run typecheck` ✅ · `bun run lint` ✅ (709 files) · `bun run lint:tokens` ✅ · `bun run lint:invariants` ✅ · `bun run check:full` ✅ in 4 min 43 s (3371 unit in 163 files; 674 integration in 37 files; 255 e2e passed, 3 skipped by project), recorded in `.data/last-green`.
+- Decisions: see Decisions (2026-10-30, Simplify) in `progress/decisions.md`.
+- Open questions: none.
+
 **M5 Approve, decline, deliver** · P18–P20b · 17.5 h
 
 ### P18 — Approve: capture and issue the license · [ ] to do

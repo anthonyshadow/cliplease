@@ -1,10 +1,12 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ClientBase } from "pg";
 import { describe, expect, it } from "vitest";
 import {
   checkTestDatabase,
   type DatabaseEnv,
+  emptyPublicTables,
   readEnvFiles,
 } from "../helpers/test-database";
 
@@ -163,5 +165,35 @@ describe("readEnvFiles", () => {
       ]),
     ).toEqual({ APP_ENV: "test", DATABASE_URL: "b", EMAIL_FROM: "" });
     rmSync(dir, { recursive: true });
+  });
+});
+
+describe("emptyPublicTables", () => {
+  /** A client whose database has `tables` in schema public, and the statements it was sent. */
+  function clientWith(tables: string[]) {
+    const sent: string[] = [];
+    return {
+      sent,
+      client: {
+        query: async (text: string) => {
+          sent.push(text);
+          return { rows: tables.map((tablename) => ({ tablename })) };
+        },
+      } as unknown as Pick<ClientBase, "query">,
+    };
+  }
+
+  it("empties every table at once", async () => {
+    const { client, sent } = clientWith(["video", "license_request"]);
+    await emptyPublicTables(client);
+    expect(sent[1]).toBe(
+      'truncate table "video", "license_request" restart identity cascade',
+    );
+  });
+
+  it("leaves a new database, with no tables yet, as it is (startTestRun migrates it next)", async () => {
+    const { client, sent } = clientWith([]);
+    await emptyPublicTables(client);
+    expect(sent).toHaveLength(1);
   });
 });

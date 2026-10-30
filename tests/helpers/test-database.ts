@@ -110,7 +110,8 @@ export function checkTestDatabaseFiles(
 
 /**
  * Empties every table in schema public of the database `client` reaches (Drizzle's journal lives in schema drizzle and
- * stays). The callers run the guard first: resetDb on the integration pool, startTestRun on its lock's connection.
+ * stays); a new database has none yet. The callers run the guard first: startTestRun on its lock's connection, before
+ * it migrates, and resetDb on the integration pool after that.
  */
 export async function emptyPublicTables(
   client: Pick<ClientBase, "query">,
@@ -118,11 +119,7 @@ export async function emptyPublicTables(
   const { rows } = await client.query<{ tablename: string }>(
     "select tablename from pg_tables where schemaname = 'public'",
   );
-  if (rows.length === 0) {
-    throw new Error(
-      "The test database has no tables: run bun run test:db (NODE_ENV=test bun run db:migrate on Neon)",
-    );
-  }
+  if (rows.length === 0) return;
   const tables = rows.map((row) => escapeIdentifier(row.tablename));
   await client.query(
     `truncate table ${tables.join(", ")} restart identity cascade`,

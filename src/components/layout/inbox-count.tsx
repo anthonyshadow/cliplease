@@ -20,16 +20,19 @@ const InboxCount = createContext<{
 /** Holds the badge's count: the layout's, until the Inbox page or a refresh brings a newer one. */
 export function InboxCountProvider({
   count,
+  readId,
   children,
 }: {
   count: number;
+  /** New on every layout render: the render's count wins even when it equals the last one the layout read. */
+  readId: string;
   children: ReactNode;
 }) {
   const [current, setCurrent] = useState(count);
-  // A refresh re-renders the layout with a fresh count: it wins.
-  const [fromLayout, setFromLayout] = useState(count);
-  if (count !== fromLayout) {
-    setFromLayout(count);
+  // A refresh re-renders the layout with a fresh count: it wins, even over a count the Inbox page passed up since.
+  const [fromRender, setFromRender] = useState(readId);
+  if (readId !== fromRender) {
+    setFromRender(readId);
     setCurrent(count);
   }
   return (

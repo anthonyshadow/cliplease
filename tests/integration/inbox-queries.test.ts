@@ -10,6 +10,7 @@ import type {
   Video,
 } from "../../src/db/schema/types";
 import { DAY_MS, HOUR_MS } from "../../src/lib/time";
+import { MUSIC_DISABLED_USES } from "../../src/lib/videos/rights";
 import {
   getBuyerStatus,
   getRequestForCreator,
@@ -17,11 +18,12 @@ import {
   waitingSummary,
 } from "../../src/server/licensing/queries";
 import { generateBuyerToken } from "../../src/server/tokens/buyer-token";
-import { latestLiveShareUrl } from "../../src/server/videos/queries";
+import { latestLiveShareUrl } from "../../src/server/videos/public";
 import {
   insertCreator,
   insertLicense,
   insertLicenseRequest,
+  insertRateCard,
   publishVideo,
 } from "../helpers/factories";
 import { readyUpload } from "../helpers/ready-videos";
@@ -44,14 +46,11 @@ const CREATOR_KEYS = [
   "licensePriceCents",
   "licenseeName",
   "posterUrl",
+  "scope",
   "slug",
   "status",
   "statusReason",
-  "termKey",
-  "territoryCode",
-  "territoryKey",
   "title",
-  "useKey",
   "videoId",
 ];
 
@@ -325,18 +324,37 @@ describe("getBuyerStatus (03 §7.6)", () => {
   });
 });
 
+const aDayAgo = () => new Date(Date.now() - DAY_MS);
+
 describe("latestLiveShareUrl (05 §6.3 callout 13)", () => {
   it("links the creator's latest live video, and nothing without one", async () => {
     const creator = await insertCreator();
-    expect(await latestLiveShareUrl(creator.id)).toBeNull();
-    const first = await publishVideo(await readyUpload(creator.id));
-    const second = await publishVideo(await readyUpload(creator.id));
-    await db
-      .update(video)
-      .set({ publishedAt: new Date(Date.now() - DAY_MS) })
-      .where(eq(video.id, first.id));
-    expect(await latestLiveShareUrl(creator.id)).toMatch(
-      new RegExp(`/@${creator.handle}/${second.slug}$`),
+    await insertRateCard(creator);
+    expect(await latestLiveShareUrl(creator)).toBeNull();
+    await publishVideo(await readyUpload(creator.id), {
+      publishedAt: aDayAgo(),
+    });
+    const latest = await publishVideo(await readyUpload(creator.id));
+    expect(await latestLiveShareUrl(creator)).toMatch(
+      new RegExp(`/@${creator.handle}/${latest.slug}$`),
+    );
+  });
+
+  it("skips a live video no buyer can license, whose license page 404s (owner answer Q-137 a)", async () => {
+    const creator = await insertCreator();
+    await insertRateCard(creator, ["organic_social"]);
+    const older = await publishVideo(await readyUpload(creator.id), {
+      publishedAt: aDayAgo(),
+    });
+    // With Organic social off on the rate card, music's rule (01 J5.14) leaves no use.
+    await publishVideo(
+      await readyUpload(creator.id, {
+        containsMusic: true,
+        disabledUses: [...MUSIC_DISABLED_USES],
+      }),
+    );
+    expect(await latestLiveShareUrl(creator)).toMatch(
+      new RegExp(`/@${creator.handle}/${older.slug}$`),
     );
   });
 });

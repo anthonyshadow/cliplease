@@ -27,6 +27,7 @@ import { RIGHTS_LOCK_COPY } from "@/lib/videos/rights";
 import { videoStepHref } from "@/lib/videos/steps";
 import {
   fromPriceLine,
+  isUnlicensable,
   offersShareLink,
   originalLine,
   removedPostLine,
@@ -53,6 +54,7 @@ import { RefreshOnCoverDone } from "./refresh-on-cover";
 import { ReviewBlockers } from "./review-blockers";
 import { ReviewDetails } from "./review-details";
 import { TurnButton } from "./turn-button";
+import { UnlicensableNotice } from "./unlicensable-notice";
 import { VideoStatusPill } from "./video-status-pill";
 import { EditLink, PostingSummary } from "./where-posted-summary";
 
@@ -126,13 +128,14 @@ export function VideoPageView({
   const off = status === "unpublished";
   const disabled = status === "disabled";
   const url = offersShareLink(status) ? link : null;
+  const from = fromPriceCents(publish.options, platformFeeBps);
+  const unlicensable = isUnlicensable(status, from);
   const poster = {
     src: video.posterSrc,
     alt: `Cover image for ${video.title}`,
     width: video.width,
     height: video.height,
   };
-  const from = fromPriceCents(publish.options, platformFeeBps);
   const uses = publish.options.use
     .filter((use) => use.enabled)
     .map((use) => use.label)
@@ -167,7 +170,9 @@ export function VideoPageView({
             <VerifiedOwnerBadge {...ownerBadge(postings, "sm")} showUnlinked />
           </div>
         </div>
-        {url ? (
+        {unlicensable ? (
+          <UnlicensableNotice />
+        ) : url ? (
           <>
             <CopyLinkField url={url} label={PUBLISHED_COPY.shareLink} />
             {/* 05 §6.7 callout 3: Share… (where the browser can) and the buyer's page in a new tab (owner answer Q-116 a). */}

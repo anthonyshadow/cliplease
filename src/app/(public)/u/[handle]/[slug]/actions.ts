@@ -10,7 +10,7 @@ import {
   startCheckoutRefusal,
 } from "@/server/licensing/start-checkout-form";
 import { requestContext } from "@/server/request-context";
-import { rethrowRedacted } from "@/server/rethrow-redacted";
+import { redactErrors } from "@/server/rethrow-redacted";
 
 /**
  * The license page's Request license (02 §6.1; 07 D31): the server prices and saves the request, then the buyer goes to
@@ -19,15 +19,14 @@ import { rethrowRedacted } from "@/server/rethrow-redacted";
 export async function startCheckout(
   formData: FormData,
 ): Promise<StartCheckoutRefusal> {
-  const parsed = StartCheckoutSchema.safeParse(startCheckoutFields(formData));
-  if (!parsed.success) return startCheckoutFieldErrors(parsed.error);
-  // The insert's bound values are the buyer's details: never let Next log them.
-  const result = await createLicenseRequest(
-    parsed.data,
-    await requestContext(),
-  ).catch((error: unknown) =>
-    rethrowRedacted(error, "license_request.start_failed"),
-  );
-  if (result.ok) redirect(result.checkoutUrl);
-  return startCheckoutRefusal(result);
+  return redactErrors("license_request.start_failed", async () => {
+    const parsed = StartCheckoutSchema.safeParse(startCheckoutFields(formData));
+    if (!parsed.success) return startCheckoutFieldErrors(parsed.error);
+    const result = await createLicenseRequest(
+      parsed.data,
+      await requestContext(),
+    );
+    if (result.ok) redirect(result.checkoutUrl);
+    return startCheckoutRefusal(result);
+  });
 }

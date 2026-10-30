@@ -4,7 +4,9 @@ import { Button } from "@/components/ui/button";
 import { CopyLinkButton } from "@/components/ui/copy-link-button";
 import { PUBLISHED_COPY } from "@/lib/videos/review";
 import { videoHref } from "@/lib/videos/steps";
+import { isUnlicensable } from "@/lib/videos/video-page";
 import type { CreatorVideoCardDTO } from "@/server/videos/queries";
+import { UnlicensableNotice } from "./unlicensable-notice";
 import { CardText } from "./video-card";
 import { VideoCardMenu } from "./video-card-menu";
 import { VideoStatusPill } from "./video-status-pill";
@@ -39,7 +41,9 @@ export function CreatorVideoCard({ video }: { video: CreatorVideoCardDTO }) {
         </CardText>
       </Link>
       <div className="flex flex-wrap items-center gap-2 px-2 pb-2">
-        {video.shareUrl ? (
+        {isUnlicensable(video.status, video.fromPriceCents) ? (
+          <UnlicensableNotice className="flex-1" />
+        ) : video.shareUrl ? (
           <CopyLinkButton
             url={video.shareUrl}
             label={PUBLISHED_COPY.shareLink}

@@ -14,10 +14,11 @@ export type TestSuite = "integration" | "e2e";
 
 /**
  * Starts a test run: takes the test-run lock on the database that `root`'s .env.test names, after the same guard the
- * tests use; then, on the lock's own connection, applies any migration in drizzle/ it doesn't have yet and empties it, so
- * the run starts on the current schema and clean whatever an interrupted run left, and deletes the test emails sent
- * more than a day ago. Resolves to the function that releases the lock;
- * throws a clear error when another run holds it or the database can't be reached.
+ * tests use; then, on the lock's own connection, empties it and applies any migration in drizzle/ it doesn't have yet,
+ * so the run starts clean whatever an interrupted run left and on the current schema (emptied first: a new migration
+ * that rows can break, a NOT NULL column with no default or a new CHECK, never meets leftover ones), and deletes the
+ * test emails sent more than a day ago. Resolves to the function that releases the lock; throws a clear error when
+ * another run holds it or the database can't be reached.
  */
 export async function startTestRun(
   root: string,
@@ -61,10 +62,10 @@ export async function startTestRun(
     );
   }
   try {
+    await emptyPublicTables(client);
     await migrate(drizzle({ client }), {
       migrationsFolder: path.join(root, "drizzle"),
     });
-    await emptyPublicTables(client);
     await pruneOldEmails();
   } catch (error) {
     await client.end();

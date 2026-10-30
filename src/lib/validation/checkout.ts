@@ -13,7 +13,12 @@ import {
 } from "../domain/values";
 import { LICENSE_V1_VERSION } from "../legal/license-v1-summary";
 import { countryOf } from "../licensing/countries";
-import { DETAILS_COPY, INTENDED_USE_MAX, NAME_MAX } from "../licensing/details";
+import {
+  DETAILS_COPY,
+  INTENDED_USE_MAX,
+  NAME_MAX,
+  WEB_ADDRESS_RE,
+} from "../licensing/details";
 import { GENERIC_ERROR_MESSAGE } from "../result";
 import { tidyText } from "../text/tidy";
 import { EMAIL_MAX, EMAIL_RE } from "./email";
@@ -36,7 +41,10 @@ const fields = z.object({
   termKey: z.enum(TERM_KEYS),
   territoryKey: z.enum(TERRITORY_KEYS),
   territoryCode: z.string().max(40).nullable(),
-  licenseeName: name(DETAILS_COPY.licenseeEmpty),
+  licenseeName: name(DETAILS_COPY.licenseeEmpty).refine(
+    (licensee) => !WEB_ADDRESS_RE.test(licensee),
+    { error: DETAILS_COPY.licenseeWebAddress },
+  ),
   contactName: name(DETAILS_COPY.nameEmpty),
   // Trimmed first, as the page's blur check does: the stored form is normalizeEmail's.
   buyerEmail: z

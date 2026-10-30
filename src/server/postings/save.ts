@@ -44,6 +44,7 @@ import {
   PostingsLockedError,
 } from "./errors";
 import {
+  type AccountConnection,
   assertPostingAvailable,
   assertPostingsAvailable,
   auditNewlyVerified,
@@ -211,16 +212,20 @@ export type RowCheck = PostingCheckResult | UncheckedRow;
 
 /**
  * `checks` once their accounts are share-locked (lockConnectedAccounts, after the video's lock): a fresh Verified check
- * through an account no longer `connected` is check_failed, as if the check had failed, since a Disconnect committed
- * after it (03 §9.3) and may have deleted the post it found. A Disconnect after this waits for the write.
+ * through an account no longer `connected`, or connected again since (a Disconnect, then a Reconnect), is check_failed,
+ * as if the check had failed, since a Disconnect committed after it (03 §9.3) and may have deleted the post it found. A
+ * Disconnect after this waits for the write.
  */
 async function settleDisconnects<C extends RowCheck>(
   tx: Pick<typeof db, "select">,
   checks: readonly C[],
 ): Promise<(C | PostingCheckResult)[]> {
-  const verifiedThrough = (check: RowCheck) =>
+  const verifiedThrough = (check: RowCheck): AccountConnection | null =>
     typeof check === "object" && check.verification === "verified"
-      ? check.socialAccountId
+      ? {
+          id: check.socialAccountId,
+          connectedAt: check.verifiedAccountLinkedAt,
+        }
       : null;
   const connected = await lockConnectedAccounts(
     tx,
@@ -228,7 +233,7 @@ async function settleDisconnects<C extends RowCheck>(
   );
   return checks.map((check) => {
     const account = verifiedThrough(check);
-    return account === null || connected.has(account)
+    return account === null || connected.has(account.id)
       ? check
       : unverified("check_failed");
   });
