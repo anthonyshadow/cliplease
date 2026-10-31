@@ -13,3 +13,7 @@ export const requestReceivedSubject = REQUEST_EMAIL_COPY.receivedSubject;
 
 /** license-approved: "Approved: your license CL-7K3M-9QXA is ready". */
 export const licenseApprovedSubject = REQUEST_EMAIL_COPY.approvedSubject;
+
+/** request-declined: "Not approved: you weren't charged", whatever the reason. */
+export const requestDeclinedSubject = (): string =>
+  REQUEST_EMAIL_COPY.declinedSubject;

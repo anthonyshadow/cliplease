@@ -13,13 +13,12 @@ import { db } from "../../src/db/client";
 import {
   auditEvent,
   emailLog,
-  license,
   licenseRequest,
   stripeEvent,
   video,
 } from "../../src/db/schema";
-import type { License, LicenseRequest } from "../../src/db/schema/types";
-import type { Currency, TermKey } from "../../src/lib/domain/values";
+import type { LicenseRequest } from "../../src/db/schema/types";
+import type { TermKey } from "../../src/lib/domain/values";
 import { formatMoney } from "../../src/lib/format";
 import { computeEndsAt } from "../../src/lib/licensing/ends-at";
 import {
@@ -38,11 +37,9 @@ import {
   claimPaymentAction,
   reconcileFromStripe,
   reconcileStuckClaims,
+  releaseClaim,
 } from "../../src/server/licensing/state-machine";
-import type {
-  PaymentsDriver,
-  PaymentsEvent,
-} from "../../src/server/payments/driver";
+import type { PaymentsDriver } from "../../src/server/payments/driver";
 import { onWebhookEvent } from "../../src/server/payments/events";
 import { saveRateCard } from "../../src/server/pricing/rate-card";
 import { hashBuyerToken } from "../../src/server/tokens/buyer-token";
@@ -50,6 +47,7 @@ import { flushAfter } from "../helpers/after";
 import {
   approvableVideo,
   approvingCreator,
+  overdue,
   PAID_SOCIAL_YEAR_WORLDWIDE,
   waitingRequest,
 } from "../helpers/approval-fixtures";
@@ -61,31 +59,39 @@ import {
   publishVideo,
   requestRow,
 } from "../helpers/factories";
+import {
+  AFTER_FAILED,
+  captureLogEvents,
+  dropStderr,
+  endStderr,
+  recordStderr,
+} from "../helpers/logs";
 import { BARE_DOLLAR } from "../helpers/money";
+import { piEvent } from "../helpers/pi-events";
 import { readLatestEmail } from "../helpers/read-latest-email";
 import { readyLibraryVideo } from "../helpers/ready-videos";
 import {
-  createScriptedPayments,
-  type ScriptedPayments,
-} from "../helpers/scripted-payments";
+  endingsOf,
+  licensesOf,
+  onlyLicense,
+} from "../helpers/request-outcomes";
+import type { ScriptedPayments } from "../helpers/scripted-payments";
+import {
+  expectScriptPlayed,
+  installScriptedPayments,
+} from "../helpers/scripted-suite";
 
 // Approve: capture and issue the license (P18; 02 §8.2; 03 T4–T6, T10; 07 D24–D26, D29, D33, D71, D74, D94, D101; 01
-// J4.7, J8.2, J8.3, J8.8, J9.1, J9.3, J9.7; OQ-12, Q-123 a). The payments driver is the scripted double: the fake's
-// answers unless a test scripts getAuthorization; capture is spied on (never fault injection in the fake, 07 D35).
+// J4.7, J8.2, J8.3, J8.8, J9.1, J9.3, J9.7; OQ-12, Q-123 a). P19 adds the expiry a tap past the deadline schedules and
+// T7, a capture Stripe refuses for good (03 T7; 01 J8.9). The payments driver is the scripted double: the fake's
+// answers unless a test scripts getAuthorization or queues an outcome; capture is spied on (never fault injection in
+// the fake, 07 D35).
 
-const payments = vi.hoisted(() => ({
-  current: undefined as ScriptedPayments | undefined,
-}));
-vi.mock("@/server/payments/registry", async (importOriginal) => {
-  const registry =
-    await importOriginal<typeof import("@/server/payments/registry")>();
-  return {
-    ...registry,
-    paymentsDriver: (currency: Currency) =>
-      payments.current?.driverFor(currency) ??
-      registry.paymentsDriver(currency),
-  };
-});
+vi.mock("@/server/payments/registry", async (importOriginal) =>
+  (await import("../helpers/scripted-suite")).scriptedRegistry(
+    await importOriginal<typeof import("@/server/payments/registry")>(),
+  ),
+);
 
 // after() runs at once: license-approved goes out, and each test waits for it.
 vi.mock("next/server", async (importOriginal) => ({
@@ -114,14 +120,20 @@ vi.mock("@/lib/pricing/compute-quote", async (importOriginal) => {
 let scripted: ScriptedPayments;
 let captures: MockInstance<PaymentsDriver["capture"]>;
 beforeEach(() => {
-  scripted = createScriptedPayments();
-  payments.current = scripted;
+  scripted = installScriptedPayments();
   captures = vi.spyOn(scripted.driverFor("cad"), "capture");
   codes.next = [];
+  recordStderr(AFTER_FAILED);
 });
 afterEach(async () => {
-  await flushAfter();
-  vi.restoreAllMocks();
+  try {
+    await flushAfter();
+    // No after() task failed: afterResponse logs a failure instead of rejecting.
+    endStderr();
+  } finally {
+    dropStderr();
+    vi.restoreAllMocks();
+  }
 });
 
 /** A creator who can approve, their published video and one waiting request on it. */
@@ -132,33 +144,10 @@ async function waiting(overrides: Partial<LicenseRequest> = {}) {
   return { creator, actor, live, row, token };
 }
 
-/** Puts the request's deadline a minute behind the database's clock, as the claim's guard reads it; capture_before
- * stays 7 days out (license_request_hold_margin). */
-async function pastDeadline(id: string) {
-  await db
-    .update(licenseRequest)
-    .set({
-      authorizedAt: sql`now() - interval '1 hour'`,
-      expiresAt: sql`now() - interval '1 minute'`,
-    })
-    .where(eq(licenseRequest.id, id));
-}
-
 /** A license with a known code on another request, so the next insert with it collides. */
 async function takenCode(): Promise<string> {
   const { row } = await waiting();
   return (await insertLicense(row)).code;
-}
-
-const licensesOf = (requestId: string): Promise<License[]> =>
-  db.select().from(license).where(eq(license.licenseRequestId, requestId));
-
-async function onlyLicense(requestId: string): Promise<License> {
-  const rows = await licensesOf(requestId);
-  expect(rows).toHaveLength(1);
-  const [row] = rows;
-  if (!row) throw new Error("no license");
-  return row;
 }
 
 const approvedEmails = (requestId: string) =>
@@ -181,14 +170,15 @@ const auditsFor = (entityId: string) =>
 /** The capture calls' keys, in order. */
 const captureKeys = () => captures.mock.calls.map((call) => call[1]);
 
-const succeededEvent = (requestId: string): PaymentsEvent => ({
-  id: `evt_test_${randomUUID()}`,
-  livemode: false,
-  appUrl: env.APP_URL,
-  type: "payment_intent.succeeded",
-  paymentIntentId: `pi_fake_${requestId}`,
-  requestId,
-});
+/** The request's email templates, in order. */
+async function emailTemplatesOf(requestId: string): Promise<string[]> {
+  const rows = await db
+    .select({ template: emailLog.template })
+    .from(emailLog)
+    .where(eq(emailLog.entityId, requestId))
+    .orderBy(emailLog.template);
+  return rows.map((r) => r.template);
+}
 
 /** A claim taken now for `action`, as the claim's holder fences with it. */
 async function claimed(requestId: string, action: "capture" | "decline") {
@@ -373,16 +363,39 @@ describe("Approve (02 §8.2; 01 J8.2, J9.1, J9.3)", () => {
     expect(captures).not.toHaveBeenCalled();
   });
 
-  it("refuses a request past its deadline without a claim (01 J8.6)", async () => {
+  it("refuses a request past its deadline without a capture claim, then expires it after the response (01 J8.6; owner answer Q-140 a)", async () => {
     const { actor, row } = await waiting();
-    await pastDeadline(row.id);
+    await overdue(row.id);
     expect(await approveLicenseRequest(row.id, actor)).toEqual({
       ok: false,
       reason: "expired",
       status: "awaiting_approval",
     });
-    expect((await requestRow(row.id)).stripeAttempt).toBe(0);
+    // The expiry the tap found due, as the system's work after the response (02 §8.4): attempt 1 is the expire claim's.
+    await flushAfter();
+    expect(await requestRow(row.id)).toMatchObject({
+      status: "expired",
+      statusReason: "deadline",
+      expiredAt: expect.any(Date),
+      paymentAction: "expire",
+      stripeAttempt: 1,
+    });
+    expect(scripted.cancels()).toEqual([
+      [`pi-cancel:${row.id}:expire:1`, "abandoned"],
+    ]);
     expect(captures).not.toHaveBeenCalled();
+    expect(await endingsOf(row.id)).toEqual([
+      {
+        data: {
+          from: "awaiting_approval",
+          to: "expired",
+          event: "expired",
+          source: "lazy",
+        },
+        actorType: "system",
+      },
+    ]);
+    expectScriptPlayed();
   });
 
   it("tells another creator, or an unknown id, nothing and changes nothing", async () => {
@@ -411,7 +424,7 @@ describe("Approve (02 §8.2; 01 J8.2, J9.1, J9.3)", () => {
   it("reports an approved request as decided when tapped again later, past its deadline: no capture", async () => {
     const { actor, row } = await waiting();
     expect((await approveLicenseRequest(row.id, actor)).ok).toBe(true);
-    await pastDeadline(row.id);
+    await overdue(row.id);
     captures.mockClear();
     expect(await approveLicenseRequest(row.id, actor)).toEqual({
       ok: false,
@@ -545,6 +558,135 @@ describe("Approve (02 §8.2; 01 J8.2, J9.1, J9.3)", () => {
   });
 });
 
+describe("T7: a capture Stripe refuses for good (03 T7; 07 D25, D30; 01 J8.9)", () => {
+  it("cancels the hold under the capture claim taken again, then fails the request with Stripe's code", async () => {
+    const { actor, row } = await waiting();
+    scripted.next("capture", { kind: "permanent", code: "amount_too_large" });
+    expect(await approveLicenseRequest(row.id, actor)).toEqual({
+      ok: false,
+      reason: "capture_failed",
+      status: "capture_failed",
+    });
+    expect(captureKeys()).toEqual([`pi-capture:${row.id}:1`]);
+    expect(scripted.cancels()).toEqual([
+      [`pi-cancel:${row.id}:capture_failed:2`, "abandoned"],
+    ]);
+    // The claim taken again committed before the cancel (07 D24): the cancel has a key of its own.
+    expect(scripted.callsOf("cancel")[0]?.committed).toMatchObject({
+      status: "awaiting_approval",
+      paymentAction: "capture",
+      stripeAttempt: 2,
+    });
+    expect(await requestRow(row.id)).toMatchObject({
+      status: "capture_failed",
+      statusReason: "capture_error:amount_too_large",
+      captureFailedAt: expect.any(Date),
+      paymentAction: "capture",
+      stripeAttempt: 2,
+    });
+    expect(scripted.piStatus(`pi_fake_${row.id}`)).toBe("canceled");
+    expect(await licensesOf(row.id)).toEqual([]);
+    expect(await endingsOf(row.id)).toEqual([
+      {
+        data: {
+          from: "awaiting_approval",
+          to: "capture_failed",
+          event: "capture_failed",
+        },
+        actorType: "creator",
+      },
+    ]);
+    // capture_failed emails nobody in CORE (07 D34): only the authorization's two.
+    await flushAfter();
+    expect(await emailTemplatesOf(row.id)).toEqual([
+      "request-new",
+      "request-received",
+    ]);
+    expectScriptPlayed();
+  });
+
+  it("keeps the claim taken again while T7's cancel isn't ok, until the stuck-claim reconcile releases it (07 D26)", async () => {
+    const { actor, row } = await waiting();
+    scripted.next("capture", { kind: "permanent", code: "amount_too_large" });
+    scripted.next("cancel", "transient");
+    const logged = captureLogEvents("license_request.capture_cancel_failed");
+    // Nothing says "not charged" before Stripe has released the hold: Processing… under the new claim.
+    expect(await approveLicenseRequest(row.id, actor)).toEqual({
+      ok: false,
+      reason: "not_actionable",
+      status: "awaiting_approval",
+    });
+    expect(logged().events).toEqual([
+      expect.objectContaining({
+        requestId: row.id,
+        kind: "transient",
+        stripeCode: "StripeConnectionError",
+      }),
+    ]);
+    expect(await requestRow(row.id)).toMatchObject({
+      status: "awaiting_approval",
+      statusReason: null,
+      paymentAction: "capture",
+      stripeAttempt: 2,
+    });
+    expect(scripted.cancels()).toEqual([
+      [`pi-cancel:${row.id}:capture_failed:2`, "abandoned"],
+    ]);
+    // Stripe still holds the card: the reconcile lets the claim go, and the creator can tap again.
+    expect(
+      await reconcileStuckClaims({ requestId: row.id, olderThanMinutes: 0 }),
+    ).toBe(1);
+    expect(await requestRow(row.id)).toMatchObject({
+      status: "awaiting_approval",
+      paymentAction: null,
+      paymentActionAt: null,
+      stripeAttempt: 2,
+    });
+    expect(scripted.callsOf("cancel")).toHaveLength(1);
+    expect(await licensesOf(row.id)).toEqual([]);
+    expectScriptPlayed();
+  });
+
+  it("stores a code that doesn't look like Stripe's as capture_error:unknown", async () => {
+    const { actor, row } = await waiting();
+    scripted.next("capture", { kind: "permanent", code: "Bad Code!" });
+    expect(await approveLicenseRequest(row.id, actor)).toEqual({
+      ok: false,
+      reason: "capture_failed",
+      status: "capture_failed",
+    });
+    expect(await requestRow(row.id)).toMatchObject({
+      status: "capture_failed",
+      statusReason: "capture_error:unknown",
+    });
+    expect(scripted.cancels()).toEqual([
+      [`pi-cancel:${row.id}:capture_failed:2`, "abandoned"],
+    ]);
+    expectScriptPlayed();
+  });
+
+  it("cancels nothing for a permanent failure reported under a claim the caller no longer holds", async () => {
+    const { row } = await waiting();
+    const stale = await claimed(row.id, "capture");
+    expect(await releaseClaim(row.id, stale)).toBe(true);
+    const current = await claimed(row.id, "capture");
+    expect(
+      await reconcileFromStripe(row.id, {
+        claim: stale,
+        captureOutcome: { ok: false, kind: "permanent", code: "card_declined" },
+      }),
+    ).toBe("unchanged");
+    expect(scripted.callsOf("cancel")).toEqual([]);
+    expect(await requestRow(row.id)).toMatchObject({
+      status: "awaiting_approval",
+      paymentAction: "capture",
+      paymentActionAt: current.claimedAt,
+      stripeAttempt: 2,
+    });
+    expectScriptPlayed();
+  });
+});
+
 describe("reconcileFromStripe's base branches (07 D25; 03 T5, T6, T10)", () => {
   it("succeeded on a claimed request: T5, one license, and the buyer's email", async () => {
     const { row } = await waiting();
@@ -588,7 +730,7 @@ describe("reconcileFromStripe's base branches (07 D25; 03 T5, T6, T10)", () => {
 
   it("canceled with an expire claim → expired (deadline)", async () => {
     const { row } = await waiting();
-    await pastDeadline(row.id);
+    await overdue(row.id);
     const claim = await claimPaymentAction(row.id, "expire");
     expect(claim?.paymentAction).toBe("expire");
     scripted.script({ getAuthorization: { status: "canceled" } });
@@ -692,9 +834,9 @@ describe("payment_intent.succeeded and Approve together (01 J9.7)", () => {
   it("webhook first: T5 with no claim, then Approve finds it decided", async () => {
     const { actor, row } = await waiting();
     scripted.script({ getAuthorization: { status: "succeeded" } });
-    expect(await onWebhookEvent(succeededEvent(row.id), "cad")).toBe(
-      "processed",
-    );
+    expect(
+      await onWebhookEvent(piEvent("payment_intent.succeeded", row.id), "cad"),
+    ).toBe("processed");
     const after = await requestRow(row.id);
     expect(after).toMatchObject({
       status: "approved",
@@ -718,9 +860,9 @@ describe("payment_intent.succeeded and Approve together (01 J9.7)", () => {
     expect((await approveLicenseRequest(row.id, actor)).ok).toBe(true);
     const audits = await auditsFor(row.id);
     scripted.script({ getAuthorization: { status: "succeeded" } });
-    expect(await onWebhookEvent(succeededEvent(row.id), "cad")).toBe(
-      "processed",
-    );
+    expect(
+      await onWebhookEvent(piEvent("payment_intent.succeeded", row.id), "cad"),
+    ).toBe("processed");
     await flushAfter();
     expect(await licensesOf(row.id)).toHaveLength(1);
     expect(await approvedEmails(row.id)).toHaveLength(1);
@@ -732,7 +874,7 @@ describe("payment_intent.succeeded and Approve together (01 J9.7)", () => {
     scripted.script({ getAuthorization: { status: "succeeded" } });
     const [approved] = await Promise.all([
       approveLicenseRequest(row.id, actor),
-      onWebhookEvent(succeededEvent(row.id), "cad"),
+      onWebhookEvent(piEvent("payment_intent.succeeded", row.id), "cad"),
     ]);
     expect(
       approved.ok ||
@@ -748,7 +890,7 @@ describe("payment_intent.succeeded and Approve together (01 J9.7)", () => {
   it("a webhook whose retrieve fails stays unprocessed, so Stripe sends it again (02 §8.1 step 5)", async () => {
     const { row } = await waiting();
     scripted.script({ getAuthorization: new Error("stripe down") });
-    const event = succeededEvent(row.id);
+    const event = piEvent("payment_intent.succeeded", row.id);
     await expect(onWebhookEvent(event, "cad")).rejects.toThrow("stripe down");
     const [stored] = await db
       .select()

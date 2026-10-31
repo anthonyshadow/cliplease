@@ -19,6 +19,16 @@ export const pressLink = (page: Page, name: string) =>
 export const isServerAction = (request: Request) =>
   request.method() === "POST" && request.headers()["next-action"] !== undefined;
 
+/**
+ * router.refresh()'s fetch (AutoRefresh's focus and 30 s refreshes): an RSC GET with no prefetch header, as a client
+ * navigation's is. A test lets it end before it leaves the page: WebKit cancels the old page's fetches once a navigation
+ * starts, and Next answers a failed one by loading the page itself, which interrupts the test's goto.
+ */
+export const isRouterRefresh = (request: Request) =>
+  request.method() === "GET" &&
+  request.headers().rsc === "1" &&
+  request.headers()["next-router-prefetch"] === undefined;
+
 /** Settles once the first request from now on that `match` takes has ended either way: finished, or failed. */
 export function requestEnded(
   page: Page,

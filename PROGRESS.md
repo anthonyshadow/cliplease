@@ -34,7 +34,7 @@
 -->
 
 ## Status
-Current prompt: P19 · Last verified: P18 · Blockers: none
+Current prompt: P19b · Last verified: P19 · Blockers: none
 Gates: A (P22) [ ] · R (P22h) [ ] · B (P25) [ ] · C (P27) [ ] · S12 Stripe renewal sign-off (P25d, not a gate) [ ]
 Later: P34 (USD) not run · P05b (teens) not scheduled
 
@@ -212,13 +212,194 @@ D5); their follow-ups for prompts still to do are under "Follow-ups from archive
 - Open questions: none (Q-139–Q-141 answered).
 - Follow-ups for later prompts: **P19**: Decline in `InboxRow`'s actions grid (`col-start-1` below md, left of Approve from md) and in `RequestActions` (`secondary lg`); its outcomes in `approveOutcome`'s sibling and `RowOutcome`; `declineLicenseRequest` and the expire path use `claimPaymentAction`, `releaseClaim` and `reconcileFromStripe(id, { actor, claim })` (P19's `captureOutcome` joins that options object); `finishCanceled`'s `declineReasonFor` is P19g's to replace; the T7 permanent branch, `handlePaymentIntentCanceled`, the scripted double's capture outcomes and the D25 matrix; page-level `reconcileStuckClaims` on /r, the Inbox and the request page, and lazy expiry; the approve-after-deadline line says only "This request expired." until the expiry is stored (Q-140, 07 D25), so P19's question 1 covers this surface too; `retryEmailOutbox` and `reconcileStuckClaims({ olderThanMinutes: 10, actor: cron })` in the cron (it returns the claims resolved). **P19b**: the `creator_transfer` insert in `issueLicense`'s shared tail (both the insert and the existing-license path) and `after(sendCreatorTransfer)` in `finishCapture` after the commit, and in `reconcileFromStripe`'s approved + succeeded branch; on History, "under License {code} issued" means under the pill-and-code line (05 callout 12). **P19c**: auto-approve passes the system actor to `approveLicenseRequest` (today a non-creator actor gets `not_actionable`/null) and uses `finishCapture`; `not_actionable` with `awaiting_approval` means a claim is running. **P19g**: the claim's video lock and `assertStillLicensable` (Q-122 a), `exclusive_conflict` in `ApproveRefusal` and `approveOutcome`, the snapshot's `exclusive` from the request (`LICENSE_CODE_PATTERN` is in snapshot.ts). **P20**: /r's Get file and license button (Q-141), " · View license" after "License {code} issued" on held rows and the request page, History's View license; `licensePath`/`verifyPath` exist; /l, the PDF and /verify map snapshot postings with `hasLink: url !== null`, `removed: false`, `noLongerLinked: false` (the record keeps neither a hidden link nor a disconnect); the summary's territory sentence reads `license_request.territory_code` (the snapshot keeps the label and detail only). **P21**: Events highlights `license_request.money_moved_late` and `license_request.issue_failed`. **P22b**: `publicStatus` gains `startsAt`/`upcoming` (07 D117); `createRenewalPlan` in `issueLicense`'s shared tail with its actor. **P22c**: `issueLicense`'s `saved` joins its options object. **P25**: the real branch for a PaymentIntent that succeeded during checkout (Q-123 a still records it; P25's stop-and-ask). **Plan-kit fixes:** P18 says "per your answer to Q1" and the AC "matches the Q1 answer" for money_moved_late (OQ-12, an owner answer) and "the Q2 string" for `original_missing` (question 1); "keep P17's Get file and license link" (P17 renders none); the out-of-scope line puts `tests/helpers/scripted-payments.ts` in P19 (it exists since P16b; P19 extends it); P18's Step 0 and Verify run commands AGENTS §2 replaces; 02 §5.7/§8.2 give `reconcileFromStripe(requestId)` and `issueLicense(tx, id, startsAt)` without the actor their audits need, `ON CONFLICT (code)` where the prompt has none, and `applyTransition` before `issueLicense`; 02 §6.1 and 06 §7 say the actions file exports `maxDuration` (a "use server" file can't); 06 §7 says the license starts now; 07 D15 cites D51 and `show_platform_link` (D43, per-posting `show_link`); 07 D49 prints a bare `$` in the toast (D98/D99); P19g's greps use single quotes (`'capture'`, `'auto_approve'`) where the code has double; P20b expects `http://localhost:3000` in a test (the test APP_URL is 3100).
 
-### P19 — Decline, expiry and the money-safety matrix · [ ] to do
+### P19 — Decline, expiry and the money-safety matrix ✅ (2026-10-30)
 > 120 min · Depends on: P18 · Record: the overdue-copy answer, any additive `reconcileFromStripe` argument, the money-matrix row count, the hand-offs to P21 and P22 (OQ-31 is an owner answer)
 - Done:
+  - **Step 0** (Q-88): `bun run check:step0` on P18 → typecheck, lint (738 files), token lint, invariant lint, schema drift and unit (3472) green; integration and e2e not re-run (the code was that of the last green `check:full`). Also green: `ends-at` in both test zones, `settled-rows` (8) and `bun run test:int approve` (29). The no-money-call-in-a-transaction grep printed nothing. In the dev DB the newest licenses have `starts_at = approved_at = payment_action_at` and `stripe_attempt = 1`.
+  - **Audit:** a workflow of 5 area readers (money path, expiry layers and cron, creator UI, buyer and email, test plan), each checked by a skeptic, then a completeness critic. It read the prompt, 01–08, later prompts' Step 0 greps and the code, and produced about 90 findings, nearly all confirmed or adjusted into the build below. The owner answered Q-142–Q-144 in chat, all a.
+  - **Money core** (`src/server/licensing/state-machine.ts`, `requests.ts`, `approve.ts`):
+    - `declineLicenseRequest(id, actor, reason = "creator")` returns `DeclineResult` (`src/lib/licensing/request-dto.ts`). Steps: scope check, stuck claim reconciled, an overdue request expired as the system, the `decline` claim, cancel `pi-cancel:<id>:decline:<n>` (`requested_by_customer`), then `finishCanceled`.
+    - `expireLicenseRequest(id, actor)`: the `expire` claim (guard `now() >= expires_at`), cancel `pi-cancel:<id>:expire:<n>` (`abandoned`), then `finishCanceled` with `deadline`.
+    - `expireDueRequests({ requestId?, creatorId?, limit, actor, stopAt? })`: due rows are waiting, unclaimed and overdue on the DB clock, oldest deadline first, each in its own try/catch.
+    - `handlePaymentIntentCanceled(id)`, routed from `payment_intent.canceled` (a request still in checkout stays "ignored").
+    - A cancel that isn't ok goes to `reconcileFromStripe` with its claim, so the claim is released while Stripe still holds the card.
+    - `finishCanceled` is exported, takes `statusReason` and returns null when its fence is lost.
+    - T7: `reconcileFromStripe(id, { actor?, claim?, captureOutcome? })` takes the caller's permanent capture failure. It re-fences the claim (`refenceClaim`), cancels under `pi-cancel:<id>:capture_failed:<n>` and finishes `capture_failed` with `capture_error:<code>`.
+    - `reconcileStuckClaims` gains `creatorId` and `stopAt`.
+    - Approve schedules the expiry in after() on an `expired` answer.
+    - `afterResponse` logs a task's rejection (`effects.after_failed`).
+    - New actor `CRON`.
+    - The request-declined email in `EMAILS.declined`.
+  - **Display:**
+    - `displayStatus({ status, paymentAction, overdue })`, with `overdue` from the queries' SQL on the database's clock (Q-142 a). The request page's payouts Notice and `RequestFacts` key on it.
+    - `waitingSummary`'s soonest deadline counts only deadlines still ahead, so the payouts Banner never names a passed one.
+  - **Lazy layers** (`src/server/licensing/lazy.ts`):
+    - `settleCreatorRequests` runs on /dashboard and /dashboard/requests/[id]: it awaits the stuck-claim reconcile with a 5 s budget, then runs `expireDueRequests` in after().
+    - `settleBuyerRequest` runs in `getBuyerRequest` after the key check, on a waiting request that reads Processing… or Expired, which is then read again. So /r awaits its own expiry and its title and body agree.
+  - **Email:**
+    - `src/emails/request-declined.tsx` with its preview; subject "Not approved: you weren't charged" (`requestDeclinedSubject`); /r's body through the shared `declinedView` (`src/lib/licensing/request-status.ts`).
+    - `REQUEST_EMAIL_COPY.declinedBody` for both bodies (`creator`, `video_disabled`).
+    - Exhaustive template switches.
+    - No expiry email.
+  - **Cron:**
+    - `GET /api/cron/expire-requests` (`src/app/api/cron/expire-requests/route.ts`): `maxDuration = 60` and a 45 s budget.
+    - Steps reconcile (10 min, `CRON`) → expire (100) → email retry (50). A step reruns only after a full batch, and none starts a row after `stopAt`.
+    - Answers: 401 without `Bearer <CRON_SECRET>`; 200 `{ expired, reconciled, emailsSent }` with `no-store`; 500 `cron_failed`.
+    - `isCronAuthorized` (`src/server/cron/auth.ts`, constant-time).
+    - `retryEmailOutbox({ limit, stopAt? })`.
+  - **Dev clock:** `scripts/dev-expire-request.ts <requestId> [--no-cron]`, development and test only. It moves `expires_at` to 1 ms after the authorization, calls the cron route and prints one JSON line. README "## Local development".
+  - **UI:**
+    - Decline (`secondary sm`) in `InboxRow`'s actions grid: `col-start-1` and half width below md; Details · Decline · Approve from md.
+    - Decline (`secondary`) left of Approve in `RequestActions`.
+    - `useRequestActions` (`src/components/inbox/use-request-actions.ts`, was `use-approve.ts`) holds one pending state for both buttons.
+    - `declineOutcome`, and the refusal helpers shared with `approveOutcome` (`src/lib/licensing/inbox.ts`).
+    - The `declineRequest` Server Action (`redactErrors`, `refresh()`; it never takes a reason).
+    - A settled declined, expired or failed row and an overdue row drop "You get".
+    - A late Approve settles with the «Expired» pill.
+    - A kept line (retry, payouts, missing original) shows only while the request still waits.
+  - **Invariant lint:** `payments-in-tx` also follows same-file functions that reach Stripe (`markReachers`).
+  - **Review:** a workflow of 5 dimension reviewers (money, security, UI, email, cron), each checked by a skeptic, found 9 low findings. All 9 are applied:
+    - the settle budget;
+    - README's `env -u CRON_SECRET` for the test-database run;
+    - the late-Approve pill;
+    - the kept-line guard;
+    - the claim comments;
+    - the Banner's soonest deadline;
+    - the email retry's `stopAt`;
+    - the reconcile-first cron order;
+    - the cron hand-off under Follow-ups.
+    Also renamed: `capture_cancel_failed` logs Stripe's code as `stripeCode`, since log lines redact `code`.
+  - **Simplify (owner request, before this commit):** 4 reviewers (reuse, simplification, efficiency, altitude) over the P19 diff (61 files), each checked by a skeptic. They raised 48 findings; the skeptics kept 27, which I deduplicated across angles. Applied with no behaviour, copy or assertion change:
+    - The deadline expression is written once (`src/server/licensing/deadline.ts`).
+    - `reconcileIfStuck` serves Approve and Decline.
+    - /r reads through the keyed query and settles only what reads Processing… or Expired: a waiting tick costs 2 round trips instead of 4.
+    - Decline answers from its own finish.
+    - `finishCanceled` builds its patch in one exhaustive switch.
+    - `handlePaymentIntentCanceled(requestId)` has the spec's signature.
+    - Two dead exports are gone.
+    - The test suites share their scripted-double harness (`tests/helpers/scripted-suite.ts`), their request-outcome readers (`tests/helpers/request-outcomes.ts`), the stderr recorder (`tests/helpers/logs.ts`), `scripted.cancels()`, `overdue(id, minutes)` and `piEvent`.
+    - The displayStatus cases are one table.
+    The skips and their reasons are in the decisions table (P19 (simplify)).
+  - **after() failures (owner request, before this commit):** approve, authorization and email-outbox now record stderr from beforeEach and fail a test whose after() task failed. Since P19, `afterResponse` logs such a failure instead of rejecting, so `flushAfter` alone no longer shows one. `captureLogEvents` became nest-safe, so the suites' own captures run inside that recording (`tests/unit/log-capture.test.ts`). With every after() task made to fail, 26 of their 99 tests go red.
+  - **Tests:**
+    - Unit:
+      - `src/server/cron/auth.test.ts` (12), `src/app/api/cron/expire-requests/route.test.ts` (6), `tests/unit/dev-expire-request.test.ts` (15), `src/emails/request-declined.test.tsx` (8), `tests/unit/lint-invariants.test.ts` (10 → 12) and `tests/unit/log-capture.test.ts` (4: a capture nested in a recording).
+      - Extended: `inbox.test.ts` (declineOutcome; the late-Approve pill; the kept line), `inbox-row.test.tsx`, `request-actions.test.tsx`, `transitions.test.ts` (displayStatus as one table: every claim × overdue), `request-status.test.ts` and `request-status-view.test.tsx`.
+    - Scripted double (`tests/helpers/scripted-payments.ts`, additive): per-PaymentIntent state, queued outcomes, hooks, holds and the 07 D25 invariant, checked at every money call, with `cancels()`. New helpers: `tests/helpers/pi-events.ts`; `overdue(id, minutes)` and `claimedMinutesAgo` in approval-fixtures; `tests/helpers/scripted-suite.ts` (the registry seam, the install, the per-test checks and the shared teardown); `tests/helpers/request-outcomes.ts` (licenses, endings, outcome emails, Stripe events); and the stderr recorder with `AFTER_FAILED` in `tests/helpers/logs.ts`.
+    - [int] `money-matrix.test.ts`: **42 tests**, made of 24 matrix rows, 6 named cases and 12 extras.
+      - Matrix rows: {capture, decline, expire} × {ok, transient, permanent, ambiguous} × webhook {after, during}.
+      - Named cases: J8.14's capture that times out but succeeded, a capture after an expire claim, and a decline racing a late succeeded, each with the webhook after or during.
+      - Extras (E1–E8): retries under their own keys, the stuck-claim releases, T7, a stale claim, `money_moved_late`.
+      - Planned: 38.
+    - [int] `decline-expiry.test.ts` (53): Decline incl. J8.5; past the deadline; the J8.8 races; expire and the sweep incl. J8.15; `payment_intent.canceled` incl. J8.7 and `money_moved_late`; /r; the creator layers; `forceOverdue`; the action.
+    - [int] `expire-requests-cron.test.ts` (7): 401s, the D/S/F/E run, the no-spin run, reconcile-then-expire in one run.
+    - [int] `approve.test.ts` 29 → 33 (T7; the scheduled expiry). `email-outbox.test.ts` 16 → 25 (request-declined; the retry's `stopAt`). `inbox-queries.test.ts` 14 → 17 (overdue reads; the soonest deadline). `authorization.test.ts` (one test retitled).
+    - e2e `inbox.responsive.spec.ts`:
+      - Its first test now also declines the second waiting row, checking the line, toast, pill and focus; Decline's box at every width; the row keeping its place until a focus refresh; History; the declined /r with a neutral heading; and the request-declined email.
+      - New test: an overdue request's /r expires it before rendering and reads "No answer in time" at every width.
+    - Mutation checks, each restored and byte-compared afterwards: 3 + 20 + 22 product mutations caught by the [int] slices, 4 by the e2e spec, and 3 (one per review fix) by the new tests.
 - Verified:
-- Decisions:
-- Open questions:
+  - `bun run typecheck` ✅ · `bun run lint` ✅ (756 files) · `bun run lint:tokens` ✅ (prints nothing) · `bun run lint:invariants` ✅ (prints nothing) · `bun run test` ✅ (176 files, 3562 tests).
+  - `bun run test:int` ✅ (41 files, 822 tests: decline-expiry 53, money-matrix 42, approve 33, authorization 41, email-outbox 25, inbox-queries 17, expire-requests-cron 7). Also green on repeated runs: money-matrix 5×, decline-expiry 15×, the whole suite twice.
+  - One `bun run test:e2e tests/e2e/request-received.spec.ts tests/e2e/inbox.responsive.spec.ts` ✅ (10 passed: request-received on both behavior projects, inbox.responsive's 2 tests on all four, 07 D154).
+  - `bun run check:full` ✅ before the simplify pass (lint 752 files; 3553 unit in 175 files; 822 integration in 41 files; 259 e2e passed, 3 skipped by project), again after `.env.test`'s test-only CRON_SECRET was rotated, after the simplify pass (lint 755 files; 3558 unit in 175 files; 822 integration in 41 files; 259 e2e passed, 3 skipped by project), and after the after()-failure watch, the last change (lint 756 files; 3562 unit in 176 files; 822 integration in 41 files; 259 e2e passed, 3 skipped by project), recorded in `.data/last-green`. The simplify pass's test refactor was diff-checked against a snapshot: same test titles and counts in every [int] file, same pi-cancel/pi-capture literals, same expected values.
+  - Verify greps:
+    - `grep -rn -A25 "db.transaction" src/server/licensing` has no capture/cancel/getAuthorization hit. A balanced-paren scan of all 7 `.transaction(` callbacks in src/server/licensing and src/server/payments finds no driver, reconcile, claim, expire or decline call.
+    - `grep -rn "scripted-payments" src` prints nothing.
+    - `rg request-expired src` prints nothing.
+  - Verify on the dev server (maya, the fake driver):
+    - **Requests:** signed out, three requests at 375 × 812 (Organic social repost · 30 days · Worldwide, CA$288.75, fake **Pay**), each → /r "Waiting for @maya".
+    - **Cron and the dev clock:**
+      - `curl` without the bearer → 401.
+      - `bunx tsx scripts/dev-expire-request.ts <the third>` → one JSON line ending `"cron":{"expired":1,"reconciled":0,"emailsSent":0}`.
+      - The bearer curl (the secret read from `.env.local`, never printed) → `{"expired":0,"reconciled":0,"emailsSent":0}`, HTTP 200.
+      - That request's /r → "No answer in time" and "@maya didn't answer by Fri 30 Oct, 7:44 PM EDT. You haven't been charged, and the hold on your card has been released.", with no countdown and no back link.
+    - **Tap decline at 375** (signed in as maya):
+      - "Inbox. 2 waiting for you.", Decline the left half beside Approve.
+      - Tap → "Declining…" with Approve disabled.
+      - Then the row stays in place: "First snow · CA$262.50" (no You get), "Declined. The buyer wasn't charged." wrapping inside the row, and the «Declined» pill. "Waiting 1" updates at once. The focus is on the row's status, described by the line, with no horizontal scroll.
+      - A window focus → the row leaves Waiting.
+      - History: it reads «Declined», and the expired one «Expired» with "Expired. No answer by Fri 30 Oct, 7:44 PM EDT. The buyer wasn't charged."
+    - **Keyboard decline at 768** (the second request's page): Tab order Decline → Approve. Enter on Decline → the focus on the line "Declined. The buyer wasn't charged.", the toast with the same sentence, then the «Declined» pill, the facts without You get / Payment / Answer by, and no buttons.
+    - **The declined /r** (from its email's link):
+      - "Not approved" with the 01 §4.8 body, the heading in `--ink` (#111 light, #f5f5f5 in dark at 1280), no countdown and no back link.
+      - No horizontal scroll at 320, 375, 1280, 1920 or 2560; the summary column is 640 px from 1920.
+    - **A fourth request, Inbox at 1280 dark:**
+      - Details · Decline · Approve on one line, Approve rightmost with 12 px gaps, at 768, 1024, 1280, 1920 and 2560; half widths at 320; no horizontal scroll at any of them.
+      - Decline → the row stays with the line and the pill top-right. History in dark mode lists all of them.
+    - **Emails:** one `request-declined` file per declined request (`grep -l <id>` finds exactly one each; none for the expired one). Subject "Not approved: you weren't charged", /r's body, the title and scope, the buyer's /r link, no bare `$`.
+    - **SQL** (dev DB, newest first): `expired`/`deadline`/`expire`/`1`, `declined`/`creator`/`decline`/`1`, `declined`/`creator`/`decline`/`1`.
+    - **Errors:** no page console errors (only Node's Postgres SSL-mode warning Next forwards from the server), and no server errors.
+- Decisions: see the Decisions table (2026-10-30, P19) in `progress/decisions.md`. The overdue copy is Q-142 a. The additive argument is `reconcileFromStripe(id, { actor?, claim?, captureOutcome? })`. OQ-31 is an owner answer (Decline is one tap, no confirm). There are no creator-fixable capture codes (07 D74), so every permanent capture failure ends in T7.
+- Open questions: none (Q-142–Q-144 answered).
 - Follow-ups for later prompts:
+  - **P19b, P19c, P19g, P21, P22e** (suites on the scripted double):
+    - Install it with `tests/helpers/scripted-suite.ts`: the one-statement registry `vi.mock` in its header, then `scripted = installScriptedPayments()` in beforeEach.
+    - Then `afterEach(finishScriptedTest)`, with `recordStderr(AFTER_FAILED)` in beforeEach; or call `expectScriptPlayed()` and `expectInvariant(id)` yourself.
+    - Read endings with `tests/helpers/request-outcomes.ts` and cancels with `scripted.cancels()`.
+    - Any [int] suite whose code schedules after() work should watch for a failed task, as approve, authorization and email-outbox do: `recordStderr(AFTER_FAILED)` in beforeEach, then `endStderr()` after `flushAfter()` and `dropStderr()` in afterEach's finally. Its own `captureLogEvents` calls nest inside that recording.
+  - **P19b, P19c, P33a** (cron):
+    - Each new step goes after the reconcile and expiry steps (02 §8.4) and takes `stopAt`:
+      - P19b: `sweepMoneyMovements`, `moneyMovements`.
+      - P19c: `retryAutoApprovals`, `autoApprovals`, before the email retry.
+      - P33a: `abandonStaleCheckouts`, `abandoned`, before the email retry, with its one-shot `cleaned` after the loop.
+    - Each also updates `src/app/api/cron/expire-requests/route.test.ts`: a `vi.mock` for the step's module; its key in the exact JSON text, both `toEqual` objects and the call-order list; the 401 not-called checks.
+    - Each also updates the one `toEqual` in `tests/integration/expire-requests-cron.test.ts`. Its other runs assert zeros with `expectNothingDone` or a sum, so a new key must be 0 there.
+    - "Nothing is due" means every step returned less than its limit.
+  - **P19c:**
+    - `displayStatus`'s `overdue` input is where "processing for auto rows that aren't overdue" goes.
+    - The /dashboard lazy call is `settleCreatorRequests`.
+    - Auto-approve passes the system actor (`approveLicenseRequest` answers a non-creator `not_actionable`/null today).
+  - **P19g:**
+    - Keep the decline reason inside `finishCanceled`'s transaction, before `lockHeld`.
+    - Extend `declineScope` with the system actor and the exclusive conflict.
+    - `declinedView` and `REQUEST_EMAIL_COPY.declinedBody` gain the exclusive body.
+    - `inbox.responsive.spec.ts` now pins two waiting rows: h1 2 → 1, "Waiting 2" → "Waiting 1", the `[data-licensee]` order and History 2. An exclusive row bought before the first Inbox visit changes those.
+  - **P21:**
+    - `declineLicenseRequest(id, admin, "video_disabled")` needs `declineScope` extended.
+    - `expireLicenseRequest` takes any actor and never throws after its claim.
+    - A declined row keeps `payment_action = 'decline'`: finished rows keep their claim, so A.4's "claim cleared" doesn't hold.
+  - **P22:**
+    - `expiry.spec.ts` reuses the dev clock: `dev-expire-request --no-cron` prints one JSON line `{ requestId, expiresAt, cron: null }`, and "nothing to do" exits 1. Run it with `NODE_ENV: "test"`, as `inbox.responsive.spec.ts` does, then call the cron route itself.
+    - `decline.spec`: assert the line inside `<main>` (exact) and the toast as `ol > li`, because the line, the toast and Radix's announcer share the sentence.
+    - Any spec that dispatches a focus refresh (or waits for the 30 s tick) and then navigates must first await `requestEnded(page, isRouterRefresh)` (`tests/e2e/helpers/press.ts`). WebKit cancels the in-flight refresh, and Next falls back to a hard navigation that interrupts the goto.
+  - **P24/P25:**
+    - Give the Stripe client an explicit `timeout`. Size it so timeout × (maxNetworkRetries + 1) plus backoff fits the pages and their actions (60 s, including the re-render that `refresh()` runs inside the action), the cron's 45 s budget, and /r (no maxDuration).
+    - Map an "already canceled" cancel error to ok only when Stripe reports the PaymentIntent canceled. Any other unexpected state is permanent and goes to the reconcile, so a decline racing a late capture never stores `declined`.
+  - **P26:**
+    - A request-received or request-new retried after a decline or expiry still says "hold"; skip obsolete ones then.
+    - Give the Resend driver a per-send timeout well under the cron's 15 s reserve.
+  - **P33a:** `abandonStaleCheckouts` uses `CRON`; add a `--checkout` flag on the dev script's parser.
+  - **P33b:** `request-expired-buyer` makes "We'll email you either way." true for expiries. CORE sends none, and J8.6 accepts /r.
+  - **Later, layout polish:** from md, the Decline column narrows the row's text column (about 218 px at 768). A grid split would keep 05's Tablet frame on one line.
+  - **Known:**
+    - The Inbox's counts can trail the list by one refresh after a stuck claim resolves (the layout's cached summary).
+    - After an expiry whose cancel failed transiently, /r keeps the stored waiting view ("Expires in 0 min" plus AutoRefresh, 04 §9.10) until a later expiry succeeds.
+  - **Plan-kit fixes:**
+    - P19:
+      - Task 1's `reconcileFromStripe(id)` and Task 5's `{ captureOutcome }` drop the actor and the claim.
+      - `cancel(row.currency, …, row.stripeAttempt)` must be the claimed row's.
+      - Task 1's "the claim stays" holds only when Stripe can't be read.
+      - Task 4's "if P17 didn't write it" (`retryEmailOutbox` exists), its expire-first step order (06 §9 reconciles first) and "loop until 60 s" under `maxDuration = 60`.
+      - Task 7 omits J8.15 (P19b's Step 0 needs it), J8.8 Approve-vs-Decline, J8.7 and J8.5.
+      - Step 0 and Verify run commands that AGENTS §2 replaces (two `test:e2e` invocations).
+      - Verify's `ls .data/emails | grep request-declined` "one file" can't hold: the folder is shared with the e2e app, and file names carry no request id. P19b's Step 0 has the same problem.
+      - The Verify grep misses `db` and `.transaction(` split over lines.
+      - Question 1 (a) says "from effectiveStatus", which 02 §4.4 rule 3 forbids.
+    - P19b:196, "Update only the key assertion in P19's cron [int] test", misses the route's unit test.
+    - P19g: its Step 0 glob should be `'!**/*.test.ts*'` and ignore comments.
+    - P21: its Step 0 grep path misses `src/lib/licensing/request-status.ts` and `src/emails`.
+    - 02 §5.7:
+      - `declineLicenseRequest`'s status non-null.
+      - `reconcileFromStripe(requestId): Promise<TransitionResult>`.
+      - `expireDueRequests` without actor or `stopAt`.
+      - `reconcileStuckClaims` without `creatorId` or `stopAt`.
+    - 02 §5.10's `retryEmailOutbox` has no `stopAt`.
+    - 02 §5.11 says "false if unset" (env requires CRON_SECRET).
+    - 03 §7.10's expire query lacks `payment_action IS NULL`.
+    - 03 T7 says "Cancel claim".
+    - 06 §9 says "the claiming path finishes" decline and expire claims; the webhook does too.
+    - 07 D57 and §11 say "P19" for purge-social-cache (old number; now P27).
 
 ### P19b — Pay the creator: transfer after approval (separate charges and transfers) · [ ] to do
 > 90 min · Depends on: P19, P18 · Record: Q1–Q4 answers, the `sendCreatorTransfer` second argument, `maxDuration = 60` on Settings, where `CREATOR_FIXABLE_TRANSFER_CODES` lives
@@ -662,7 +843,7 @@ D107–D131 (07 §9), for OQ-34–OQ-38 and OQ-49–OQ-53 by D132–D143 (07 §1
 
 ## Open questions
 
-None open: every owner question (OQ-01–OQ-57, Q-01–Q-03 from P02, Q-04–Q-05 from P04, Q-06–Q-11 from P05, Q-12–Q-15 from P06, Q-16 from P07, Q-17–Q-24 from P08, Q-25–Q-33 from P09, Q-34–Q-39 from P10a, Q-40–Q-44 from P10b, Q-45–Q-51 from P10c, Q-52–Q-61 from the full-project review, Q-62–Q-68 from P11, Q-69–Q-72 from P11b, Q-73–Q-81 from P11c, Q-82–Q-86 from the P10–P11 review, Q-87–Q-89 from the test-speed work, Q-90–Q-93 from P12, Q-94–Q-100 from P13, Q-101–Q-104 from P14b, Q-105–Q-117 from P15, Q-118–Q-122 from P16a, Q-123 from P16b, Q-124–Q-129 from P17 and Q-130–Q-131 from the audit's batch 2 and Q-132–Q-135 from its batch 3) is answered (07 §4.1, §10; Decisions 2026-10-17 and 2026-10-18). Add new questions below the line with the next free
+None open: every owner question (OQ-01–OQ-57, Q-01–Q-03 from P02, Q-04–Q-05 from P04, Q-06–Q-11 from P05, Q-12–Q-15 from P06, Q-16 from P07, Q-17–Q-24 from P08, Q-25–Q-33 from P09, Q-34–Q-39 from P10a, Q-40–Q-44 from P10b, Q-45–Q-51 from P10c, Q-52–Q-61 from the full-project review, Q-62–Q-68 from P11, Q-69–Q-72 from P11b, Q-73–Q-81 from P11c, Q-82–Q-86 from the P10–P11 review, Q-87–Q-89 from the test-speed work, Q-90–Q-93 from P12, Q-94–Q-100 from P13, Q-101–Q-104 from P14b, Q-105–Q-117 from P15, Q-118–Q-122 from P16a, Q-123 from P16b, Q-124–Q-129 from P17 and Q-130–Q-131 from the audit's batch 2, Q-132–Q-135 from its batch 3, Q-136–Q-138 from the code review, Q-139–Q-141 from P18 and Q-142–Q-144 from P19) is answered (07 §4.1, §10; Decisions 2026-10-17 and 2026-10-18). Add new questions below the line with the next free
 number (Q-25, Q-26, …); when one is answered, set its status to "answered (Pxx)" and add the answer to Decisions.
 
 | ID | Question | Default if unanswered | Asked in | Status |
@@ -802,6 +983,9 @@ number (Q-25, Q-26, …); when one is answered, set its status to "answered (Pxx
 | Q-139 | Copy for `original_missing` (Approve when the video's original isn't ready) | "The original file for this video is missing, so this request can't be approved yet. Questions? {SUPPORT_EMAIL}" | P18 | answered (P18): the default |
 | Q-140 | Approve tapped after the deadline: 01's "This request expired. The buyer wasn't charged." at once, or 07 D25's rule (no "wasn't charged" before the hold is released)? | Follow 07 D25: "This request expired." under the countdown until the expiry is stored | P18 | answered (P18): the default |
 | Q-141 | /r's Get file and license button now (404 until P20) or with P20? | With P20 | P18 | answered (P18): the default |
+| Q-142 | A waiting request past its deadline whose expiry isn't stored yet: what do the Inbox row, the request page and /r show? | The neutral «Expired» pill, judged on the database's clock: no Approve, no Decline, no "You get", no payouts Notice and no sentence until the expiry is stored; lazy expiry runs in after(), and /r awaits its own request's expiry | P19 | answered (P19): the default |
+| Q-143 | A Decline that finds the request expired: what does the creator see? | The «Expired» pill and "This request expired. The buyer wasn't charged."; Approve keeps D160's pill-only rule when it loses a race | P19 | answered (P19): the default |
+| Q-144 | P19 runs past 2× its 120-min estimate: split it, or one step with a bigger budget? | One step, bigger budget | P19 | answered (P19): the default |
 
 ## Prompt map
 

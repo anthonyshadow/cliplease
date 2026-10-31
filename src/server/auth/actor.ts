@@ -28,6 +28,9 @@ export const LAZY: Actor = { kind: "system", source: "lazy" };
 /** Stripe's events, as the webhook route and the dev fake checkout deliver them. */
 export const WEBHOOK: Actor = { kind: "system", source: "webhook" };
 
+/** The expire-requests cron (07 D57): audited as actor_type cron (07 D47). */
+export const CRON: Actor = { kind: "system", source: "cron" };
+
 /** `a` as a creator actor; any other actor here is a programming error. */
 export function requireCreatorActor(a: Actor): CreatorActor {
   if (a.kind !== "creator") throw new Error("a creator actor is required");

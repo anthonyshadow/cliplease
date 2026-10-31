@@ -1,20 +1,21 @@
 import "server-only";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "@/db/client";
 import { license, licenseRequest, video } from "@/db/schema";
 import type { ApproveResult } from "@/lib/licensing/request-dto";
-import type { Actor } from "../auth/actor";
+import { type Actor, LAZY } from "../auth/actor";
 import { type PayoutsRow, refreshPayoutsStatus } from "../creators/profile";
 import { errorName, logEvent } from "../log";
 import { capture } from "../payments";
+import { overdueColumn } from "./deadline";
+import { afterResponse } from "./effects";
+import { expireLicenseRequest } from "./requests";
 import {
   type ClaimedRequest,
   claimPaymentAction,
   finishCapture,
-  isStuckClaim,
   reconcileFromStripe,
-  reconcileStuckClaims,
-  STUCK_CLAIM_MINUTES,
+  reconcileIfStuck,
 } from "./state-machine";
 
 // Approve (02 §8.2; 03 T4–T6; 07 D24–D26, D29, D33, D74, D77): one tap claims the request, captures the hold outside any
@@ -29,8 +30,7 @@ async function approveState(requestId: string, creatorId: string) {
       status: licenseRequest.status,
       paymentAction: licenseRequest.paymentAction,
       paymentActionAt: licenseRequest.paymentActionAt,
-      // The database's clock, as the capture claim's guard reads it.
-      overdue: sql<boolean>`coalesce(${licenseRequest.expiresAt} <= now(), false)`,
+      overdue: overdueColumn,
       originalStatus: video.originalStatus,
       licenseCode: license.code,
     })
@@ -65,12 +65,25 @@ function refusedResult(s: ApproveState): ApproveResult | null {
  * be unclaimed and before its deadline, the video's original ready (07 D33) and payouts active (07 D29, D74, D77; the
  * reading at most 10 minutes old), else nothing is claimed. A refused claim reports the request as it is. A capture
  * that isn't ok goes to reconcileFromStripe, and the result follows Stripe: approved, a released claim (retry), or
- * capture_failed. `payoutsRow`: the caller's creator context, read with the session, so the payouts check needn't.
+ * capture_failed (T7 cancels the hold first). A tap past the deadline schedules the expiry it found due (02 §8.4), as
+ * the system's work after the response. `payoutsRow`: the caller's creator context, read with the session.
  */
 export async function approveLicenseRequest(
   requestId: string,
   actor: Actor,
-  { payoutsRow }: { payoutsRow?: PayoutsRow } = {},
+  options: { payoutsRow?: PayoutsRow } = {},
+): Promise<ApproveResult> {
+  const result = await approve(requestId, actor, options);
+  if (!result.ok && result.reason === "expired") {
+    afterResponse(() => expireLicenseRequest(requestId, LAZY));
+  }
+  return result;
+}
+
+async function approve(
+  requestId: string,
+  actor: Actor,
+  { payoutsRow }: { payoutsRow?: PayoutsRow },
 ): Promise<ApproveResult> {
   if (actor.kind !== "creator") {
     return { ok: false, reason: "not_actionable", status: null };
@@ -78,15 +91,7 @@ export async function approveLicenseRequest(
   const { creatorId } = actor;
   let before = await approveState(requestId, creatorId);
   if (!before) return { ok: false, reason: "not_actionable", status: null };
-  if (
-    before.status === "awaiting_approval" &&
-    isStuckClaim(before.paymentActionAt)
-  ) {
-    await reconcileStuckClaims({
-      requestId,
-      olderThanMinutes: STUCK_CLAIM_MINUTES,
-      actor,
-    });
+  if (await reconcileIfStuck(requestId, before, actor)) {
     before = await stateOf(requestId, creatorId);
   }
   const refused = refusedResult(before);
@@ -177,7 +182,12 @@ async function captureClaimed(
     }
   }
   try {
-    await reconcileFromStripe(id, { actor, claim: outcome.ok ? null : claim });
+    await reconcileFromStripe(
+      id,
+      outcome.ok
+        ? { actor, claim: null }
+        : { actor, claim, captureOutcome: outcome },
+    );
   } catch (error) {
     // Stripe can't be asked now: the claim stays for the next reconcile.
     logEvent("warn", "license_request.reconcile_failed", {

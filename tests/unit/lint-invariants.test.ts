@@ -62,6 +62,36 @@ describe("payments-in-tx", () => {
     ]);
   });
 
+  it("flags a same-file helper that reaches Stripe, directly or through another defined below it", () => {
+    const text = `
+      import { cancel } from "@/server/payments";
+      async function release(id) {
+        await cancel("cad", id, "pi", "decline", 1);
+      }
+      export async function f(db) {
+        await db.transaction(async (tx) => {
+          await release("r");
+          await settle("r");
+        });
+      }
+      const settle = async (id) => release(id);`;
+    expect(rules(SERVER, text)).toEqual(["payments-in-tx", "payments-in-tx"]);
+  });
+
+  it("leaves a same-file helper that reaches Stripe alone outside the transaction, and one that doesn't inside it", () => {
+    const text = `
+      import { cancel } from "@/server/payments";
+      async function release(id) {
+        await cancel("cad", id, "pi", "decline", 1);
+      }
+      export async function f(db) {
+        const claimed = await db.transaction(async (tx) => claim(tx, "r"));
+        if (claimed) await release("r");
+      }
+      const claim = async (tx, id) => tx.select(id);`;
+    expect(rules(SERVER, text)).toEqual([]);
+  });
+
   it("indexes the functions that reach Stripe across files, through local and imported calls, and no others", () => {
     const index = callsOutIndex([
       [

@@ -19,17 +19,21 @@ import {
 } from "../../src/server/licensing/queries";
 import { generateBuyerToken } from "../../src/server/tokens/buyer-token";
 import { latestLiveShareUrl } from "../../src/server/videos/public";
+import { overdue } from "../helpers/approval-fixtures";
 import {
   insertCreator,
   insertLicense,
   insertLicenseRequest,
   insertRateCard,
   publishVideo,
+  requestRow,
 } from "../helpers/factories";
 import { readyUpload } from "../helpers/ready-videos";
 
 // The request pages' reads (P17; 03 §7.1, §7.6; 01 §3.0; 07 D26, D47; 02 §9.11): each creator sees only their own
-// requests, never one in checkout, an abandoned one or the buyer's email; /r reads one request through its key.
+// requests, never one in checkout, an abandoned one or the buyer's email; /r reads one request through its key. P19:
+// an unclaimed request past its deadline reads as Expired, by the database's clock, without the reads writing anything,
+// and the payouts Banner's soonest deadline passes over it.
 
 /** The keys a creator's request carries, and nothing else. */
 const CREATOR_KEYS = [
@@ -321,6 +325,71 @@ describe("getBuyerStatus (03 §7.6)", () => {
     expect((await getBuyerStatus(id, key.token))?.displayStatus).toBe(
       "processing",
     );
+  });
+});
+
+describe("an overdue request (owner answer Q-142 a; 07 D25, D26; 02 §4.4 rule 3)", () => {
+  it("reads as Expired while it waits unclaimed past its deadline on the database's clock, stored waiting: the reads expire nothing", async () => {
+    const { creator, live } = await creatorWithVideo();
+    const id = randomUUID();
+    const key = generateBuyerToken(id);
+    await requestIn(live, "awaiting_approval", {
+      id,
+      buyerTokenHash: key.hash,
+      buyerTokenEnc: key.enc,
+    });
+    await overdue(id);
+    const readsExpired = {
+      status: "awaiting_approval",
+      displayStatus: "expired",
+    };
+
+    const waiting = await listInbox(creator.id, "waiting");
+    expect(waiting).toEqual([expect.objectContaining({ id, ...readsExpired })]);
+    expect(Object.keys(waiting[0] ?? {}).sort()).toEqual(CREATOR_KEYS);
+    expect(await getRequestForCreator(creator.id, id)).toMatchObject(
+      readsExpired,
+    );
+    expect(await getBuyerStatus(id, key.token)).toMatchObject(readsExpired);
+    // Pure reads: only the lazy layers and the cron end it, once Stripe has released the hold.
+    expect(await requestRow(id)).toMatchObject({
+      status: "awaiting_approval",
+      paymentAction: null,
+      stripeAttempt: 0,
+    });
+  });
+
+  it("reads a claim on it as Processing…, even past the deadline (07 D26)", async () => {
+    const { creator, live } = await creatorWithVideo();
+    const claimed = await requestIn(live, "awaiting_approval", {
+      paymentAction: "expire",
+      paymentActionAt: new Date(),
+    });
+    await overdue(claimed.id);
+    expect(await listInbox(creator.id, "waiting")).toEqual([
+      expect.objectContaining({
+        id: claimed.id,
+        status: "awaiting_approval",
+        displayStatus: "processing",
+      }),
+    ]);
+  });
+
+  it("still counts as waiting, but the soonest deadline is one still ahead: the payouts Banner never names a past one", async () => {
+    const { creator, live } = await creatorWithVideo();
+    const late = await requestIn(live, "awaiting_approval");
+    await overdue(late.id);
+    expect(await waitingSummary(creator.id)).toEqual({
+      count: 1,
+      soonestExpiresAt: null,
+    });
+    const open = await requestIn(live, "awaiting_approval", {
+      expiresAt: inHours(50),
+    });
+    expect(await waitingSummary(creator.id)).toEqual({
+      count: 2,
+      soonestExpiresAt: open.expiresAt?.toISOString(),
+    });
   });
 });
 

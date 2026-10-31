@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { LICENSE_REQUEST_STATUSES } from "@/lib/domain/values";
 import {
+  declinedView,
   REQUEST_STATUS_COPY,
   type RequestView,
   requestView,
@@ -56,7 +57,7 @@ describe("requestView (05 §4.3, 07 D27)", () => {
   it.each([
     ["approved", null, "approved"],
     ["declined", null, "declined"],
-    ["declined", "creator_declined", "declined"],
+    ["declined", "creator", "declined"],
     ["declined", "video_disabled", "video_disabled"],
     ["expired", null, "expired"],
     ["capture_failed", "capture_error:card_declined", "capture_failed"],
@@ -88,6 +89,20 @@ describe("requestView (05 §4.3, 07 D27)", () => {
       "renewal_canceled",
       "renewal_failed",
     ]);
+  });
+});
+
+describe("declinedView (01 §4.8, 07 D28): /r's and request-declined's reason rule", () => {
+  it.each([
+    ["creator", "declined"],
+    ["video_disabled", "video_disabled"],
+    [null, "declined"],
+    ["something_new", "declined"],
+  ] as const)("a decline for %s is %s, on /r too", (statusReason, view) => {
+    expect(declinedView(statusReason)).toBe(view);
+    expect(requestView({ status: "declined", statusReason }, QUERIES[0])).toBe(
+      view,
+    );
   });
 });
 

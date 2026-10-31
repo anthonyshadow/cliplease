@@ -8,7 +8,6 @@ import {
 import { db, pool } from "../../src/db/client";
 import { emailLog, stripeEvent, video } from "../../src/db/schema";
 import type { LicenseRequest, Video } from "../../src/db/schema/types";
-import type { Currency } from "../../src/lib/domain/values";
 import { DAY_MS, HOUR_MS } from "../../src/lib/time";
 import type { Actor } from "../../src/server/auth/actor";
 import { env } from "../../src/server/env";
@@ -31,35 +30,32 @@ import {
   publishVideo,
   requestRow,
 } from "../helpers/factories";
-import { captureLogEvents } from "../helpers/logs";
+import {
+  AFTER_FAILED,
+  captureLogEvents,
+  dropStderr,
+  endStderr,
+  recordStderr,
+} from "../helpers/logs";
+import { piEvent } from "../helpers/pi-events";
 import {
   pricedCreator,
   readyLibraryVideo,
   readyUpload,
 } from "../helpers/ready-videos";
-import {
-  createScriptedPayments,
-  type ScriptedPayments,
-} from "../helpers/scripted-payments";
+import type { ScriptedPayments } from "../helpers/scripted-payments";
+import { installScriptedPayments } from "../helpers/scripted-suite";
 
 // Authorization through the event path (P16b; 02 §8.1, §8.3; 03 T2, T3, T11–T13; 07 D24, D27, D28, D32, D35, D74,
 // D81, D95, D96; owner answers Q-119 a, Q-122 a, Q-123 a): the fake checkout's events and Stripe's, deduplicated in
 // stripe_event, through markAuthorized's asserts, the video and the hold's length, with every abandoned hold canceled
 // after its commit, once. The payments driver is the scripted double: the fake's answers unless a test scripts others.
 
-const payments = vi.hoisted(() => ({
-  current: undefined as ScriptedPayments | undefined,
-}));
-vi.mock("@/server/payments/registry", async (importOriginal) => {
-  const registry =
-    await importOriginal<typeof import("@/server/payments/registry")>();
-  return {
-    ...registry,
-    paymentsDriver: (currency: Currency) =>
-      payments.current?.driverFor(currency) ??
-      registry.paymentsDriver(currency),
-  };
-});
+vi.mock("@/server/payments/registry", async (importOriginal) =>
+  (await import("../helpers/scripted-suite")).scriptedRegistry(
+    await importOriginal<typeof import("@/server/payments/registry")>(),
+  ),
+);
 
 // after() runs at once: an authorized request's emails go out (P17), and each test waits for them.
 vi.mock("next/server", async (importOriginal) => ({
@@ -69,12 +65,18 @@ vi.mock("next/server", async (importOriginal) => ({
 
 let scripted: ScriptedPayments;
 beforeEach(() => {
-  scripted = createScriptedPayments();
-  payments.current = scripted;
+  scripted = installScriptedPayments();
+  recordStderr(AFTER_FAILED);
 });
 afterEach(async () => {
-  await flushAfter();
-  vi.restoreAllMocks();
+  try {
+    await flushAfter();
+    // No after() task failed: afterResponse logs a failure instead of rejecting.
+    endStderr();
+  } finally {
+    dropStderr();
+    vi.restoreAllMocks();
+  }
 });
 
 const WEBHOOK: Actor = { kind: "system", source: "webhook" };
@@ -125,20 +127,6 @@ const expired = (row: LicenseRequest): PaymentsEvent => ({
   ...base(),
   type: "checkout.session.expired",
   sessionId: `cs_fake_${row.id}`,
-  requestId: row.id,
-});
-
-const paymentIntentEvent = (
-  row: LicenseRequest,
-  type:
-    | "payment_intent.amount_capturable_updated"
-    | "payment_intent.succeeded"
-    | "payment_intent.canceled"
-    | "payment_intent.payment_failed",
-): PaymentsEvent => ({
-  ...base(),
-  type,
-  paymentIntentId: `pi_fake_${row.id}`,
   requestId: row.id,
 });
 
@@ -642,10 +630,7 @@ describe("events that change nothing (02 §8.1; 03 T12)", () => {
 
   it("authorizes on the PaymentIntent's own event as on the session's (02 §8.1 row 1)", async () => {
     const { row } = await pendingRequest();
-    const event = paymentIntentEvent(
-      row,
-      "payment_intent.amount_capturable_updated",
-    );
+    const event = piEvent("payment_intent.amount_capturable_updated", row.id);
     expect(await onWebhookEvent(event, "cad")).toBe("processed");
     expect((await requestRow(row.id)).status).toBe("awaiting_approval");
     expect(await eventRow(event.id)).toMatchObject({
@@ -664,7 +649,7 @@ describe("events that change nothing (02 §8.1; 03 T12)", () => {
 
   it("records a failed payment and changes nothing (T12)", async () => {
     const { row } = await pendingRequest();
-    const event = paymentIntentEvent(row, "payment_intent.payment_failed");
+    const event = piEvent("payment_intent.payment_failed", row.id);
     expect(await onWebhookEvent(event, "cad")).toBe("processed");
     expect((await requestRow(row.id)).status).toBe("checkout_pending");
     expect(await auditsOf(row.id, "license_request.payment_failed")).toEqual([
@@ -676,9 +661,9 @@ describe("events that change nothing (02 §8.1; 03 T12)", () => {
     });
   });
 
-  it("ignores the event types later prompts handle, and Stripe's others", async () => {
+  it("ignores payment_intent.canceled while the request is still in checkout, asking Stripe nothing (its session's expiry ends it, T11), and Stripe's other events", async () => {
     const { row } = await pendingRequest();
-    const canceled = paymentIntentEvent(row, "payment_intent.canceled");
+    const canceled = piEvent("payment_intent.canceled", row.id);
     expect(await onWebhookEvent(canceled, "cad")).toBe("ignored");
     expect(await eventRow(canceled.id)).toMatchObject({
       processedAt: expect.any(Date),
@@ -696,6 +681,7 @@ describe("events that change nothing (02 §8.1; 03 T12)", () => {
       processedAt: expect.any(Date),
     });
     expect((await requestRow(row.id)).status).toBe("checkout_pending");
+    expect(scripted.log).toEqual([]);
   });
 
   it.each(["checkout.session.completed", "payment_intent.succeeded"] as const)(
@@ -705,7 +691,7 @@ describe("events that change nothing (02 §8.1; 03 T12)", () => {
       scripted.script({ getAuthorization: { status: "succeeded" } });
       const event =
         type === "payment_intent.succeeded"
-          ? paymentIntentEvent(row, type)
+          ? piEvent(type, row.id)
           : completed(row);
       expect(await onWebhookEvent(event, "cad")).toBe("processed");
       expect((await requestRow(row.id)).status).toBe("checkout_pending");

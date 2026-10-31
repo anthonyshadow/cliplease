@@ -29,7 +29,11 @@ export function RequestStatus({
   ) : null;
 }
 
-/** A decided request's line (04 §11.5): its expiry in the viewer's zone, a failed capture in danger text, a disabled video. */
+/**
+ * A decided request's line (04 §11.5): its expiry in the viewer's zone, a failed capture in danger text, a disabled
+ * video. From the stored status only, never displayStatus: an overdue request reads Expired before Stripe has released
+ * its hold, so it says nobody was charged only once the expiry is stored (07 D25; owner answer Q-142 a).
+ */
 export function RequestOutcome({ request }: { request: CreatorRequest }) {
   const deadline = useViewerDeadline(request.expiresAt);
   const line = outcomeLine(request, deadline);

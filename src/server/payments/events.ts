@@ -7,7 +7,10 @@ import { isUuid } from "@/lib/validation/uuid";
 import { writeAudit } from "../audit";
 import { WEBHOOK } from "../auth/actor";
 import { runEffects } from "../licensing/effects";
-import { markAuthorized } from "../licensing/requests";
+import {
+  handlePaymentIntentCanceled,
+  markAuthorized,
+} from "../licensing/requests";
 import {
   applyTransition,
   ignoredEvent,
@@ -145,9 +148,13 @@ async function handle(
         await reconcileFromStripe(requestId, { actor: WEBHOOK });
       }
       break;
-    default:
-      // payment_intent.canceled: P19.
-      return { outcome: "ignored", requestId, lastError: null };
+    case "payment_intent.canceled":
+      // A request still in checkout holds no PaymentIntent of its own yet: its session's expiry ends it (T11).
+      if (row.status === "checkout_pending") {
+        return { outcome: "ignored", requestId, lastError: null };
+      }
+      await handlePaymentIntentCanceled(requestId);
+      break;
   }
   return { outcome: "processed", requestId, lastError: null };
 }

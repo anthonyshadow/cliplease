@@ -19,7 +19,8 @@ import {
 import { queueEmail } from "../email/send";
 import { licenseApprovedSubject } from "../email/subjects";
 import { errorName, logEvent } from "../log";
-import { getAuthorization } from "../payments";
+import { cancel, getAuthorization } from "../payments";
+import type { StripeCallOutcome } from "../payments/driver";
 import { runEffects } from "./effects";
 import { issueLicense } from "./issue";
 
@@ -31,11 +32,15 @@ import { issueLicense } from "./issue";
 /** Work a transition queues for after its commit: an email_log row to send (runEffects). */
 export type Effect = { kind: "email"; emailLogId: string };
 
-/** The emails an accepted event queues (07 D34). license-approved is queued by finishCapture, after issueLicense. */
+/**
+ * The emails an accepted event queues (07 D34). license-approved is queued by finishCapture, after issueLicense. expired
+ * and capture_failed queue nothing in CORE (07 D34): P33b adds the [H5] ones.
+ */
 const EMAILS: Partial<
   Record<LicenseRequestEvent, readonly RequestEmailTemplate[]>
 > = {
   authorized: ["request-new", "request-received"],
+  declined: ["request-declined"],
 };
 
 export type TransitionResult = {
@@ -67,10 +72,22 @@ export type LicenseRequestPatch = Pick<
   | "statusReason"
 > & { incrementStripeAttempt: boolean };
 
-/** The status_reason values each ending of a waiting request takes (07 §2.1). */
-const DECLINE_REASONS: readonly string[] = ["creator", "video_disabled"];
-const EXPIRE_REASONS: readonly string[] = ["deadline", "hold_released"];
-const CAPTURE_FAILED_REASON = /^(pi_canceled_during_capture|capture_error:.+)$/;
+/** The status_reason values each ending of a waiting request takes (07 §2.1). P19g adds the exclusive conflict. */
+const DECLINE_REASONS = ["creator", "video_disabled"] as const;
+export type DeclineReason = (typeof DECLINE_REASONS)[number];
+const EXPIRE_REASONS = ["deadline", "hold_released"] as const;
+/** A Stripe error code as a capture failure stores it (03 T7): lowercase words, never free text. */
+const CAPTURE_ERROR_CODE = /^[a-z0-9_]{1,64}$/;
+const CAPTURE_FAILED_REASON =
+  /^(pi_canceled_during_capture|capture_error:[a-z0-9_]{1,64})$/;
+export type CaptureFailedReason =
+  | "pi_canceled_during_capture"
+  | `capture_error:${string}`;
+
+/** A capture's failure reason (03 T7): Stripe's error code, or `unknown` for anything that doesn't look like one. */
+function captureErrorReason(code: string): CaptureFailedReason {
+  return `capture_error:${CAPTURE_ERROR_CODE.test(code) ? code : "unknown"}`;
+}
 
 /** Why `patch` can't go with `event` (03 T2–T10), or null. */
 function patchProblem(
@@ -85,12 +102,12 @@ function patchProblem(
         : "an approval has no status reason";
     case "declined":
       return patch.declinedAt &&
-        DECLINE_REASONS.includes(patch.statusReason ?? "")
+        isOneOf(DECLINE_REASONS, patch.statusReason ?? "")
         ? null
         : "needs declinedAt and a decline reason";
     case "expired":
       return patch.expiredAt &&
-        EXPIRE_REASONS.includes(patch.statusReason ?? "")
+        isOneOf(EXPIRE_REASONS, patch.statusReason ?? "")
         ? null
         : "needs expiredAt and an expiry reason";
     case "capture_failed":
@@ -266,7 +283,7 @@ function heldBy(claim: PaymentClaim | null) {
 }
 
 /** The row's own claim, or null. */
-function claimOf(row: LicenseRequest): PaymentClaim | null {
+export function claimOf(row: LicenseRequest): PaymentClaim | null {
   const { paymentAction: action, paymentActionAt: claimedAt } = row;
   return action && claimedAt && isOneOf(REQUEST_ACTIONS, action)
     ? { action, claimedAt }
@@ -326,6 +343,28 @@ async function takeClaim(
     : null;
 }
 
+/**
+ * Takes `claim` again for its next Stripe call (03 T7; 07 D30): a fresh claim time and stripe_attempt + 1, so the call
+ * gets its own key, fenced on the old claim. Null when another actor resolved the request first.
+ */
+async function refenceClaim(
+  requestId: string,
+  claim: PaymentClaim,
+): Promise<ClaimedRequest | null> {
+  const claimedAt = new Date();
+  const [row] = await db
+    .update(licenseRequest)
+    .set({
+      paymentActionAt: claimedAt,
+      stripeAttempt: sql`${licenseRequest.stripeAttempt} + 1`,
+    })
+    .where(and(eq(licenseRequest.id, requestId), heldBy(claim)))
+    .returning();
+  return row
+    ? { ...row, paymentAction: claim.action, paymentActionAt: claimedAt }
+    : null;
+}
+
 /** Lets go of `claim` while the request still waits under it (07 D26). False when another actor resolved it first. */
 export async function releaseClaim(
   requestId: string,
@@ -340,20 +379,25 @@ export async function releaseClaim(
 }
 
 /**
- * Reconciles waiting requests whose claim is older than `olderThanMinutes` (07 D26), oldest first: one request, or up to
- * `limit` (P19's cron). A request Stripe can't be asked about now keeps its claim and is logged. Returns how many claims
- * were resolved (finished, or released), so a caller looping until nothing is due stops.
+ * Reconciles waiting requests whose claim is older than `olderThanMinutes` (07 D26), oldest first: one request, one
+ * creator's (the Inbox), or up to `limit` (the cron, which stops starting requests at `stopAt`, epoch ms). A request
+ * Stripe can't be asked about now keeps its claim and is logged. Returns how many claims were resolved (finished, or
+ * released), so a caller looping while there is more to do stops.
  */
 export async function reconcileStuckClaims({
   requestId,
+  creatorId,
   olderThanMinutes,
   limit = 50,
   actor = LAZY,
+  stopAt,
 }: {
   requestId?: string;
+  creatorId?: string;
   olderThanMinutes: number;
   limit?: number;
   actor?: Actor;
+  stopAt?: number;
 }): Promise<number> {
   // The cutoff on the claim's own (JS) clock, so a 0-minute threshold takes every claim.
   const cutoff = claimedBefore(olderThanMinutes);
@@ -363,6 +407,7 @@ export async function reconcileStuckClaims({
     .where(
       and(
         requestId ? eq(licenseRequest.id, requestId) : undefined,
+        creatorId ? eq(licenseRequest.creatorId, creatorId) : undefined,
         eq(licenseRequest.status, "awaiting_approval"),
         isNotNull(licenseRequest.paymentAction),
         lt(licenseRequest.paymentActionAt, cutoff),
@@ -372,6 +417,7 @@ export async function reconcileStuckClaims({
     .limit(limit);
   let resolved = 0;
   for (const row of stuck) {
+    if (stopAt !== undefined && Date.now() >= stopAt) break;
     try {
       const outcome = await reconcileFromStripe(row.id, {
         actor,
@@ -386,6 +432,25 @@ export async function reconcileStuckClaims({
     }
   }
   return resolved;
+}
+
+/**
+ * Before an action on request `requestId`: reconciles its claim when it waits under a stuck one (07 D26), as `actor`.
+ * True when it did, so the caller reads the request again.
+ */
+export async function reconcileIfStuck(
+  requestId: string,
+  row: Pick<LicenseRequest, "status" | "paymentActionAt">,
+  actor: Actor,
+): Promise<boolean> {
+  if (row.status !== "awaiting_approval" || !isStuckClaim(row.paymentActionAt))
+    return false;
+  await reconcileStuckClaims({
+    requestId,
+    olderThanMinutes: STUCK_CLAIM_MINUTES,
+    actor,
+  });
+  return true;
 }
 
 /** What reconcileFromStripe did: wrote an ending, released the caller's claim, or nothing. */
@@ -404,13 +469,18 @@ const NOT_CHARGED: ReadonlySet<LicenseRequestStatus> = new Set([
  * stuck claims, and for payment_intent.succeeded. `succeeded` on a waiting request → T5 (finishCapture), whatever was
  * claimed; on an ending that never charges → audit `license_request.money_moved_late`, nothing else (OQ-12); on an
  * approved request → nothing (P19b hooks the transfer here). `canceled` on a waiting request → the claimed action's
- * ending (finishCanceled). `requires_capture` → the caller's own `claim` is released (the caller says retry); a claim
- * the caller doesn't hold is left alone. A retrieve that throws throws: the claim stays for the next reconcile, and a
+ * ending (finishCanceled). `requires_capture` → the caller's own `claim` is released (the caller says retry), unless
+ * its capture failed for good (`captureOutcome` permanent): then T7 cancels the hold (cancelFailedCapture). A claim the
+ * caller doesn't hold is left alone. A retrieve that throws throws: the claim stays for the next reconcile, and a
  * webhook delivery fails, so Stripe sends it again. Requests without a PaymentIntent are left as they are.
  */
 export async function reconcileFromStripe(
   requestId: string,
-  opts: { actor?: Actor; claim?: PaymentClaim | null } = {},
+  opts: {
+    actor?: Actor;
+    claim?: PaymentClaim | null;
+    captureOutcome?: StripeCallOutcome;
+  } = {},
 ): Promise<ReconcileOutcome> {
   const actor = opts.actor ?? LAZY;
   const [row] = await db
@@ -442,17 +512,67 @@ export async function reconcileFromStripe(
       return "unchanged";
     case "canceled":
       if (!waiting) return "unchanged";
-      return (await finishCanceled(requestId, { claim, actor }))
+      return (await finishCanceled(requestId, { claim, actor })) !== null
         ? "finished"
         : "unchanged";
-    case "requires_capture":
+    case "requires_capture": {
       if (!waiting || !claim || !sameClaim(claim, opts.claim)) {
         return "unchanged";
       }
+      const failed = opts.captureOutcome;
+      if (
+        claim.action === "capture" &&
+        failed &&
+        !failed.ok &&
+        failed.kind === "permanent"
+      ) {
+        return cancelFailedCapture(row, row.stripePaymentIntentId, {
+          claim,
+          code: failed.code,
+          actor,
+        });
+      }
       return (await releaseClaim(requestId, claim)) ? "released" : "unchanged";
+    }
     default:
       return "unchanged";
   }
+}
+
+/**
+ * T7 (03 §5.1; 07 D25, D30): Stripe refused the capture for good while the card is still held. The capture claim is
+ * taken again (its own key), the hold canceled, and the request fails with the error's code. A cancel that isn't ok
+ * leaves the new claim for the stuck-claim reconcile, so nothing says "not charged" before Stripe releases the hold.
+ */
+async function cancelFailedCapture(
+  row: LicenseRequest,
+  paymentIntentId: string,
+  { claim, code, actor }: { claim: PaymentClaim; code: string; actor: Actor },
+): Promise<ReconcileOutcome> {
+  const refenced = await refenceClaim(row.id, claim);
+  if (!refenced) return "unchanged";
+  const outcome = await cancel(
+    row.currency,
+    row.id,
+    paymentIntentId,
+    "capture_failed",
+    refenced.stripeAttempt,
+  );
+  if (!outcome.ok) {
+    // `stripeCode`, not `code`: log lines redact a `code` key (sign-in codes), and Stripe's error code is no secret.
+    logEvent("warn", "license_request.capture_cancel_failed", {
+      requestId: row.id,
+      kind: outcome.kind,
+      stripeCode: outcome.code,
+    });
+    return "unchanged";
+  }
+  const done = await finishCanceled(row.id, {
+    claim: { action: "capture", claimedAt: refenced.paymentActionAt },
+    actor,
+    statusReason: captureErrorReason(code),
+  });
+  return done ? "finished" : "unchanged";
 }
 
 /** Locks waiting request `requestId` while `claim` (or no claim) holds it; false when another actor resolved it. */
@@ -522,56 +642,86 @@ export async function finishCapture(
   return { licenseCode: finished.licenseCode };
 }
 
+/** The ending a canceled hold gives a waiting request, by its claim (03 T6, T8–T10): no claim means Stripe's own cancel. */
+export function canceledEventFor(
+  claim: PaymentClaim | null,
+): "declined" | "capture_failed" | "expired" {
+  switch (claim?.action) {
+    case "decline":
+      return "declined";
+    case "capture":
+      return "capture_failed";
+    default:
+      return "expired";
+  }
+}
+
 /**
- * Stripe canceled the hold of a waiting request (03 T6, T8–T10; 07 D25): the claimed action's ending, fenced on
- * `claim`. A decline becomes declined (video_disabled when the video was disabled, else creator); an expiry, expired
- * (deadline); a capture, capture_failed (pi_canceled_during_capture); no claim, expired (hold_released). False when
- * another actor resolved it.
+ * Stripe canceled the hold of a waiting request (03 T6–T10; 07 D25): the claimed action's ending, fenced on `claim`, in
+ * one transaction, then its effects. A decline becomes declined (`statusReason`, else video_disabled when the video was
+ * disabled, else creator); an expiry, expired (deadline); a capture, capture_failed (`statusReason`, else
+ * pi_canceled_during_capture); no claim, expired (hold_released). Every ending of a waiting request that isn't an
+ * approval goes through here, so later work hooks in once (P19g's audit, P22c's saved card). Null when another actor
+ * resolved the request first.
  */
-async function finishCanceled(
+export async function finishCanceled(
   requestId: string,
-  { claim, actor }: { claim: PaymentClaim | null; actor: Actor },
-): Promise<boolean> {
+  {
+    claim,
+    actor,
+    statusReason,
+  }: {
+    claim: PaymentClaim | null;
+    actor: Actor;
+    statusReason?: DeclineReason | CaptureFailedReason;
+  },
+): Promise<TransitionResult | null> {
   const at = new Date();
+  const event = canceledEventFor(claim);
   const result = await db.transaction(async (tx) => {
+    // The patch before the request's lock: P19g's decline reason locks the video, and the video's lock comes first.
+    const patch = await canceledPatch(tx, requestId, event, {
+      claim,
+      statusReason,
+      at,
+    });
     if (!(await lockHeld(tx, requestId, claim))) return null;
-    switch (claim?.action) {
-      case "decline":
-        return applyTransition(
-          tx,
-          requestId,
-          "declined",
-          {
-            declinedAt: at,
-            statusReason: await declineReasonFor(tx, requestId),
-          },
-          actor,
-        );
-      case "capture":
-        return applyTransition(
-          tx,
-          requestId,
-          "capture_failed",
-          { captureFailedAt: at, statusReason: "pi_canceled_during_capture" },
-          actor,
-        );
-      default:
-        return applyTransition(
-          tx,
-          requestId,
-          "expired",
-          {
-            expiredAt: at,
-            statusReason: claim ? "deadline" : "hold_released",
-          },
-          actor,
-        );
-    }
+    return applyTransition(tx, requestId, event, patch, actor);
   });
-  if (!result) return false;
+  if (!result) return null;
   if (!result.changed) throw new Error("finishCanceled: no transition");
   runEffects(result.effects);
-  return true;
+  return result;
+}
+
+/** A canceled hold's ending as a patch (07 §2.1, D28): when it ended, and the caller's reason, else the ending's own. */
+async function canceledPatch(
+  tx: Tx,
+  requestId: string,
+  event: ReturnType<typeof canceledEventFor>,
+  {
+    claim,
+    statusReason,
+    at,
+  }: { claim: PaymentClaim | null; statusReason?: string; at: Date },
+): Promise<Partial<LicenseRequestPatch>> {
+  switch (event) {
+    case "declined":
+      return {
+        declinedAt: at,
+        statusReason: statusReason ?? (await declineReasonFor(tx, requestId)),
+      };
+    case "capture_failed":
+      return {
+        captureFailedAt: at,
+        statusReason: statusReason ?? "pi_canceled_during_capture",
+      };
+    case "expired":
+      return {
+        expiredAt: at,
+        statusReason: statusReason ?? (claim ? "deadline" : "hold_released"),
+      };
+  }
 }
 
 /** Why a decline claim ended (07 D28): the video was disabled meanwhile, or the creator declined. */

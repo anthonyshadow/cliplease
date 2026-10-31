@@ -13,7 +13,11 @@ export function runAfter(task: Promise<unknown> | (() => unknown)): void {
   );
 }
 
-/** Waits until every task runAfter started has settled; rejects with the first failure. */
+/**
+ * Waits until every task runAfter started has settled; rejects with the first failure. Tasks from src never reject:
+ * afterResponse logs effects.after_failed instead, so a suite that must see one watches stderr for it (logs.ts
+ * AFTER_FAILED, recordStderr).
+ */
 export async function flushAfter(): Promise<void> {
   while (pending.length > 0) await Promise.all(pending.splice(0));
 }

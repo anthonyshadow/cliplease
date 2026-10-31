@@ -127,10 +127,12 @@ export async function sendQueuedEmails(
 
 /**
  * Sends the queued rows untouched for 2 min (never tried, or claimed by a sender that died) and retries the failed ones
- * with attempts left, oldest first, at most `limit`. Returns how many were sent. Never throws.
+ * with attempts left, oldest first, at most `limit`; a cron passes `stopAt` (epoch ms), after which no row starts.
+ * Returns how many were sent. Never throws.
  */
 export async function retryEmailOutbox(opts: {
   limit: number;
+  stopAt?: number;
 }): Promise<number> {
   let sent = 0;
   try {
@@ -140,7 +142,10 @@ export async function retryEmailOutbox(opts: {
       .where(or(and(eq(emailLog.status, "queued"), leaseOver), retryable))
       .orderBy(asc(emailLog.createdAt))
       .limit(opts.limit);
-    for (const row of rows) if (await sendRow(row)) sent += 1;
+    for (const row of rows) {
+      if (opts.stopAt !== undefined && Date.now() >= opts.stopAt) break;
+      if (await sendRow(row)) sent += 1;
+    }
   } catch (error) {
     logEvent("error", "email.outbox_failed", { error: errorName(error) });
   }
@@ -274,7 +279,8 @@ async function compose(row: EmailLog): Promise<Message | null> {
   const { template } = row;
   switch (template) {
     case "request-new":
-    case "request-received": {
+    case "request-received":
+    case "request-declined": {
       const email = await composeRequestEmail(db, template, row.entityId);
       return email && { template, ...email };
     }

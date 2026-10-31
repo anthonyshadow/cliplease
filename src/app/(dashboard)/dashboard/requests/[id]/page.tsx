@@ -20,12 +20,13 @@ import { INBOX_COPY } from "@/lib/licensing/inbox";
 import { requestDetailPath } from "@/lib/urls";
 import { isUuid } from "@/lib/validation/uuid";
 import { requireCreator } from "@/server/auth/session";
+import { settleCreatorRequests } from "@/server/licensing/lazy";
 import { getRequestForCreator } from "@/server/licensing/queries";
 
 /** The tab names the Inbox the page belongs to (owner answer Q-126 a). */
 export const metadata: Metadata = { title: INBOX_COPY.inbox };
 
-/** Approve's Server Action runs with this page's limit: up to a Stripe capture and the license (07 D26). */
+/** Approve's and Decline's Server Actions run with this page's limit: up to a Stripe call and its finish (07 D26). */
 export const maxDuration = 60;
 
 /**
@@ -33,8 +34,9 @@ export const maxDuration = 60;
  * heading, the countdown or the pill (with a decided request's line), then the facts card, in one max-w-reading column
  * left-aligned with the title at every tier (07 D145). While payouts aren't active a waiting request says it stays open
  * until its deadline (07 D77). Another creator's request, an unknown id, and a request the creator never sees (in
- * checkout, abandoned, a renewal) are a 404. The action row under the card: Approve (P19 adds Decline); an approved
- * request reads "License {code} issued" under its pill.
+ * checkout, abandoned, a renewal) are a 404. The action row under the card: Decline and Approve; an approved request
+ * reads "License {code} issued" under its pill. The request is settled first: a stuck claim reconciled, an overdue
+ * request expired after the response (02 §8.4).
  */
 export default async function RequestDetailPage({
   params,
@@ -42,11 +44,13 @@ export default async function RequestDetailPage({
   const { id } = await params;
   if (!isUuid(id)) notFound();
   const { creator } = await requireCreator(requestDetailPath(id));
+  await settleCreatorRequests({ creatorId: creator.id, requestId: id });
   const request = await getRequestForCreator(creator.id, id);
   if (!request) notFound();
-  // A waiting request's deadline while payouts aren't active (07 D77).
+  // A waiting request's deadline while payouts aren't active (07 D77); none once it reads Expired (Q-142 a).
   const payoutsDeadline =
-    request.status === "awaiting_approval" && creator.payoutsStatus !== "active"
+    request.displayStatus === "awaiting_approval" &&
+    creator.payoutsStatus !== "active"
       ? request.expiresAt
       : null;
   return (

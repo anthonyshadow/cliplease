@@ -133,6 +133,24 @@ describe("RequestStatusView (05 §4.3, 01 §4.8)", () => {
     expect(mocks.refresh).not.toHaveBeenCalled();
   });
 
+  it("names a disabled video under Not approved, without the creator's sentence (07 D28)", () => {
+    render(<RequestStatusView view="video_disabled" {...props} />);
+    expect(heading().textContent).toBe(COPY.declinedTitle);
+    expect(screen.getByText(COPY.videoDisabledBody)).toBeTruthy();
+    expect(screen.queryByText(/didn't approve/)).toBeNull();
+  });
+
+  it.each(["declined", "video_disabled", "expired", "capture_failed"] as const)(
+    "gives the %s ending a neutral title, never red (04 §11.3)",
+    (view) => {
+      const { container } = render(
+        <RequestStatusView view={view} {...props} />,
+      );
+      expect(heading().classList.contains("text-ink")).toBe(true);
+      expect(container.querySelector("[class*='danger']")).toBeNull();
+    },
+  );
+
   it("puts the static 40 px seal above the approved ending only (04 §10.2)", () => {
     const { container, rerender } = render(
       <RequestStatusView view="approved" {...props} />,

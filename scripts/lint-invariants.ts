@@ -7,7 +7,8 @@
 //   payments-in-tx        no call that reaches Stripe inside a transaction callback: a payments-domain export
 //                         (src/server/payments/{index,registry,connect}), imported or through a namespace import; a
 //                         method of a driver held in a variable set from paymentsDriver(…) or typed PaymentsDriver; or
-//                         an imported function that reaches one of those, followed across src (callsOutIndex).
+//                         a function that reaches one of those, one of the file's own top-level functions or an
+//                         imported one, followed across src (callsOutIndex).
 //   postings-fetch        no fetch() under src/server/postings or src/lib/postings: pasted links are parsed, never
 //                         fetched (07 D67).
 //   vitest-in-src         only test files under src import vitest.
@@ -217,7 +218,7 @@ function stripeCallTest(
   sf: ts.SourceFile,
   imports: ReturnType<typeof importsOf>,
   index: CallsOutIndex,
-  local: ReadonlySet<string> = new Set(),
+  local: ReadonlySet<string>,
 ): (call: ts.CallExpression) => boolean {
   const reaches = (module: string | null | undefined, name: string) =>
     module != null &&
@@ -255,9 +256,11 @@ function stripeCallTest(
   };
 }
 
+type TopLevelFunction = { name: string; body: ts.Node; exported: boolean };
+
 /** The file's top-level functions (declarations and `const f = (…) => …`), with whether each is exported. */
-function topLevelFunctions(sf: ts.SourceFile) {
-  const out: { name: string; body: ts.Node; exported: boolean }[] = [];
+function topLevelFunctions(sf: ts.SourceFile): TopLevelFunction[] {
+  const out: TopLevelFunction[] = [];
   for (const statement of sf.statements) {
     const exported = exportsValue(statement);
     if (
@@ -290,9 +293,32 @@ function hasCall(node: ts.Node, test: (call: ts.CallExpression) => boolean) {
 }
 
 /**
+ * Adds to `local` each of `functions` with a call that passes `test`, pass after pass until nothing changes: `test`
+ * reads `local`, so a function that calls a marked one is marked too, on the next pass when the callee is defined
+ * below it. Returns the functions it added.
+ */
+function markReachers(
+  functions: readonly TopLevelFunction[],
+  test: (call: ts.CallExpression) => boolean,
+  local: Set<string>,
+): TopLevelFunction[] {
+  const added: TopLevelFunction[] = [];
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const fn of functions) {
+      if (local.has(fn.name) || !hasCall(fn.body, test)) continue;
+      local.add(fn.name);
+      added.push(fn);
+      changed = true;
+    }
+  }
+  return added;
+}
+
+/**
  * The functions each module exports that reach Stripe, over `sources` (path → text, test files left out): a function
  * reaches it when it calls a payments-domain export or a driver's method, or a function that reaches it, in its own
- * file or imported. Marked until nothing changes.
+ * file or imported. Marked until the index stops growing: only a new export changes another file's answer.
  */
 export function callsOutIndex(
   sources: Iterable<readonly [string, string]>,
@@ -314,13 +340,10 @@ export function callsOutIndex(
     changed = false;
     for (const f of files) {
       const test = stripeCallTest(f.sf, f.imports, index, f.local);
-      for (const fn of f.functions) {
-        if (f.local.has(fn.name) || !hasCall(fn.body, test)) continue;
-        f.local.add(fn.name);
+      for (const fn of markReachers(f.functions, test, f.local)) {
+        if (!fn.exported) continue;
+        index.set(f.module, (index.get(f.module) ?? new Set()).add(fn.name));
         changed = true;
-        if (fn.exported) {
-          index.set(f.module, (index.get(f.module) ?? new Set()).add(fn.name));
-        }
       }
     }
   }
@@ -329,7 +352,7 @@ export function callsOutIndex(
 
 /**
  * `file`'s violations, `text` its contents, as path:line: rule: message lines. `index`: the functions outside the
- * payments domain that reach Stripe (callsOutIndex over src).
+ * payments domain that reach Stripe (callsOutIndex over src); the file's own are marked here.
  */
 export function violationsIn(
   file: string,
@@ -382,7 +405,10 @@ export function violationsIn(
     }
   }
 
-  const isPaymentCall = stripeCallTest(sf, imports, index);
+  // The index lists only exports: a same-file helper that reaches Stripe, called inside a transaction, counts too.
+  const local = new Set<string>();
+  const isPaymentCall = stripeCallTest(sf, imports, index, local);
+  markReachers(topLevelFunctions(sf), isPaymentCall, local);
 
   const visit = (node: ts.Node, inTransaction: boolean): void => {
     if (ts.isCallExpression(node)) {

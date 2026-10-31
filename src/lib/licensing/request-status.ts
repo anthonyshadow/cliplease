@@ -138,11 +138,23 @@ export const VIEW_COPY = {
 
 export type RequestView = keyof typeof VIEW_COPY;
 
+/** The "Not approved" views, one per reason a buyer is told (01 §4.8): /r and the request-declined email share them. */
+export type DeclinedView = "declined" | "video_disabled";
+
+/**
+ * A declined request's view, from its status_reason: a disabled video says so (07 D28); the creator's decline, or a
+ * reason it doesn't know, is the creator's body. P19g adds the exclusive conflict here and in VIEW_COPY, so /r and
+ * request-declined change together.
+ */
+export function declinedView(statusReason: string | null): DeclinedView {
+  return statusReason === "video_disabled" ? "video_disabled" : "declined";
+}
+
 /**
  * The view for a request (05 §4.3), from its stored status first (07 D25: an ending shows only once it is stored):
  * `canceled` (Stripe's cancel_url) and `returning` (its success_url) only mean something while checkout is pending, so
  * a link replayed later shows where the request is. An abandoned request says why, as 07 D27 words it; a reason it
- * doesn't know reads as a checkout not completed. A declined one names a disabled video (07 D28). null (a 404) for the
+ * doesn't know reads as a checkout not completed. A declined one says why through declinedView. null (a 404) for the
  * renewal rows, which live on My licenses (01 §4.8).
  */
 export function requestView(
@@ -158,9 +170,7 @@ export function requestView(
     case "approved":
       return "approved";
     case "declined":
-      return r.statusReason === "video_disabled"
-        ? "video_disabled"
-        : "declined";
+      return declinedView(r.statusReason);
     case "expired":
       return "expired";
     case "capture_failed":

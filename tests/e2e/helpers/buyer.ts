@@ -37,15 +37,18 @@ export async function chooseDemoSelection(page: Page) {
   await choose(page, "territory", "worldwide");
 }
 
-/** The licensee every helper fills in. */
+/** The licensee every helper fills in unless given one. */
 export const E2E_LICENSEE = "Daily Laughs Media LLC";
 
-/** Fills "Your details" with a valid licensee, name and `email`; the terms stay unticked. */
+/** Fills "Your details" with a valid `licensee`, name and `email`; the terms stay unticked. */
 export async function fillDetails(
   page: Page,
-  { email = "Ana.Buyer@Studio.COM" }: { email?: string } = {},
+  {
+    email = "Ana.Buyer@Studio.COM",
+    licensee = E2E_LICENSEE,
+  }: { email?: string; licensee?: string } = {},
 ) {
-  await page.getByLabel("Licensed to", { exact: true }).fill(E2E_LICENSEE);
+  await page.getByLabel("Licensed to", { exact: true }).fill(licensee);
   await page.getByLabel("Your name", { exact: true }).fill("Sam Lee");
   await page.getByLabel("Email", { exact: true }).fill(email);
 }
@@ -90,6 +93,8 @@ export type LicenseChoice = {
   /** The country or region the select takes, for those territories. */
   country?: string;
   email?: string;
+  /** Who the license is for (E2E_LICENSEE unless given): a spec with several requests tells its rows apart by it. */
+  licensee?: string;
 };
 
 /**
@@ -99,7 +104,7 @@ export type LicenseChoice = {
 export async function requestLicense(
   page: Page,
   shareUrl: string,
-  { use, term, territory, country, email }: LicenseChoice,
+  { use, term, territory, country, email, licensee }: LicenseChoice,
 ) {
   await page.goto(shareUrl);
   await hydrated(page);
@@ -113,7 +118,7 @@ export async function requestLicense(
       .getByLabel(LICENSE_PAGE_COPY[territory].label, { exact: true })
       .selectOption(country);
   }
-  await fillDetails(page, { email });
+  await fillDetails(page, { email, licensee });
   const terms = page.getByRole("checkbox");
   await terms.focus();
   await terms.press("Space");

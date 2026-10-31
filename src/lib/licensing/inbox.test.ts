@@ -1,11 +1,25 @@
 import { describe, expect, it } from "vitest";
 import {
   approveOutcome,
+  declineOutcome,
   INBOX_COPY,
   outcomeLine,
   requestPageLine,
   requestPill,
+  showsSeal,
 } from "./inbox";
+
+/** What the action's own failure, or a request that isn't the creator's, shows: the generic error, the row live. */
+const generic = {
+  settles: false,
+  pill: null,
+  line: {
+    kind: "text",
+    text: "Something went wrong. Try again.",
+    danger: false,
+  },
+  toast: null,
+};
 
 describe("the Inbox's words (04 §11.5; 05 §6.3, §6.4)", () => {
   it("counts in the title and the segment", () => {
@@ -40,6 +54,17 @@ describe("the Inbox's words (04 §11.5; 05 §6.3, §6.4)", () => {
     );
     expect(INBOX_COPY.payoutsWaiting(null)).toBe(
       "Finish payout setup to approve.",
+    );
+  });
+
+  it("names Decline and its two endings with 04 §11.5's strings (01 J8.4, J8.6)", () => {
+    expect([INBOX_COPY.decline, INBOX_COPY.declining]).toEqual([
+      "Decline",
+      "Declining…",
+    ]);
+    expect(INBOX_COPY.declinedLine).toBe("Declined. The buyer wasn't charged.");
+    expect(INBOX_COPY.expiredNotCharged).toBe(
+      "This request expired. The buyer wasn't charged.",
     );
   });
 
@@ -108,7 +133,7 @@ describe("outcomeLine (04 §11.5)", () => {
 
   it.each([
     ["approved", null],
-    ["declined", "creator_declined"],
+    ["declined", "creator"],
     ["awaiting_approval", null],
   ] as const)("has no line for %s (%s)", (status, statusReason) => {
     expect(outcomeLine({ status, statusReason }, deadline)).toBeNull();
@@ -132,12 +157,12 @@ describe("approveOutcome (04 §11.5; 05 §6.3 States)", () => {
     );
   });
 
-  it("settles a late tap with the countdown kept and no 'wasn't charged' yet (07 D25; owner answer P18 Q2)", () => {
+  it("settles a late tap with the Expired pill and no 'wasn't charged' yet (07 D25; owner answers Q-140 a, Q-142 a)", () => {
     const o = approveOutcome(
       { ok: false, reason: "expired", status: "awaiting_approval" },
       request,
     );
-    expect(o).toMatchObject({ settles: true, pill: null, toast: null });
+    expect(o).toMatchObject({ settles: true, pill: "expired", toast: null });
     expect(o.line).toEqual({
       kind: "text",
       text: "This request expired.",
@@ -216,16 +241,6 @@ describe("approveOutcome (04 §11.5; 05 §6.3 States)", () => {
   });
 
   it("says the generic error for the action's own failure or a request that isn't the creator's", () => {
-    const generic = {
-      settles: false,
-      pill: null,
-      line: {
-        kind: "text",
-        text: "Something went wrong. Try again.",
-        danger: false,
-      },
-      toast: null,
-    };
     expect(approveOutcome(null, request)).toEqual(generic);
     expect(
       approveOutcome(
@@ -242,10 +257,93 @@ describe("approveOutcome (04 §11.5; 05 §6.3 States)", () => {
   });
 });
 
+describe("declineOutcome (05 §6.3 States; 01 J8.4)", () => {
+  it("settles a decline with the Declined pill, its line and the same sentence as a toast, without the seal", () => {
+    const o = declineOutcome({ ok: true });
+    expect(o).toEqual({
+      settles: true,
+      pill: "declined",
+      line: {
+        kind: "text",
+        text: "Declined. The buyer wasn't charged.",
+        danger: false,
+      },
+      toast: "Declined. The buyer wasn't charged.",
+    });
+    expect(showsSeal(o)).toBe(false);
+  });
+
+  it("leaves the row live with retry's line when Stripe can't be reached", () => {
+    expect(
+      declineOutcome({
+        ok: false,
+        reason: "retry",
+        status: "awaiting_approval",
+      }),
+    ).toEqual({
+      settles: false,
+      pill: null,
+      line: {
+        kind: "text",
+        text: "Couldn't reach the payment service. Try again.",
+        danger: false,
+      },
+      toast: null,
+    });
+  });
+
+  it("settles a decline that found the expiry stored with its pill and the recorded sentence, no toast (owner answer Q-143 a)", () => {
+    expect(
+      declineOutcome({
+        ok: false,
+        reason: "not_actionable",
+        status: "expired",
+      }),
+    ).toEqual({
+      settles: true,
+      pill: "expired",
+      line: {
+        kind: "text",
+        text: "This request expired. The buyer wasn't charged.",
+        danger: false,
+        recorded: true,
+      },
+      toast: null,
+    });
+  });
+
+  it.each(["approved", "declined", "capture_failed"] as const)(
+    "settles a race lost to %s quietly with that pill (J8.8)",
+    (status) => {
+      expect(
+        declineOutcome({ ok: false, reason: "not_actionable", status }),
+      ).toEqual({ settles: true, pill: status, line: null, toast: null });
+    },
+  );
+
+  it("settles nothing while a claim runs: the refresh shows Processing… or the waiting row", () => {
+    expect(
+      declineOutcome({
+        ok: false,
+        reason: "not_actionable",
+        status: "awaiting_approval",
+      }),
+    ).toEqual({ settles: false, pill: null, line: null, toast: null });
+  });
+
+  it("says the generic error for the action's own failure or a request that isn't the creator's", () => {
+    expect(declineOutcome(null)).toEqual(generic);
+    expect(
+      declineOutcome({ ok: false, reason: "not_actionable", status: null }),
+    ).toEqual(generic);
+  });
+});
+
 describe("requestPageLine (05 §6.4)", () => {
   const waiting = {
     licenseCode: null,
     status: "awaiting_approval",
+    displayStatus: "awaiting_approval",
     statusReason: null,
   } as const;
   const request = { licensePriceCents: 157500, currency: "cad" } as const;
@@ -270,30 +368,81 @@ describe("requestPageLine (05 §6.4)", () => {
     expect(
       requestPageLine(
         late,
-        { licenseCode: null, status: "expired", statusReason: "deadline" },
+        {
+          licenseCode: null,
+          status: "expired",
+          displayStatus: "expired",
+          statusReason: "deadline",
+        },
         false,
       ),
     ).toBeNull();
   });
 
-  it("keeps a line the record never shows after the refresh (a plain decline's, P19)", () => {
-    const declined = {
-      settles: true,
-      pill: "declined",
-      line: {
+  it("keeps a plain decline's line, which the record never shows, before and after the refresh", () => {
+    const declined = declineOutcome({ ok: true });
+    for (const record of [
+      waiting,
+      {
+        licenseCode: null,
+        status: "declined",
+        displayStatus: "declined",
+        statusReason: "creator",
+      },
+    ] as const) {
+      expect(requestPageLine(declined, record, false)).toEqual({
         kind: "text",
         text: "Declined. The buyer wasn't charged.",
         danger: false,
+      });
+    }
+  });
+
+  it("leaves a decline's stored expiry to the record, before and after the refresh (owner answer Q-143 a)", () => {
+    const expired = declineOutcome({
+      ok: false,
+      reason: "not_actionable",
+      status: "expired",
+    });
+    for (const record of [
+      waiting,
+      {
+        licenseCode: null,
+        status: "expired",
+        displayStatus: "expired",
+        statusReason: "deadline",
       },
-      toast: null,
-    } as const;
-    expect(
-      requestPageLine(
-        declined,
-        { licenseCode: null, status: "declined", statusReason: "creator" },
-        false,
-      ),
-    ).toEqual(declined.line);
+    ] as const) {
+      expect(requestPageLine(expired, record, false)).toBeNull();
+    }
+  });
+
+  it("keeps a decline's retry line while the request waits", () => {
+    const retry = declineOutcome({
+      ok: false,
+      reason: "retry",
+      status: "awaiting_approval",
+    });
+    expect(requestPageLine(retry, waiting, false)).toEqual(retry.line);
+  });
+
+  it("drops a line that left the request live once it no longer waits: Expired or Processing… (Q-142 a)", () => {
+    const retry = declineOutcome({
+      ok: false,
+      reason: "retry",
+      status: "awaiting_approval",
+    });
+    const payouts = approveOutcome(
+      { ok: false, reason: "payouts_not_active", status: "awaiting_approval" },
+      request,
+    );
+    for (const displayStatus of ["expired", "processing"] as const) {
+      for (const live of [retry, payouts]) {
+        expect(
+          requestPageLine(live, { ...waiting, displayStatus }, false),
+        ).toBeNull();
+      }
+    }
   });
 
   it("leaves the payouts sentence to the page's Notice when it shows", () => {

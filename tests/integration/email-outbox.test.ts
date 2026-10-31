@@ -6,6 +6,7 @@ import { db } from "../../src/db/client";
 import { emailLog, licenseRequest, user } from "../../src/db/schema";
 import type { CreatorProfile, LicenseRequest } from "../../src/db/schema/types";
 import { formatEmailDateTime } from "../../src/lib/format";
+import { REQUEST_STATUS_COPY } from "../../src/lib/licensing/request-status";
 import { HOUR_MS } from "../../src/lib/time";
 import { WEBHOOK } from "../../src/server/auth/actor";
 import {
@@ -26,12 +27,20 @@ import {
   pendingCheckoutRequest,
 } from "../helpers/approval-fixtures";
 import { insertCreator } from "../helpers/factories";
-import { captureLogEvents } from "../helpers/logs";
+import {
+  AFTER_FAILED,
+  captureLogEvents,
+  dropStderr,
+  endStderr,
+  recordStderr,
+} from "../helpers/logs";
 import { readLatestEmail } from "../helpers/read-latest-email";
 
 // The email outbox (P17; 02 §5.10; 03 §3.8, I21; 07 D34, D47, D84): the authorized transition queues request-new and
 // request-received in its own transaction, they are sent after the response (after() runs at once here), and the
-// retry picks up what is left. The console driver writes .data/emails; a test can make it fail.
+// retry picks up what is left. P19: the declined transition queues request-declined to the buyer the same way; no
+// other ending of a waiting request emails anyone in CORE. The console driver writes .data/emails; a test can make it
+// fail.
 
 const driver = vi.hoisted(() => ({
   fail: false,
@@ -69,8 +78,17 @@ beforeEach(() => {
   driver.fail = false;
   driver.keys = [];
   driver.gate = undefined;
+  recordStderr(AFTER_FAILED);
 });
-afterEach(flushAfter);
+afterEach(async () => {
+  try {
+    await flushAfter();
+    // No after() task failed: afterResponse logs a failure instead of rejecting.
+    endStderr();
+  } finally {
+    dropStderr();
+  }
+});
 
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 
@@ -391,6 +409,26 @@ describe("sending (02 §5.10 step 2)", () => {
     }
   });
 
+  it("the retry starts no row once a cron's stopAt has passed", async () => {
+    const { row, ids } = await waitingRequest();
+    driver.fail = true;
+    const quiet = captureLogEvents("email.send_failed");
+    await sendQueuedEmails(ids);
+    quiet();
+    driver.fail = false;
+    expect(await retryEmailOutbox({ limit: 100, stopAt: Date.now() })).toBe(0);
+    for (const r of await rowsOf(row.id)) {
+      expect(r).toMatchObject({ status: "failed", attempts: 1 });
+    }
+    expect(driver.keys).toEqual([]);
+    expect(
+      await retryEmailOutbox({ limit: 100, stopAt: Date.now() + 60_000 }),
+    ).toBeGreaterThanOrEqual(2);
+    for (const r of await rowsOf(row.id)) {
+      expect(r).toMatchObject({ status: "sent", attempts: 2 });
+    }
+  });
+
   it("the retry sends queued rows only once they are 2 minutes old", async () => {
     const { row } = await waitingRequest();
     await retryEmailOutbox({ limit: 100 });
@@ -466,5 +504,161 @@ describe("sending (02 §5.10 step 2)", () => {
     expect(await rowOf(row.id, "request-new")).toMatchObject({
       status: "sent",
     });
+  });
+});
+
+describe("request-declined (P19; 05 §8; 07 D25, D28, D34; 01 J8.4)", () => {
+  const DECLINED_SUBJECT = "Not approved: you weren't charged";
+
+  /** The decline's ending in its own transaction, as finishCanceled commits it once Stripe has released the hold. */
+  const decline = (
+    id: string,
+    statusReason: "creator" | "video_disabled" = "creator",
+  ) =>
+    db.transaction((tx) =>
+      applyTransition(
+        tx,
+        id,
+        "declined",
+        { declinedAt: new Date(), statusReason },
+        WEBHOOK,
+      ),
+    );
+
+  const templatesOf = async (requestId: string) =>
+    (await rowsOf(requestId)).map((r) => r.template);
+
+  it("the declined transition queues request-declined to the buyer in its transaction, and nothing for the creator", async () => {
+    const { row } = await waitingRequest();
+    const result = await decline(row.id);
+    const declined = await rowOf(row.id, "request-declined");
+    expect(result.effects).toEqual([
+      { kind: "email", emailLogId: declined.id },
+    ]);
+    expect(declined).toMatchObject({
+      idempotencyKey: `request-declined/${row.id}`,
+      entityType: "license_request",
+      entityId: row.id,
+      recipientHash: sha256(row.buyerEmail.toLowerCase()),
+      subject: DECLINED_SUBJECT,
+      status: "queued",
+      attempts: 0,
+      provider: "console",
+      sentAt: null,
+      error: null,
+    });
+    expect(await templatesOf(row.id)).toEqual([
+      "request-declined",
+      "request-new",
+      "request-received",
+    ]);
+  });
+
+  it("sends it once, with /r's Not approved body and the buyer's link, which opens the request", async () => {
+    const { row, creator, live } = await waitingRequest();
+    const { effects } = await decline(row.id);
+    const since = Date.now();
+    await sendQueuedEmails(effects.map((e) => e.emailLogId));
+    expect(await rowOf(row.id, "request-declined")).toMatchObject({
+      status: "sent",
+      attempts: 1,
+      error: null,
+      sentAt: expect.any(Date),
+    });
+    const sent = await readLatestEmail({
+      to: row.buyerEmail,
+      template: "request-declined",
+      since,
+    });
+    expect(sent.subject).toBe(DECLINED_SUBJECT);
+    expect(sent.text).toContain(
+      REQUEST_STATUS_COPY.declinedBody(creator.handle),
+    );
+    expect(sent.text).toContain(live.title);
+    const link = new RegExp(
+      `${env.APP_URL}/r/${row.id}\\?t=([A-Za-z0-9_-]{43})`,
+    ).exec(sent.text);
+    expect(link).not.toBeNull();
+    expect((await findRequestForBuyer(row.id, link?.[1] ?? ""))?.id).toBe(
+      row.id,
+    );
+    expect(driver.keys).toEqual([`request-declined/${row.id}`]);
+  });
+
+  it("says the video is gone when that is why it was declined (video_disabled)", async () => {
+    const { row } = await waitingRequest();
+    const { effects } = await decline(row.id, "video_disabled");
+    const since = Date.now();
+    await sendQueuedEmails(effects.map((e) => e.emailLogId));
+    const sent = await readLatestEmail({
+      to: row.buyerEmail,
+      template: "request-declined",
+      since,
+    });
+    expect(sent.subject).toBe(DECLINED_SUBJECT);
+    expect(sent.text).toContain(REQUEST_STATUS_COPY.videoDisabledBody);
+    expect(sent.text).not.toContain("didn't approve");
+  });
+
+  it.each([
+    { event: "expired", statusReason: "deadline" },
+    { event: "expired", statusReason: "hold_released" },
+    { event: "capture_failed", statusReason: "capture_error:card_declined" },
+  ] as const)(
+    "$event ($statusReason) queues nothing in CORE",
+    async ({ event, statusReason }) => {
+      const { row } = await waitingRequest();
+      const at = new Date();
+      const result = await db.transaction((tx) =>
+        applyTransition(
+          tx,
+          row.id,
+          event,
+          event === "expired"
+            ? { expiredAt: at, statusReason }
+            : { captureFailedAt: at, statusReason },
+          WEBHOOK,
+        ),
+      );
+      expect(result).toMatchObject({ changed: true, to: event, effects: [] });
+      expect(await templatesOf(row.id)).toEqual([
+        "request-new",
+        "request-received",
+      ]);
+    },
+  );
+
+  it("keeps no row when the decline's transaction rolls back", async () => {
+    const { row } = await waitingRequest();
+    await expect(
+      db.transaction(async (tx) => {
+        await applyTransition(
+          tx,
+          row.id,
+          "declined",
+          { declinedAt: new Date(), statusReason: "creator" },
+          WEBHOOK,
+        );
+        throw new Error("rolled back");
+      }),
+    ).rejects.toThrow("rolled back");
+    expect(await templatesOf(row.id)).toEqual([
+      "request-new",
+      "request-received",
+    ]);
+  });
+
+  it("a second decline adds no row", async () => {
+    const { row } = await waitingRequest();
+    await decline(row.id);
+    expect(await decline(row.id)).toMatchObject({
+      changed: false,
+      effects: [],
+    });
+    expect(await templatesOf(row.id)).toEqual([
+      "request-declined",
+      "request-new",
+      "request-received",
+    ]);
   });
 });

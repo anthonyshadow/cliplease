@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, count, desc, eq, inArray, min } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, sql } from "drizzle-orm";
 import { cache } from "react";
 import { db } from "@/db/client";
 import { creatorProfile, license, licenseRequest, video } from "@/db/schema";
@@ -18,6 +18,7 @@ import {
   posterSrc,
   postingPlatformsColumn,
 } from "../videos/visibility";
+import { overdueColumn } from "./deadline";
 
 // The request pages' reads (02 §4.1; 03 §7.1, §7.6). Every creator query is scoped to the caller's creator id, which
 // comes from requireCreator, never from the URL. A creator never sees a request in checkout, an abandoned one or a
@@ -40,6 +41,8 @@ const FACTS = {
   status: licenseRequest.status,
   statusReason: licenseRequest.statusReason,
   paymentAction: licenseRequest.paymentAction,
+  // displayStatus's deadline, on the database's clock as the claims read it (02 §4.4 rule 3).
+  overdue: overdueColumn,
   useKey: licenseRequest.useKey,
   termKey: licenseRequest.termKey,
   territoryKey: licenseRequest.territoryKey,
@@ -186,7 +189,9 @@ export async function getRequestForCreator(
 
 /**
  * The requests waiting for the creator: how many (the Inbox title, its segment and the NavBar/TabBar badge, 05 §6.3) and
- * the soonest deadline (the payouts Banner, 07 D77). One aggregate on license_request_inbox_idx, once per request.
+ * the soonest deadline still ahead on the database's clock (the payouts Banner, 07 D77): an overdue request reads
+ * Expired until its expiry is stored (owner answer Q-142 a), so the Banner never names a deadline that has passed. One
+ * aggregate on license_request_inbox_idx, once per request.
  */
 export const waitingSummary = cache(
   async (
@@ -195,7 +200,10 @@ export const waitingSummary = cache(
     const [row] = await db
       .select({
         count: count(),
-        soonest: min(licenseRequest.expiresAt),
+        soonest:
+          sql<Date | null>`min(${licenseRequest.expiresAt}) filter (where ${licenseRequest.expiresAt} > now())`.mapWith(
+            licenseRequest.expiresAt,
+          ),
       })
       .from(licenseRequest)
       .where(

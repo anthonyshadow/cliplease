@@ -1,5 +1,8 @@
 import { APP_NAME } from "@/lib/app-name";
-import { REQUEST_STATUS_COPY } from "@/lib/licensing/request-status";
+import {
+  type DeclinedView,
+  REQUEST_STATUS_COPY,
+} from "@/lib/licensing/request-status";
 
 // The request and license emails' words (05 §8; 01 §4.8). The subject is also the headline (05 §8 callout 2); the
 // licensee name in it can't hold a web address (WEB_ADDRESS_RE, owner answer Q-136 a). Button labels, footers and the test-mode line
@@ -20,6 +23,13 @@ export const REQUEST_EMAIL_COPY = {
   approvedSubject: (code: string) => `Approved: your license ${code} is ready`,
   /** /r's approved sentence, word for word (01 §4.8). */
   approvedBody: REQUEST_STATUS_COPY.approvedBody,
+  /** request-declined (05 §8): the same subject whatever the reason. */
+  declinedSubject: "Not approved: you weren't charged",
+  /** Its first paragraph: /r's "Not approved" body for the request's DeclinedView, word for word (05 §8 callout 3). */
+  declinedBody: {
+    declined: REQUEST_STATUS_COPY.declinedBody,
+    video_disabled: () => REQUEST_STATUS_COPY.videoDisabledBody,
+  } satisfies Record<DeclinedView, (handle: string) => string>,
   /** 05 §8 callout 10, 07 D98: under the first paragraph. */
   amountsIn: (label: string) => `Amounts in ${label}.`,
   licenseLine: (code: string) => `License ${code}`,

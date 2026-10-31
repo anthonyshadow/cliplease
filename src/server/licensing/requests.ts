@@ -1,16 +1,20 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import { db, type Tx } from "@/db/client";
 import { creatorProfile, licenseRequest, video } from "@/db/schema";
 import type { LicenseRequest } from "@/db/schema/types";
 import type { SocialProviderId } from "@/lib/domain/values";
+import type { DeclineResult } from "@/lib/licensing/request-dto";
 import {
   chosenMultipliers,
   feeTerms,
   scopeLabel,
 } from "@/lib/licensing/selection";
-import type { LicenseRequestEvent } from "@/lib/licensing/transitions";
+import {
+  isTerminal,
+  type LicenseRequestEvent,
+} from "@/lib/licensing/transitions";
 import {
   approvalWindowOf,
   computeExpiresAt,
@@ -21,7 +25,7 @@ import type { StartCheckoutInput } from "@/lib/validation/checkout";
 import { normalizeEmail } from "@/lib/validation/email";
 import { normalizeTimeZone } from "@/lib/validation/time-zone";
 import { writeAudit } from "../audit";
-import type { Actor } from "../auth/actor";
+import { type Actor, LAZY, WEBHOOK } from "../auth/actor";
 import { enabledCurrencies, env } from "../env";
 import { errorName, logEvent } from "../log";
 import {
@@ -49,10 +53,20 @@ import {
   postingPlatformsColumn,
 } from "../videos/visibility";
 import { authorizationMismatches } from "./authorization";
+import { overdueColumn, pastDeadline } from "./deadline";
 import { runEffects } from "./effects";
 import {
   applyTransition,
+  type ClaimedRequest,
+  canceledEventFor,
+  claimOf,
+  claimPaymentAction,
+  type DeclineReason,
+  finishCanceled,
   ignoredEvent,
+  isStuckClaim,
+  reconcileFromStripe,
+  reconcileIfStuck,
   type TransitionResult,
   unchangedResult,
 } from "./state-machine";
@@ -61,7 +75,9 @@ import {
 // D84, D94, D95): priced by the server, saved once per form submission, handed to Checkout, then authorized when the
 // card is held. Payouts are not checked: buyers can pay before the creator sets them up (07 D74). The video lock and
 // availability check (07 D110) arrive with P19f, whose tables they read (owner answer Q-122 a); until then
-// markAuthorized re-checks that the video is published. Statuses change only through applyTransition.
+// markAuthorized re-checks that the video is published. Then its endings other than approval (03 T8–T10; P19): the
+// creator's decline, expiry at the deadline, and Stripe's canceled event. Statuses change only through the state
+// machine.
 
 export type CreateLicenseRequestResult =
   | { ok: true; checkoutUrl: string }
@@ -431,6 +447,253 @@ export async function reconcileCheckoutReturn(
   const auth = await getAuthorization(row.currency, session.paymentIntentId);
   if (auth.status !== "requires_capture") return;
   await markAuthorized(row.id, { kind: "system", source: "return_url" });
+}
+
+/** Who may decline, and why (07 D28): the request's creator, as `creator`. P21 adds the admin with `video_disabled`. */
+function declineScope(
+  actor: Actor,
+  reason: DeclineReason,
+): { creatorId: string } | null {
+  return actor.kind === "creator" && reason === "creator"
+    ? { creatorId: actor.creatorId }
+    : null;
+}
+
+/** Decline's view of a request, scoped to the creator: null when it isn't theirs. */
+async function declineState(requestId: string, creatorId: string) {
+  const [row] = await db
+    .select({
+      status: licenseRequest.status,
+      paymentAction: licenseRequest.paymentAction,
+      paymentActionAt: licenseRequest.paymentActionAt,
+      overdue: overdueColumn,
+    })
+    .from(licenseRequest)
+    .where(
+      and(
+        eq(licenseRequest.id, requestId),
+        eq(licenseRequest.creatorId, creatorId),
+      ),
+    );
+  return row ?? null;
+}
+
+type DeclineState = NonNullable<Awaited<ReturnType<typeof declineState>>>;
+
+/** Decline's state after a step that may have changed it; the request was the creator's a moment ago. */
+async function declineStateOf(
+  requestId: string,
+  creatorId: string,
+): Promise<DeclineState> {
+  const state = await declineState(requestId, creatorId);
+  if (!state) throw new Error("declineLicenseRequest: the request is gone");
+  return state;
+}
+
+const notActionable = (s: DeclineState): DeclineResult => ({
+  ok: false,
+  reason: "not_actionable",
+  status: s.status,
+});
+
+/**
+ * Declines waiting request `requestId` (02 §8.2; 03 T8; 07 D24, D25, D28; owner answer OQ-31: one tap). A stuck claim is
+ * reconciled first, and past its deadline the request expires instead (T9). Otherwise: the decline claim, the cancel
+ * (requested_by_customer, `pi-cancel:<id>:decline:<attempt>`) outside any transaction, the fenced finish, or Stripe's
+ * word when the cancel isn't ok. ok only once the request is stored declined: a released claim says retry, a claim
+ * still held reads Processing…, and a late capture that won reports approved. `reason` is the server's (declineScope).
+ */
+export async function declineLicenseRequest(
+  requestId: string,
+  actor: Actor,
+  reason: DeclineReason = "creator",
+): Promise<DeclineResult> {
+  const scope = declineScope(actor, reason);
+  if (!scope) return { ok: false, reason: "not_actionable", status: null };
+  const { creatorId } = scope;
+  let state = await declineState(requestId, creatorId);
+  if (!state) return { ok: false, reason: "not_actionable", status: null };
+  if (await reconcileIfStuck(requestId, state, actor)) {
+    state = await declineStateOf(requestId, creatorId);
+  }
+  if (
+    state.status === "awaiting_approval" &&
+    !state.paymentAction &&
+    state.overdue
+  ) {
+    // T8: the deadline passed, so the request expires; it reads expired only once Stripe has released the hold.
+    await expireLicenseRequest(requestId, LAZY);
+    return notActionable(await declineStateOf(requestId, creatorId));
+  }
+  const claimed = await claimPaymentAction(requestId, "decline");
+  if (!claimed)
+    return notActionable(await declineStateOf(requestId, creatorId));
+  const done = await cancelClaimed(claimed, actor, reason);
+  if (done?.to === "declined") return { ok: true };
+  const after = await declineStateOf(requestId, creatorId);
+  if (after.status === "declined") return { ok: true };
+  return after.status === "awaiting_approval" && !after.paymentAction
+    ? { ok: false, reason: "retry", status: after.status }
+    : notActionable(after);
+}
+
+/**
+ * The cancel a decline or an expiry claimed (02 §8.2; 03 T8, T9; 07 D24, D25, D30), outside any transaction and keyed
+ * by the claim's attempt: ok → the fenced finish; else Stripe's word through reconcileFromStripe with the claim, which
+ * releases it while the hold still waits. Never throws: after a failure the claim stays for the stuck-claim reconcile.
+ * The finish's result when this call wrote the ending, else null.
+ */
+async function cancelClaimed(
+  claimed: ClaimedRequest,
+  actor: Actor,
+  statusReason?: DeclineReason,
+): Promise<TransitionResult | null> {
+  const claim = {
+    action: claimed.paymentAction,
+    claimedAt: claimed.paymentActionAt,
+  };
+  const reason = claim.action === "decline" ? "decline" : "expire";
+  try {
+    if (!claimed.stripePaymentIntentId) {
+      throw new Error("cancelClaimed: a waiting request without a hold");
+    }
+    const outcome = await cancel(
+      claimed.currency,
+      claimed.id,
+      claimed.stripePaymentIntentId,
+      reason,
+      claimed.stripeAttempt,
+    );
+    if (outcome.ok) {
+      return await finishCanceled(claimed.id, { claim, actor, statusReason });
+    }
+    await reconcileFromStripe(claimed.id, { actor, claim });
+  } catch (error) {
+    logEvent("warn", "license_request.cancel_claim_failed", {
+      requestId: claimed.id,
+      action: claim.action,
+      error: errorName(error),
+    });
+  }
+  return null;
+}
+
+/** The stored request. */
+async function storedRequest(requestId: string): Promise<LicenseRequest> {
+  const [row] = await db
+    .select()
+    .from(licenseRequest)
+    .where(eq(licenseRequest.id, requestId));
+  if (!row) throw new Error("license request: unknown request");
+  return row;
+}
+
+/**
+ * T9 (03 §5.1; 07 D25, D57, D77): expires waiting request `requestId` once its deadline has passed on the database's
+ * clock: the expire claim, the cancel (abandoned, `pi-cancel:<id>:expire:<attempt>`), then expired / deadline, or
+ * Stripe's word when the cancel isn't ok (a hold that still waits releases the claim, so the request is due again). Any
+ * actor: the deadline decides, not who asks. Null when nothing was claimed (not due, claimed or decided); the finish's
+ * result when this call wrote the ending; else the request as it now is (expired by the webhook, approved by a late
+ * capture, or waiting).
+ */
+export async function expireLicenseRequest(
+  requestId: string,
+  actor: Actor,
+): Promise<TransitionResult | null> {
+  const claimed = await claimPaymentAction(requestId, "expire");
+  if (!claimed) return null;
+  const done = await cancelClaimed(claimed, actor);
+  return done ?? unchangedResult(await storedRequest(requestId));
+}
+
+/**
+ * Expires the waiting requests nobody holds whose deadline has passed (02 §8.4; 03 §7.10), soonest first, one at a time:
+ * one request (/r), one creator's (their pages), or up to `limit` (the cron, which starts none after `stopAt`, epoch
+ * ms). A request that fails is logged and the rest go on. Returns how many are now expired, never how many were tried:
+ * a released claim is due again, so a caller rerunning only after a full batch stops.
+ */
+export async function expireDueRequests({
+  requestId,
+  creatorId,
+  limit = 100,
+  actor = LAZY,
+  stopAt,
+}: {
+  requestId?: string;
+  creatorId?: string;
+  limit?: number;
+  actor?: Actor;
+  stopAt?: number;
+} = {}): Promise<number> {
+  const due = await db
+    .select({ id: licenseRequest.id })
+    .from(licenseRequest)
+    .where(
+      and(
+        requestId ? eq(licenseRequest.id, requestId) : undefined,
+        creatorId ? eq(licenseRequest.creatorId, creatorId) : undefined,
+        eq(licenseRequest.status, "awaiting_approval"),
+        isNull(licenseRequest.paymentAction),
+        pastDeadline,
+      ),
+    )
+    .orderBy(asc(licenseRequest.expiresAt), asc(licenseRequest.id))
+    .limit(limit);
+  let expired = 0;
+  for (const { id } of due) {
+    if (stopAt !== undefined && Date.now() >= stopAt) break;
+    try {
+      const result = await expireLicenseRequest(id, actor);
+      if (result?.to === "expired") expired += 1;
+    } catch (error) {
+      logEvent("warn", "license_request.expire_failed", {
+        requestId: id,
+        error: errorName(error),
+      });
+    }
+  }
+  return expired;
+}
+
+/**
+ * payment_intent.canceled (02 §8.1; 03 T6, T10, T13; 07 D25, D26). The event is never trusted alone: a waiting request is
+ * reconciled from its own PaymentIntent, so it ends only once Stripe says the hold is canceled (declined for a decline
+ * claim; expired with deadline for an expire claim, with hold_released for none, Stripe's own cancel, J8.7). A capture
+ * claim is its holder's to finish, unless stuck (07 D26: then capture_failed). An ended request records the late event.
+ * Acts as the webhook. A retrieve that throws throws, so the delivery fails and Stripe sends it again.
+ */
+export async function handlePaymentIntentCanceled(
+  requestId: string,
+): Promise<TransitionResult> {
+  const before = await storedRequest(requestId);
+  if (before.status !== "awaiting_approval") {
+    if (isTerminal(before.status)) {
+      await writeAudit(
+        db,
+        WEBHOOK,
+        ignoredEvent(
+          requestId,
+          before.status,
+          canceledEventFor(claimOf(before)),
+          { stripeEvent: "payment_intent.canceled" },
+        ),
+      );
+    }
+    return unchangedResult(before);
+  }
+  const claim = claimOf(before);
+  if (claim?.action === "capture" && !isStuckClaim(claim.claimedAt)) {
+    return unchangedResult(before);
+  }
+  await reconcileFromStripe(requestId, { actor: WEBHOOK });
+  const after = await storedRequest(requestId);
+  return {
+    changed: after.status !== before.status,
+    from: before.status,
+    to: after.status,
+    effects: [],
+    row: after,
+  };
 }
 
 /** The video can still be licensed (07 D27): published, and not hidden by a mock posting (07 D51). */

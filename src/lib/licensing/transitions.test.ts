@@ -93,29 +93,38 @@ describe("isTerminal (03 §5.1, 07 D117)", () => {
   });
 });
 
-describe("displayStatus (07 D25, D26)", () => {
-  it("reads a claimed waiting request as processing", () => {
-    expect(
-      displayStatus({ status: "awaiting_approval", paymentAction: "capture" }),
-    ).toBe("processing");
-    expect(
-      displayStatus({ status: "awaiting_approval", paymentAction: "decline" }),
-    ).toBe("processing");
-  });
-
-  it.each(LICENSE_REQUEST_STATUSES.filter((s) => s !== "awaiting_approval"))(
-    "shows %s as stored, a claim left on the row or not",
-    (status) => {
-      expect(displayStatus({ status, paymentAction: "capture" })).toBe(status);
-      expect(displayStatus({ status, paymentAction: null })).toBe(status);
+describe("displayStatus (07 D25, D26; owner answer Q-142 a)", () => {
+  it.each([
+    { paymentAction: "capture", overdue: false, shown: "processing" },
+    { paymentAction: "capture", overdue: true, shown: "processing" },
+    { paymentAction: "decline", overdue: false, shown: "processing" },
+    { paymentAction: "decline", overdue: true, shown: "processing" },
+    { paymentAction: "expire", overdue: false, shown: "processing" },
+    { paymentAction: "expire", overdue: true, shown: "processing" },
+    { paymentAction: null, overdue: false, shown: "awaiting_approval" },
+    { paymentAction: null, overdue: true, shown: "expired" },
+  ] as const)(
+    "reads a waiting request with claim $paymentAction, overdue $overdue, as $shown: a claim is processing even past its deadline, and an unclaimed one past it expired until the expiry is stored",
+    ({ paymentAction, overdue, shown }) => {
+      expect(
+        displayStatus({ status: "awaiting_approval", paymentAction, overdue }),
+      ).toBe(shown);
     },
   );
 
-  it("keeps an unclaimed waiting request waiting: it reads no clock", () => {
-    expect(
-      displayStatus({ status: "awaiting_approval", paymentAction: null }),
-    ).toBe("awaiting_approval");
-  });
+  it.each(LICENSE_REQUEST_STATUSES.filter((s) => s !== "awaiting_approval"))(
+    "shows %s as stored, a claim left on the row or not, overdue or not",
+    (status) => {
+      for (const overdue of [false, true]) {
+        expect(
+          displayStatus({ status, paymentAction: "capture", overdue }),
+        ).toBe(status);
+        expect(displayStatus({ status, paymentAction: null, overdue })).toBe(
+          status,
+        );
+      }
+    },
+  );
 });
 
 describe("effectiveStatus (07 D26)", () => {

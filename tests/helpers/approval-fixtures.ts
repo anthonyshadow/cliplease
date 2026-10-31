@@ -1,8 +1,11 @@
 // Approvable requests for [int] tests (P18; P19, P19c and P19g reuse them): a creator whose payouts are active, and an
 // awaiting_approval request the fake driver resolves (`pi_fake_<its id>`), with a real sealed buyer key so its emails
-// compose. Built by the factories and one authorized transition, as markAuthorized commits it.
+// compose. Built by the factories and one authorized transition, as markAuthorized commits it. P19 adds the clocks:
+// a request past its deadline (overdue) and a claim stuck since minutes ago (claimedMinutesAgo).
 import { randomUUID } from "node:crypto";
+import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { db } from "../../src/db/client";
+import { licenseRequest } from "../../src/db/schema";
 import type {
   CreatorProfile,
   LicenseRequest,
@@ -10,7 +13,7 @@ import type {
   NewLicenseRequest,
   Video,
 } from "../../src/db/schema/types";
-import { DAY_MS, HOUR_MS } from "../../src/lib/time";
+import { DAY_MS, HOUR_MS, MINUTE_MS } from "../../src/lib/time";
 import { type Actor, WEBHOOK } from "../../src/server/auth/actor";
 import {
   applyTransition,
@@ -115,4 +118,42 @@ export async function waitingRequest(
   );
   const result = await authorizeRequest(pending.id);
   return { row: result.row, token, result };
+}
+
+/**
+ * Puts waiting request `id` past its deadline on the database's clock, as the claims' guards and the overdue reads see it:
+ * expires_at `minutes` ago (1 by default; 0 is now(), the deadline itself), authorized_at an hour ago, so `minutes`
+ * under 60 keeps expires_at after it (license_request_expires_after_auth); capture_before stays 7 days out
+ * (license_request_hold_margin).
+ */
+export async function overdue(id: string, minutes = 1): Promise<void> {
+  const moved = await db
+    .update(licenseRequest)
+    .set({
+      authorizedAt: sql`now() - interval '1 hour'`,
+      expiresAt: sql`now() - make_interval(mins => ${minutes}::int)`,
+    })
+    .where(eq(licenseRequest.id, id))
+    .returning({ id: licenseRequest.id });
+  if (moved.length === 0) throw new Error("overdue: unknown request");
+}
+
+/**
+ * Backdates request `id`'s claim to `minutes` ago on the claim's own (JS) clock, as a holder that died would leave it
+ * (07 D26). Returns the claim's new time.
+ */
+export async function claimedMinutesAgo(
+  id: string,
+  minutes: number,
+): Promise<Date> {
+  const claimedAt = new Date(Date.now() - minutes * MINUTE_MS);
+  const moved = await db
+    .update(licenseRequest)
+    .set({ paymentActionAt: claimedAt })
+    .where(
+      and(eq(licenseRequest.id, id), isNotNull(licenseRequest.paymentAction)),
+    )
+    .returning({ id: licenseRequest.id });
+  if (moved.length === 0) throw new Error("claimedMinutesAgo: no claim held");
+  return claimedAt;
 }

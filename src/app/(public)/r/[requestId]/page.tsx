@@ -69,8 +69,8 @@ export async function generateMetadata(
 
 /**
  * S03, the buyer's request status (01 §4.8, J7.17; 05 §4.3; 04 §11.3): every state's words, its stored status only (07
- * D25), and the summary card. While the request waits, a neutral countdown (or "Processing…" while a capture or decline
- * is claimed, 07 D26), and the page refreshes on focus and every 30 s. No loading.tsx: a streamed route answers 200, and
+ * D25), and the summary card. While the request waits, a neutral countdown (or "Processing…" while a capture, decline
+ * or expiry is claimed, 07 D26), and the page refreshes on focus and every 30 s. No loading.tsx: a streamed route answers 200, and
  * a dead link must be a real 404 (owner answer Q-110 a). The Get file and license button comes with /l in P20.
  */
 export default async function RequestStatusPage(

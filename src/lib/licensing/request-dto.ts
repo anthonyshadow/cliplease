@@ -43,7 +43,7 @@ export type CreatorRequest = RequestFacts & {
 export const INBOX_VIEWS = ["waiting", "history"] as const;
 export type InboxView = (typeof INBOX_VIEWS)[number];
 
-/** Why Approve didn't approve (02 §5.7, §8.2; 04 §11.5). P19g adds exclusive_conflict. */
+/** Why Approve didn't approve (02 §5.7, §8.2; 04 §11.5). P19g adds the exclusive conflict. */
 export type ApproveRefusal =
   | "not_actionable"
   | "expired"
@@ -59,3 +59,14 @@ export type ApproveRefusal =
 export type ApproveResult =
   | { ok: true; licenseCode: string }
   | { ok: false; reason: ApproveRefusal; status: LicenseRequestStatus | null };
+
+/** Why Decline didn't decline (02 §5.7, §8.2): another claim or an ending got there first, or Stripe can't be reached. */
+export type DeclineRefusal = "not_actionable" | "retry";
+
+/**
+ * What Decline returns (02 §5.7): ok only once the request is stored as declined, so "wasn't charged" follows Stripe's
+ * cancel (07 D25); else why not with the request's status as it is now (null when it isn't the caller's, as Approve).
+ */
+export type DeclineResult =
+  | { ok: true }
+  | { ok: false; reason: DeclineRefusal; status: LicenseRequestStatus | null };

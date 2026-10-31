@@ -20,7 +20,7 @@ import { requestDetailPath } from "@/lib/urls";
 import { RequestFacts } from "./request-facts";
 import { RequestOutcome, RequestStatus } from "./request-status-line";
 import { ResultLineView } from "./result-line";
-import { useApprove } from "./use-approve";
+import { useRequestActions } from "./use-request-actions";
 
 /** How a row tells its list about an action: started (hold the row) and how it ended (null: nothing to show). */
 export type RowActionEvents = {
@@ -30,13 +30,15 @@ export type RowActionEvents = {
 
 /**
  * One request in the Inbox list (04 §9.11; 05 §6.3; 07 D146). Below md the stacked row: the text beside the poster, the
- * countdown under it, then Details with Approve in the row's right half. From md the wide row, a grid: the countdown
- * top-right on the Licensed-to line, and Details · Approve bottom-right on the third line (P19 puts Decline between
- * them; Approve stays rightmost). The facts open under the row, full width. A waiting row shows its scope and "You get
- * {price}"; a History row its price, pill and outcome, no actions; a claimed row reads Processing… with no Approve.
- * `outcome` is an action's result kept with the row, as it was before the tap, until the next refresh (02 §4.4 rule 2):
- * its pill (with the 16 px seal for an approval) and its line where the actions were. After any result the focus moves
- * to the row's status, which the result's line describes (05 §6.3).
+ * countdown under it, then Decline and Approve, half width each (Approve on the right), with Details after them. From
+ * md the wide row, a grid: the countdown top-right on the Licensed-to line, and Details · Decline · Approve
+ * bottom-right on the third line, Approve rightmost. The facts open under the row, full width. A waiting row shows its
+ * scope and "You get {price}"; a History row its price, pill and outcome, no actions; a claimed row reads Processing…
+ * and an overdue one Expired (until its expiry is stored, with no sentence; owner answer Q-142 a), neither with
+ * actions. `outcome` is an action's result kept with the row, as it was before the tap, until the next refresh (02
+ * §4.4 rule 2): its pill (with the 16 px seal for an approval) and its line where the actions were; "You get" stays
+ * only for an approval (owner answer Q-128 a). After any result the focus moves to the row's status, which the
+ * result's line describes (05 §6.3).
  */
 export function InboxRow({
   request,
@@ -52,18 +54,25 @@ export function InboxRow({
 }) {
   const waiting = request.status === "awaiting_approval";
   const price = formatMoney(request.licensePriceCents, request.currency);
-  const { pending, approve } = useApprove(request);
+  const { pending, approve, decline } = useRequestActions(request);
   const [liveLine, setLiveLine] = useState<ResultLine | null>(null);
   const status = useRef<HTMLDivElement>(null);
   const focusStatus = useFocusAfterRender(() => status.current);
   const row = useFocusOnRemove<HTMLLIElement>(focusTargetId);
   const lineId = useId();
-  const line = outcome?.line ?? liveLine;
+  // A line that left the row live (retry, payouts) goes with the actions, once the row reads Expired or Processing….
+  const line =
+    outcome?.line ??
+    (request.displayStatus === "awaiting_approval" ? liveLine : null);
+  // What the creator gets, only while it is still true: a waiting row before its deadline, or an approval's result.
+  const youGet = outcome
+    ? outcome.pill === "approved"
+    : waiting && request.displayStatus !== "expired";
 
-  async function onApprove() {
+  async function onTap(action: () => Promise<RowOutcome | null>) {
     setLiveLine(null);
     events?.onStart(request);
-    const result = await approve();
+    const result = await action();
     events?.onDone(request, result);
     if (!result) return;
     if (!result.settles) setLiveLine(result.line);
@@ -74,11 +83,23 @@ export function InboxRow({
     request.displayStatus === "awaiting_approval" ? (
       <div className="grid w-full grid-cols-2 gap-3 md:flex md:w-auto md:items-center">
         <Button
+          variant="secondary"
+          size="sm"
+          className="col-start-1 w-full md:w-auto"
+          loading={pending === "decline"}
+          loadingLabel={INBOX_COPY.declining}
+          disabled={pending === "approve"}
+          onClick={() => onTap(decline)}
+        >
+          {INBOX_COPY.decline}
+        </Button>
+        <Button
           size="sm"
           className="col-start-2 w-full md:w-auto"
-          loading={pending}
+          loading={pending === "approve"}
           loadingLabel={INBOX_COPY.approving}
-          onClick={onApprove}
+          disabled={pending === "decline"}
+          onClick={() => onTap(approve)}
         >
           {INBOX_COPY.approve}
         </Button>
@@ -113,7 +134,7 @@ export function InboxRow({
               className="mr-1 inline-block align-[-0.125em]"
             />
           ) : null}
-          {`${request.title} · ${waiting ? INBOX_COPY.youGet(price) : price}`}
+          {`${request.title} · ${youGet ? INBOX_COPY.youGet(price) : price}`}
         </p>
         <RequestOutcome request={request} />
         {line ? (
