@@ -8,6 +8,7 @@ import {
   defaultRateOptions,
 } from "@/lib/pricing/presets";
 import { MINUTE_MS } from "@/lib/time";
+import { creatorSettingsSchema } from "@/lib/validation/creator-settings";
 import { handleProblem } from "@/lib/validation/handle";
 import { displayNameSchema } from "@/lib/validation/profile";
 import { normalizeTimeZone } from "@/lib/validation/time-zone";
@@ -360,5 +361,72 @@ export async function payoutsStatusForPage(
     maxAgeMs,
     onReadFailure: "keep_stored",
     debitsActor: LAZY,
+  });
+}
+
+export type CreatorSettingsErrorCode =
+  | "invalid_input"
+  | "payouts_not_active"
+  | "payouts_read_failed";
+
+export class CreatorSettingsError extends Error {
+  constructor(readonly code: CreatorSettingsErrorCode) {
+    super(`creator settings: ${code}`);
+    this.name = "CreatorSettingsError";
+  }
+}
+
+/**
+ * Settings → Requests (07 D81; owner answer Q-153): the approval window and auto-approve for new requests only (J8.11:
+ * never a license_request). Turning auto-approve on (stored false → true) needs payouts active, re-read when older
+ * than 10 minutes, outside the transaction; turning it off or keeping it on never asks Stripe. One transaction writes
+ * both and the audit.
+ */
+export async function updateCreatorSettings(
+  a: Actor,
+  i: { approvalWindowHours: number; autoApprove: boolean },
+): Promise<void> {
+  const actor = requireCreatorActor(a);
+  const parsed = creatorSettingsSchema.safeParse(i);
+  if (!parsed.success) throw new CreatorSettingsError("invalid_input");
+  const { approvalWindowHours, autoApprove } = parsed.data;
+  const { creatorId } = actor;
+  if (autoApprove) {
+    const [stored] = await db
+      .select({ autoApprove: creatorProfile.autoApprove })
+      .from(creatorProfile)
+      .where(eq(creatorProfile.id, creatorId))
+      .limit(1);
+    if (!stored?.autoApprove) {
+      let status: PayoutsStatus;
+      try {
+        status = await refreshPayoutsStatus(creatorId, { debitsActor: actor });
+      } catch (error) {
+        logEvent("warn", "creator_settings.payouts_read_failed", {
+          creatorId,
+          error: errorName(error),
+        });
+        throw new CreatorSettingsError("payouts_read_failed");
+      }
+      if (status !== "active") {
+        throw new CreatorSettingsError("payouts_not_active");
+      }
+    }
+  }
+  await db.transaction(async (tx) => {
+    await tx
+      .update(creatorProfile)
+      .set({ approvalWindowHours, autoApprove })
+      .where(eq(creatorProfile.id, creatorId));
+    await writeAudit(tx, actor, {
+      action: "creator_profile.updated",
+      entityType: "creator_profile",
+      entityId: creatorId,
+      data: {
+        fields: ["approvalWindowHours", "autoApprove"],
+        approvalWindowHours,
+        autoApprove,
+      },
+    });
   });
 }

@@ -33,7 +33,13 @@ type RequestFacts = {
 };
 
 /** /r's request (S03). */
-export type BuyerStatus = RequestFacts;
+export type BuyerStatus = RequestFacts & {
+  /**
+   * /r's one auto-approve fact (owner answer Q-155/T6-09): the automatic approval may still run, so /r shows
+   * Processing… without a deadline; never the fallback instant.
+   */
+  autoApproving: boolean;
+};
 
 /**
  * A request in the creator's inbox and on its page (S14, S15): the buyer's entries, but never their email; and once it
@@ -48,6 +54,10 @@ export type CreatorRequest = RequestFacts & {
   transferStatus: MoneyMovementStatus | null;
   transferAmountCents: number | null;
   transferCurrency: Currency | null;
+  /** Set once auto-approve fell back: the row's fallback line (07 D81). ISO 8601; null otherwise. */
+  autoApproveFallbackAt: string | null;
+  /** Approved by auto-approve: approved, auto_approve, no fallback (05 §6.3 callout 12). */
+  autoApproved: boolean;
 };
 
 /** The inbox's two lists (05 §6.3). */

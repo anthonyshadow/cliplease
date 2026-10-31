@@ -125,6 +125,19 @@ describe("RequestStatusView (05 §4.3, 01 §4.8)", () => {
     expect(heading().querySelector("svg")).toBeNull();
   });
 
+  it("reads Processing… behind the spinner with its body and no deadline while auto-approve runs (05 §4.3 callouts 8–9)", () => {
+    render(<RequestStatusView view="auto_approving" {...props} />);
+    expect(heading().textContent).toBe(COPY.processing);
+    expect(heading().querySelector("svg.animate-spin")).not.toBeNull();
+    expect(
+      heading().querySelector("svg")?.closest("[aria-hidden]"),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(COPY.autoApprovingBody("maya", "CA$1,732.50")),
+    ).toBeTruthy();
+    expect(screen.queryByText(viewerDeadline(), { exact: false })).toBeNull();
+  });
+
   it("shows the finishing body at once without a session id, and never refreshes", () => {
     vi.useFakeTimers();
     render(<RequestStatusView view="finishing" {...props} />);

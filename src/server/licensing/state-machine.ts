@@ -35,7 +35,8 @@ export type Effect = { kind: "email"; emailLogId: string };
 
 /**
  * The emails an accepted event queues (07 D34). license-approved is queued by finishCapture, after issueLicense. expired
- * and capture_failed queue nothing in CORE (07 D34): P33b adds the [H5] ones.
+ * and capture_failed queue nothing in CORE (07 D34): P33b adds the [H5] ones. authorized on an auto_approve request
+ * queues request-received only (emailsFor); its request-new comes from the auto-approve fallback (07 D81).
  */
 const EMAILS: Partial<
   Record<LicenseRequestEvent, readonly RequestEmailTemplate[]>
@@ -218,20 +219,40 @@ export async function applyTransition(
     entityId: requestId,
     data: { from, to, event },
   });
-  const effects = await queueEmails(tx, requestId, EMAILS[event] ?? []);
+  const effects = await queueRequestEmails(
+    tx,
+    requestId,
+    emailsFor(event, row),
+  );
   return { changed: true, from, to, effects, row };
 }
 
-/** Queues `templates` for the request in the transition's transaction: one email_log row each, keyed `<template>/<id>`. */
-async function queueEmails(
+/** The emails an accepted event queues on `row` as it now is (07 D81): an auto_approve authorization request-received only. */
+function emailsFor(
+  event: LicenseRequestEvent,
+  row: LicenseRequest,
+): readonly RequestEmailTemplate[] {
+  return event === "authorized" && row.autoApprove
+    ? ["request-received"]
+    : (EMAILS[event] ?? []);
+}
+
+/**
+ * Queues `templates` for the request in the caller's transaction (a transition, the auto-approve fallback): one
+ * email_log row each, keyed `<template>/<id>`.
+ */
+export async function queueRequestEmails(
   tx: Tx,
   requestId: string,
   templates: readonly RequestEmailTemplate[],
 ): Promise<Effect[]> {
   if (templates.length === 0) return [];
   const facts = await requestEmailFacts(tx, requestId);
-  if (!facts)
-    throw new Error("applyTransition: the request's emails have no recipient");
+  if (!facts) {
+    throw new Error(
+      "queueRequestEmails: the request's emails have no recipient",
+    );
+  }
   const effects: Effect[] = [];
   for (const template of templates) {
     const emailLogId = await queueEmail(tx, {
@@ -300,24 +321,28 @@ const sameClaim = (a: PaymentClaim, b: PaymentClaim | undefined | null) =>
  * Claims waiting request `requestId` for `action` before any Stripe call (03 §5.1): one conditional UPDATE … RETURNING
  * that sets the claim and stripe_attempt + 1, only while nobody holds it and within the action's time (capture before
  * the deadline, expire at or after it). A refused claim reconciles a stuck one (07 D26) and tries once more. Null when
- * refused.
+ * refused. `autoApproveOnly`: the auto-approve system actor's capture also needs an auto_approve request that hasn't
+ * fallen back (03 T4; 07 D81): a fallback committed after its read wins, and the fallback needs no claim, so only one of
+ * them ever applies (P19g keeps this in its claim).
  */
 export async function claimPaymentAction(
   requestId: string,
   action: RequestAction,
+  { autoApproveOnly = false }: { autoApproveOnly?: boolean } = {},
 ): Promise<ClaimedRequest | null> {
-  const claimed = await takeClaim(requestId, action);
+  const claimed = await takeClaim(requestId, action, autoApproveOnly);
   if (claimed) return claimed;
   const resolved = await reconcileStuckClaims({
     requestId,
     olderThanMinutes: STUCK_CLAIM_MINUTES,
   });
-  return resolved > 0 ? takeClaim(requestId, action) : null;
+  return resolved > 0 ? takeClaim(requestId, action, autoApproveOnly) : null;
 }
 
 async function takeClaim(
   requestId: string,
   action: RequestAction,
+  autoApproveOnly: boolean,
 ): Promise<ClaimedRequest | null> {
   const claimedAt = new Date();
   const [claimed] = await db
@@ -336,6 +361,12 @@ async function takeClaim(
           : action === "expire"
             ? sql`now() >= ${licenseRequest.expiresAt}`
             : undefined,
+        autoApproveOnly
+          ? and(
+              eq(licenseRequest.autoApprove, true),
+              isNull(licenseRequest.autoApproveFallbackAt),
+            )
+          : undefined,
       ),
     )
     .returning();
@@ -598,7 +629,7 @@ async function lockHeld(
  * payment_action_at = starts_at), or now when the capture wasn't the app's; then license-approved is queued (its subject
  * names the code) and sent after the commit, and the creator transfer issueLicense left pending is sent after the
  * response (07 D75). Null when the fence finds the request resolved by another actor. A finish that throws is audited
- * `license_request.issue_failed` and rethrown. Every T5 goes through here: Approve, reconcileFromStripe, and later
+ * `license_request.issue_failed` and rethrown. Every T5 goes through here: Approve, reconcileFromStripe, and
  * auto-approve (P19c).
  */
 export async function finishCapture(

@@ -418,8 +418,9 @@ export function LicensePageClient({
           handle={creator.handle}
           total={total}
           currency={options.currency}
+          autoApprove={creator.autoApprove}
           deadline={
-            viewer
+            !creator.autoApprove && viewer
               ? formatDeadline(
                   new Date(viewer.now + creator.approvalWindowHours * HOUR_MS),
                   viewer.timeZone,

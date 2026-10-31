@@ -4,9 +4,11 @@
 import type { EffectiveOptions } from "../../server/pricing/rate-card";
 import { APP_NAME } from "../app-name";
 import type { Currency } from "../domain/values";
+import { sentences } from "../format";
 import { CURRENCY_DISPLAY, currencyLabel } from "../money/currency";
 import type { PublicPostings } from "../postings/types";
 import type { BadgeInput } from "../videos/ownership";
+import { REQUEST_STATUS_COPY } from "./request-status";
 import type { Selection } from "./selection";
 
 export type LicensePageDTO = {
@@ -21,8 +23,16 @@ export type LicensePageDTO = {
     containsMusic: boolean;
     identifiablePeople: boolean;
   };
-  /** No payouts field: buyers can request and pay before payouts are set up (07 D74). */
-  creator: { handle: string; displayName: string; approvalWindowHours: number };
+  /**
+   * No payouts field: buyers can request and pay before payouts are set up (07 D74). `autoApprove`: auto-approve on and
+   * the stored payouts status active (07 D81; owner answer Q-155).
+   */
+  creator: {
+    handle: string;
+    displayName: string;
+    approvalWindowHours: number;
+    autoApprove: boolean;
+  };
   /** Every posting buyers may see, verified first, and the badge's primary one (07 D70). */
   postings: PublicPostings;
   /** The lg badge from the primary verified posting, else self-attested (07 D43, D89). */
@@ -84,6 +94,13 @@ export const LICENSE_PAGE_COPY = {
     `We'll put a hold of ${total} on your card now.`,
   holdDeadline: (handle: string, deadline: string) =>
     `If @${handle} declines or doesn't answer by ${deadline}, the hold is released and you pay nothing.`,
+  /** 01 J7.6's auto variant (04 §11.2; 07 D81): the creator's new requests approve automatically. */
+  holdAutoLead: "Instant approval.",
+  holdAutoBody: (handle: string, total: string) =>
+    sentences(
+      REQUEST_STATUS_COPY.autoApproves(handle),
+      `You'll be charged ${total} now and get the file right away.`,
+    ),
   smallPrint: (handle: string) => [
     "Some banks show a hold as a pending charge. It disappears when the hold is released; timing depends on your bank.",
     `Payments are processed by Stripe. You pay ${APP_NAME}, which pays @${handle}.`,

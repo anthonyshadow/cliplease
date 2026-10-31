@@ -1,5 +1,6 @@
 import { expect, type Page, test } from "@playwright/test";
 import { INBOX_COPY } from "../../src/lib/licensing/inbox";
+import { radio } from "./helpers/buyer";
 import { collectConsoleErrors } from "./helpers/console";
 import {
   completeProfileStep,
@@ -10,7 +11,12 @@ import {
   uniqueLongHandle,
 } from "./helpers/creator";
 import { expectNoHorizontalScroll } from "./helpers/layout";
-import { pressAndSettle, pressButton, waitInPage } from "./helpers/press";
+import {
+  pressAndSettle,
+  pressAndSettleIn,
+  pressButton,
+  waitInPage,
+} from "./helpers/press";
 import {
   addStaleSessionCookie,
   signInWithEmail,
@@ -107,10 +113,13 @@ test("a new creator onboards, sets up payouts, has a public page and signs out",
   await expect(
     page.getByText(`Emails use ${zone} (from this device)`),
   ).toBeVisible();
-  // The window is read-only here (P19c makes it a choice); Save and Update from this device answer with a toast.
-  await expect(page.getByText("72 hours", { exact: true })).toBeVisible();
+  await expect(radio(page, "approvalWindowHours", "72")).toBeChecked();
   await page.getByLabel("Display name", { exact: true }).fill(NEW_NAME);
-  await pressAndSettle(page, "Save");
+  await pressAndSettleIn(
+    page,
+    page.getByRole("region", { name: "Profile" }),
+    "Save",
+  );
   await expect(page.getByText("Saved.", { exact: true })).toBeVisible();
   await pressAndSettle(page, "Update from this device");
   await expect(

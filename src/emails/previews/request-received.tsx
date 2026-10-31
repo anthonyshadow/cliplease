@@ -12,6 +12,7 @@ export default function RequestReceivedPreview() {
       currency="cad"
       expiresAt={new Date("2026-11-01T17:00:00Z")}
       timeZone="America/Toronto"
+      autoApprove={false}
       url="http://localhost:3000/r/00000000-0000-4000-8000-000000000201?t=preview"
     />
   );

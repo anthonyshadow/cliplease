@@ -10,8 +10,13 @@ import {
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { UseKey } from "@/lib/domain/values";
-import type { LicensePageDTO } from "@/lib/licensing/license-page";
+import { formatDeadline } from "@/lib/format";
+import {
+  LICENSE_PAGE_COPY,
+  type LicensePageDTO,
+} from "@/lib/licensing/license-page";
 import { defaultSelection } from "@/lib/licensing/selection";
+import { HOUR_MS } from "@/lib/time";
 import { publicBadge } from "@/lib/videos/ownership";
 import { MUSIC_DISABLED_USES } from "@/lib/videos/rights";
 import { effectiveOptions } from "@/server/pricing/rate-card";
@@ -50,6 +55,10 @@ const SUBMISSION_ID = "6f4c8d7e-1a2b-4c3d-8e9f-0a1b2c3d4e5f";
 
 function page(
   video: { disabledUses?: UseKey[]; containsMusic?: boolean } = {},
+  {
+    autoApprove = false,
+    approvalWindowHours = 72,
+  }: { autoApprove?: boolean; approvalWindowHours?: number } = {},
 ): LicensePageDTO {
   const options = effectiveOptions(rateCardFixture(), {
     disabledUses: video.disabledUses ?? [],
@@ -72,7 +81,8 @@ function page(
     creator: {
       handle: "maya",
       displayName: "Maya R.",
-      approvalWindowHours: 72,
+      approvalWindowHours,
+      autoApprove,
     },
     postings: { primary: null, postings: [] },
     badge: publicBadge({ primary: null, postings: [] }, "lg"),
@@ -259,6 +269,43 @@ describe("LicensePageClient (01 J7; 05 §4.1)", () => {
       /If @maya declines or doesn't answer by \w{3} \d{1,2} \w{3}, \d{1,2}:\d{2} [AP]M \S+, the hold is released and you pay nothing\./,
     );
   });
+
+  it("auto-approve: Instant approval. and the charge now, the same on the server and after mount, with no deadline (01 J7.6; 07 D81)", () => {
+    const auto = page({}, { autoApprove: true });
+    const html = renderToStaticMarkup(
+      <LicensePageClient page={auto} submissionId={SUBMISSION_ID} />,
+    );
+    expect(html).toContain("Instant approval.");
+    expect(html).toContain(
+      "@maya approves requests automatically. You&#x27;ll be charged CA$165.00 now and get the file right away.",
+    );
+    expect(html).not.toContain("won&#x27;t be charged");
+    expect(html).not.toContain("answer by");
+    show(auto);
+    const text = document.body.textContent ?? "";
+    expect(text).toContain(
+      "Instant approval. @maya approves requests automatically. You'll be charged CA$165.00 now and get the file right away.",
+    );
+    expect(text).not.toContain("won't be charged");
+    expect(text).not.toContain("answer by");
+  });
+
+  it.each([24, 120])(
+    "manual: the deadline after mount is now + the creator's %i h window, in the viewer's zone",
+    (hours) => {
+      const now = new Date("2026-10-27T14:00:00Z").getTime();
+      vi.useFakeTimers();
+      vi.setSystemTime(now);
+      show(page({}, { approvalWindowHours: hours }));
+      const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      expect(document.body.textContent).toContain(
+        LICENSE_PAGE_COPY.holdDeadline(
+          "maya",
+          formatDeadline(new Date(now + hours * HOUR_MS), zone),
+        ),
+      );
+    },
+  );
 
   it("prints the currency lines and no bare $ (07 D98)", () => {
     show();

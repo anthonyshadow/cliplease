@@ -119,6 +119,7 @@ describe("signed in", () => {
       handle: profile.handle,
       displayName: profile.displayName,
       approvalWindowHours: 72,
+      autoApprove: false,
       timeZone: "UTC",
       payoutCurrency: "cad",
       stripeAccountId: null,

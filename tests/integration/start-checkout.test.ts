@@ -38,6 +38,7 @@ import {
   insertLicenseRequest,
   insertRateCard,
   publishVideo,
+  randomHex,
 } from "../helpers/factories";
 import { captureLogEvents } from "../helpers/logs";
 import {
@@ -457,9 +458,16 @@ describe("createLicenseRequest: snapshots (07 D81, D84)", () => {
 
   it("snapshots the creator's approval window and auto-approve; a later change leaves the request as it was", async () => {
     const { creator, live } = await liveVideo();
+    // Auto-approve snapshots on only while the stored payouts status is active (owner answer Q-155), which needs an
+    // account (creator_profile_payouts_needs_account).
     await db
       .update(creatorProfile)
-      .set({ approvalWindowHours: 48, autoApprove: true })
+      .set({
+        approvalWindowHours: 48,
+        autoApprove: true,
+        stripeAccountId: `acct_fake_${randomHex(6)}`,
+        payoutsStatus: "active",
+      })
       .where(eq(creatorProfile.id, creator.id));
     okUrl(await createLicenseRequest(input(live.id), CTX));
     await db
@@ -470,6 +478,20 @@ describe("createLicenseRequest: snapshots (07 D81, D84)", () => {
       approvalWindowHours: 48,
       autoApprove: true,
     });
+  });
+
+  it("snapshots auto-approve off while the creator's payouts aren't active, though the setting is on (owner answer Q-155)", async () => {
+    const { creator, live } = await liveVideo();
+    await db
+      .update(creatorProfile)
+      .set({
+        autoApprove: true,
+        stripeAccountId: `acct_fake_${randomHex(6)}`,
+        payoutsStatus: "restricted",
+      })
+      .where(eq(creatorProfile.id, creator.id));
+    okUrl(await createLicenseRequest(input(live.id), CTX));
+    expect(await onlyRequest(live.id)).toMatchObject({ autoApprove: false });
   });
 
   it("stores no IP when there is none, and a long agent as requestContext cuts it, 512 characters", async () => {
@@ -644,6 +666,7 @@ describe("the buyer's pages: the fake checkout and /r (05 §4.3, §10; owner ans
       handle: creator.handle,
       slug: live.slug,
       licenseCode: null,
+      autoApproving: false,
     });
     expect(await getBuyerRequest(row.id, "A".repeat(43))).toBeNull();
     expect(await getBuyerRequest(randomUUID(), token)).toBeNull();

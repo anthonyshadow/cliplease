@@ -3,6 +3,7 @@
 // left before anything sends it; the transfer row; the cron's sweep and the clocks the sweeps read (updated_at on the
 // database's clock, a claim on its own JS clock, the payouts reading's age); the check that no transfer step touches
 // the request's claim or its license; the transfer audits as written; and the check that the creator was paid once.
+// P19c: a system send's audits name what scheduled it (`source`: 'lazy' by default, auto-approve's 'auto_approve').
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type { PgUpdateSetSource } from "drizzle-orm/pg-core";
 import { expect } from "vitest";
@@ -24,7 +25,10 @@ import type {
 import { MINUTE_MS } from "../../src/lib/time";
 import { type Actor, CRON } from "../../src/server/auth/actor";
 import { approveLicenseRequest } from "../../src/server/licensing/approve";
-import { sweepMoneyMovements } from "../../src/server/licensing/money";
+import {
+  sweepMoneyMovements,
+  type TransferSource,
+} from "../../src/server/licensing/money";
 import { dropQueuedAfter, queueAfter } from "./after";
 import {
   approvableVideo,
@@ -210,14 +214,16 @@ export async function transferAudits(requestId: string) {
 }
 
 type AuditedAs = {
-  /** Who sent it (07 D47): the lazy system (Approve, Settings, a direct send) names its source; Stripe and the cron don't. */
+  /** Who sent it (07 D47): the system names its `source`; Stripe and the cron don't. */
   by?: Extract<AuditActorType, "system" | "stripe" | "cron">;
+  /** What scheduled a system send: 'lazy' (Approve, Settings, a direct send; the default) or 'auto_approve' (P19c). */
+  source?: TransferSource;
   amountCents?: number;
   currency?: Currency;
 };
 
-const sourceOf = (by: AuditedAs["by"]) =>
-  by === "system" ? { source: "lazy" } : {};
+const sourceOf = (by: AuditedAs["by"], source: TransferSource = "lazy") =>
+  by === "system" ? { source } : {};
 
 type PaidAs = AuditedAs & { reconciled?: boolean };
 
@@ -232,11 +238,11 @@ const paidData = (
 export function paidAudit(
   transferId: string,
   attempt: number,
-  { by = "system", ...paid }: PaidAs = {},
+  { by = "system", source, ...paid }: PaidAs = {},
 ) {
   return {
     action: SUCCEEDED,
-    data: { ...paidData(transferId, attempt, paid), ...sourceOf(by) },
+    data: { ...paidData(transferId, attempt, paid), ...sourceOf(by, source) },
     actorType: by,
   };
 }
@@ -244,14 +250,15 @@ export function paidAudit(
 /**
  * The creator paid once for the request (07 D74–D76): its one creator_transfer succeeded on `attempt` (1) under
  * `transferId` (the fake's `tr_fake_<request id>`) for `amountCents` in `currency`, and its transfer audits are that
- * one transfer_succeeded, sent by `by` (anyone when omitted: whichever T5 scheduled it). With `scripted`, the double's
- * only createTransfer call was under that attempt's key, and its ledger holds that one transfer for the request.
- * Returns the movement.
+ * one transfer_succeeded, sent by `by` (anyone when omitted: whichever T5 scheduled it), a system send under `source`
+ * ('lazy' by default). With `scripted`, the double's only createTransfer call was under that attempt's key, and its
+ * ledger holds that one transfer for the request. Returns the movement.
  */
 export async function expectPaidOnce(
   requestId: string,
   {
     by,
+    source,
     amountCents = PRICE,
     currency = "cad",
     reconciled = false,
@@ -278,7 +285,7 @@ export async function expectPaidOnce(
   const paid = { amountCents, currency, reconciled };
   expect(await transferAudits(requestId)).toEqual([
     by
-      ? paidAudit(transferId, attempt, { by, ...paid })
+      ? paidAudit(transferId, attempt, { by, source, ...paid })
       : {
           action: SUCCEEDED,
           data: expect.objectContaining(paidData(transferId, attempt, paid)),
@@ -303,6 +310,7 @@ export function refusedAudit(
   attempt: number,
   {
     by = "system",
+    source,
     amountCents = PRICE,
     currency = "cad",
     extra = {},
@@ -310,7 +318,14 @@ export function refusedAudit(
 ) {
   return {
     action: FAILED,
-    data: { code, attempt, amountCents, currency, ...extra, ...sourceOf(by) },
+    data: {
+      code,
+      attempt,
+      amountCents,
+      currency,
+      ...extra,
+      ...sourceOf(by, source),
+    },
     actorType: by,
   };
 }

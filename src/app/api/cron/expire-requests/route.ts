@@ -2,6 +2,7 @@ import { CRON } from "@/server/auth/actor";
 import { isCronAuthorized } from "@/server/cron/auth";
 import { retryEmailOutbox } from "@/server/email/send";
 import { NO_STORE, unauthorizedJson } from "@/server/http";
+import { retryAutoApprovals } from "@/server/licensing/auto-approve";
 import { sweepMoneyMovements } from "@/server/licensing/money";
 import { expireDueRequests } from "@/server/licensing/requests";
 import { reconcileStuckClaims } from "@/server/licensing/state-machine";
@@ -23,6 +24,7 @@ type CronCounts = {
   expired: number;
   reconciled: number;
   moneyMovements: number;
+  autoApprovals: number;
   emailsSent: number;
 };
 
@@ -35,9 +37,10 @@ type CronStep = {
 };
 
 // The reconcile runs first (06 §9, as the lazy layers do), so a claim it releases on an overdue request expires in the
-// same pass; the creator transfers a crash or a retry left pending follow (07 D75). P19c adds retryAutoApprovals
-// ({ limit: 50 }, autoApprovals) before the outbox. P33a adds abandonStaleCheckouts (abandoned) before the outbox too,
-// and runs cleanupExpiredRecords once after the loop (the `cleaned` object).
+// same pass; the creator transfers a crash or a retry left pending follow (07 D75); then the auto-approvals that didn't
+// finish are retried, or fall back to the creator after 10 minutes (07 D81), before the outbox sends what they queued.
+// P33a adds abandonStaleCheckouts (abandoned) before the outbox too, and runs cleanupExpiredRecords once after the loop
+// (the `cleaned` object).
 const STEPS: readonly CronStep[] = [
   {
     key: "reconciled",
@@ -62,6 +65,11 @@ const STEPS: readonly CronStep[] = [
       sweepMoneyMovements({ olderThanMinutes: 10, limit, actor: CRON, stopAt }),
   },
   {
+    key: "autoApprovals",
+    limit: 50,
+    run: (limit, stopAt) => retryAutoApprovals({ limit, stopAt }),
+  },
+  {
     key: "emailsSent",
     limit: 50,
     run: (limit, stopAt) => retryEmailOutbox({ limit, stopAt }),
@@ -78,6 +86,7 @@ async function sweep(stopAt: number): Promise<CronCounts> {
     expired: 0,
     reconciled: 0,
     moneyMovements: 0,
+    autoApprovals: 0,
     emailsSent: 0,
   };
   let due = STEPS;

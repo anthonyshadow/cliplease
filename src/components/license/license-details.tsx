@@ -179,28 +179,43 @@ export function LicenseDetails({
 }
 
 /**
- * 01 J7.6 (manual approval; P19c adds the auto variant) and 04 §11.2's small print. The deadline is an estimate, now plus
- * the creator's approval window in the viewer's zone, so it renders only after mount (`deadline` null before; no
- * clock reads in the server render, 02 §4.4). Then the legal links, in a new tab like the summary's.
+ * 01 J7.6's two variants: auto (07 D81; no clock, server-rendered) and manual (its deadline after mount only). The
+ * manual deadline is an estimate, now plus the creator's approval window in the viewer's zone (`deadline` null before
+ * mount; no clock reads in the server render, 02 §4.4). Then 04 §11.2's small print and the legal links, in a new tab
+ * like the summary's.
  */
 export function HoldCopy({
   handle,
   total,
+  autoApprove,
   deadline,
   currency,
 }: {
   handle: string;
   /** formatMoney's total, the bar's. */
   total: string;
+  /** The creator's new requests approve automatically (LicensePageDTO's `creator.autoApprove`). */
+  autoApprove: boolean;
   deadline: string | null;
   currency: Currency;
 }) {
   return (
     <div className="flex flex-col gap-4">
       <p className="text-callout text-ink-2">
-        <span className="font-semibold text-ink">{COPY.holdLead(handle)}</span>
-        {` ${COPY.holdAmount(total)}`}
-        {deadline ? ` ${COPY.holdDeadline(handle, deadline)}` : null}
+        {autoApprove ? (
+          <>
+            <span className="font-semibold text-ink">{COPY.holdAutoLead}</span>
+            {` ${COPY.holdAutoBody(handle, total)}`}
+          </>
+        ) : (
+          <>
+            <span className="font-semibold text-ink">
+              {COPY.holdLead(handle)}
+            </span>
+            {` ${COPY.holdAmount(total)}`}
+            {deadline ? ` ${COPY.holdDeadline(handle, deadline)}` : null}
+          </>
+        )}
       </p>
       <p className="text-footnote text-ink-2">
         {[...COPY.smallPrint(handle), COPY.currencyFaq(currency)].join(" ")}

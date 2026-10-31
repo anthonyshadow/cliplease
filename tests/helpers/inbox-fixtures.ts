@@ -32,6 +32,8 @@ export const WAITING_REQUEST: CreatorRequest = {
   transferStatus: null,
   transferAmountCents: null,
   transferCurrency: null,
+  autoApproveFallbackAt: null,
+  autoApproved: false,
 };
 
 /** Taps the button named `name` (in `container`, else the page) and lets the action's answer render. */

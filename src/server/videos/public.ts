@@ -9,6 +9,7 @@ import type {
   SocialProviderId,
   VideoStatus,
 } from "../../lib/domain/values";
+import { autoApprovesNewRequests } from "../../lib/licensing/auto-approve-rule";
 import type { LicensePageDTO } from "../../lib/licensing/license-page";
 import { defaultSelection } from "../../lib/licensing/selection";
 import { fromPriceCents } from "../../lib/pricing/from-price";
@@ -167,8 +168,8 @@ export async function latestLiveShareUrl(creator: {
 /**
  * The license page's data for `/@{handle}/{slug}` (03 §7.5; 07 D03, D72, D82): the video by its creator's handle and
  * slug, then its public postings and the rate card. null when licenseOffer offers nothing; the page then 404s. Fields
- * are picked one by one: the row's object key reaches nothing but posterSrc. `platforms`: the enabled ones (tests pass
- * their own).
+ * are picked one by one: the row's object key reaches nothing but posterSrc, and the stored payouts status nothing but
+ * `creator.autoApprove` (owner answer Q-155; no Stripe call). `platforms`: the enabled ones (tests pass their own).
  */
 export async function readLicensePageData(
   handle: string,
@@ -188,6 +189,8 @@ export async function readLicensePageData(
       handle: creatorProfile.handle,
       displayName: creatorProfile.displayName,
       approvalWindowHours: creatorProfile.approvalWindowHours,
+      autoApprove: creatorProfile.autoApprove,
+      payoutsStatus: creatorProfile.payoutsStatus,
     })
     .from(video)
     .innerJoin(creatorProfile, eq(creatorProfile.id, video.creatorId))
@@ -219,6 +222,7 @@ export async function readLicensePageData(
       handle: row.handle,
       displayName: row.displayName,
       approvalWindowHours: row.approvalWindowHours,
+      autoApprove: autoApprovesNewRequests(row),
     },
     postings,
     badge: publicBadge(postings, "lg"),

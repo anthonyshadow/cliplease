@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { AutoApproveLine } from "@/components/inbox/auto-approve-line";
 import { PayoutsWaiting } from "@/components/inbox/payouts-waiting";
 import {
   REQUEST_STATUS_ID,
@@ -38,8 +39,9 @@ export const maxDuration = 60;
  * left-aligned with the title at every tier (07 D145). While payouts aren't active a waiting request says it stays open
  * until its deadline (07 D77). Another creator's request, an unknown id, and a request the creator never sees (in
  * checkout, abandoned, a renewal) are a 404. The action row under the card: Decline and Approve; an approved request
- * reads "License {code} issued" under its pill, then its payout line (P19b; owner answer Q-146 a). The request is
- * settled first: a stuck claim reconciled, an overdue request expired after the response (02 §8.4).
+ * reads "License {code} issued" under its pill, then its payout line (P19b; owner answer Q-146 a); auto-approve's
+ * fallback line or "Auto-approved" under the status (07 D81); no refresher (as claimed rows). The request is settled
+ * first: a stuck claim reconciled, an overdue request expired after the response (02 §8.4).
  */
 export default async function RequestDetailPage({
   params,
@@ -72,6 +74,7 @@ export default async function RequestDetailPage({
           {request.licenseCode ? (
             <LicenseIssuedLine code={request.licenseCode} />
           ) : null}
+          <AutoApproveLine request={request} />
           <PayoutLineView request={request} />
           <RequestOutcome request={request} />
         </div>

@@ -14,6 +14,8 @@ export type RequestNewProps = {
   timeZone: string;
   /** False adds "Set up payouts to approve before {deadline}." (07 D74). */
   payoutsActive: boolean;
+  /** auto_approve_fallback_at set: the first line is the fallback's (07 D81). */
+  fellBack: boolean;
   url: string;
 };
 
@@ -29,9 +31,11 @@ export function RequestNew(p: RequestNewProps) {
     <EmailLayout
       audience="creator"
       headline={COPY.newSubject(p.licenseeName, p.title)}
-      paragraphs={
-        p.payoutsActive ? [body] : [body, COPY.setUpPayouts(deadline)]
-      }
+      paragraphs={[
+        p.fellBack ? COPY.autoApproveFellBack(deadline) : null,
+        body,
+        p.payoutsActive ? null : COPY.setUpPayouts(deadline),
+      ].filter((paragraph) => paragraph !== null)}
       context={[p.title, p.scope]}
       button={{ label: COPY.reviewRequest, url: p.url }}
     />

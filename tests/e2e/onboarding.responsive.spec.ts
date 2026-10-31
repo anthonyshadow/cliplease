@@ -1,16 +1,20 @@
 import { expect, type Page, test } from "@playwright/test";
+import { REQUESTS_SETTINGS_COPY } from "../../src/lib/payouts";
 import { accountCard, linkDemoAccount, SYNC_LINE } from "./helpers/connections";
 import { collectConsoleErrors } from "./helpers/console";
 import { signUpCreator, uniqueLongHandle } from "./helpers/creator";
 import {
   atEveryWidth,
+  boxOf,
   expectCreatorChrome,
+  expectInside,
   expectPageFrame,
   expectReadingPage,
   expectSettingsColumn,
+  expectTouchTarget,
   TIERS,
 } from "./helpers/layout";
-import { pressAndSettle, pressLocator } from "./helpers/press";
+import { pressAndSettleIn, pressLocator } from "./helpers/press";
 
 // G.6 for P05's and P06's pages (07 D154), on all four projects: each test signs up its own creator with signUpCreator.
 // The profile step stays in responsive.spec.ts (its /onboarding route lands on ?step=profile); Connections has its own
@@ -92,10 +96,34 @@ test("G.6: Settings keeps a left-aligned 640 px column and the creator chrome at
   // The longest handle shows read-only in Profile.
   await signUpCreator(page, { handle: uniqueLongHandle(testInfo) });
   await page.goto("/dashboard/settings");
+  const group = page.getByRole("group", {
+    name: REQUESTS_SETTINGS_COPY.approvalWindow,
+  });
+  const tiles = group.locator("[data-option-tile]");
+  const save = page
+    .getByRole("region", { name: "Requests" })
+    .getByRole("button", { name: "Save", exact: true });
   await atEveryWidth(page, testInfo, async ({ width }) => {
     await expectPageFrame(page, width, { banner: true });
     await expectSettingsColumn(page, width);
     await expectCreatorChrome(page, width);
+    // The approval window's tiles: 2 × 2 below md, one row of four from md, inside the column (07 D146).
+    await expect(tiles).toHaveCount(4);
+    const [a, b, c, d] = await Promise.all(
+      (await tiles.all()).map(async (tile) => (await boxOf(tile)).top),
+    );
+    if (width < TIERS.tablet) {
+      expect(Math.abs(a - b)).toBeLessThanOrEqual(1);
+      expect(Math.abs(c - d)).toBeLessThanOrEqual(1);
+      expect(c - a).toBeGreaterThan(1);
+    } else {
+      expect(Math.max(a, b, c, d) - Math.min(a, b, c, d)).toBeLessThanOrEqual(
+        1,
+      );
+    }
+    await expectInside(group, page.locator("main .max-w-reading").first());
+    for (const tile of await tiles.all()) await expectTouchTarget(tile);
+    await expectTouchTarget(save);
     if (width < TIERS.desktop) {
       await expectTabBarCurrent(page, "Settings", { inMoreSheet: true });
     }
@@ -137,7 +165,11 @@ test("G.6: /@handle fits every tier, logged out", async ({
   });
   // A long name with no spaces, and the longest handle, must wrap at 320 px, not push the page sideways.
   await page.getByLabel("Display name", { exact: true }).fill(LONG_NAME);
-  await pressAndSettle(page, "Save");
+  await pressAndSettleIn(
+    page,
+    page.getByRole("region", { name: "Profile" }),
+    "Save",
+  );
   await expect(page.getByText("Saved.", { exact: true })).toBeVisible();
   await page.context().clearCookies();
   const response = await page.goto(`/@${handle}`);

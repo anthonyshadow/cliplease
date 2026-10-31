@@ -58,6 +58,17 @@ export async function pressAndSettle(page: Page, name: string) {
   await closed;
 }
 
+/** pressAndSettle for the button named `name` inside `scope`: Settings has a Save in Profile and one in Requests. */
+export async function pressAndSettleIn(
+  page: Page,
+  scope: Locator,
+  name: string,
+) {
+  const closed = requestEnded(page, isServerAction);
+  await pressLocator(scope.getByRole("button", { name, exact: true }));
+  await closed;
+}
+
 /** A bounded wait inside the page, for "nothing more happens" checks. */
 export const waitInPage = (page: Page, ms: number) =>
   page.evaluate(

@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   expireDueRequests: vi.fn(),
   reconcileStuckClaims: vi.fn(),
   sweepMoneyMovements: vi.fn(),
+  retryAutoApprovals: vi.fn(),
   retryEmailOutbox: vi.fn(),
   logEvent: vi.fn(),
 }));
@@ -21,6 +22,9 @@ vi.mock("@/server/licensing/state-machine", () => ({
 }));
 vi.mock("@/server/licensing/money", () => ({
   sweepMoneyMovements: mocks.sweepMoneyMovements,
+}));
+vi.mock("@/server/licensing/auto-approve", () => ({
+  retryAutoApprovals: mocks.retryAutoApprovals,
 }));
 vi.mock("@/server/email/send", () => ({
   retryEmailOutbox: mocks.retryEmailOutbox,
@@ -47,6 +51,7 @@ function script(results: {
   expired?: number[];
   reconciled?: number[];
   moneyMovements?: number[];
+  autoApprovals?: number[];
   emailsSent?: number[];
 }) {
   const queue = (list: number[] = []) => {
@@ -56,6 +61,7 @@ function script(results: {
   mocks.expireDueRequests.mockImplementation(queue(results.expired));
   mocks.reconcileStuckClaims.mockImplementation(queue(results.reconciled));
   mocks.sweepMoneyMovements.mockImplementation(queue(results.moneyMovements));
+  mocks.retryAutoApprovals.mockImplementation(queue(results.autoApprovals));
   mocks.retryEmailOutbox.mockImplementation(queue(results.emailsSent));
 }
 
@@ -84,6 +90,7 @@ describe("GET /api/cron/expire-requests", () => {
     expect(mocks.expireDueRequests).not.toHaveBeenCalled();
     expect(mocks.reconcileStuckClaims).not.toHaveBeenCalled();
     expect(mocks.sweepMoneyMovements).not.toHaveBeenCalled();
+    expect(mocks.retryAutoApprovals).not.toHaveBeenCalled();
     expect(mocks.retryEmailOutbox).not.toHaveBeenCalled();
   });
 
@@ -92,13 +99,14 @@ describe("GET /api/cron/expire-requests", () => {
       expired: [2],
       reconciled: [1],
       moneyMovements: [3],
+      autoApprovals: [4],
       emailsSent: [0],
     });
     const response = await get(BEARER);
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(await response.text()).toBe(
-      '{"expired":2,"reconciled":1,"moneyMovements":3,"emailsSent":0}',
+      '{"expired":2,"reconciled":1,"moneyMovements":3,"autoApprovals":4,"emailsSent":0}',
     );
     const stopAt = START.getTime() + 45_000;
     expect(mocks.expireDueRequests).toHaveBeenCalledExactlyOnceWith({
@@ -118,6 +126,10 @@ describe("GET /api/cron/expire-requests", () => {
       actor: CRON,
       stopAt,
     });
+    expect(mocks.retryAutoApprovals).toHaveBeenCalledExactlyOnceWith({
+      limit: 50,
+      stopAt,
+    });
     expect(mocks.retryEmailOutbox).toHaveBeenCalledExactlyOnceWith({
       limit: 50,
       stopAt,
@@ -130,12 +142,14 @@ describe("GET /api/cron/expire-requests", () => {
       expired: [100, 100, 7],
       reconciled: [50, 4],
       moneyMovements: [50, 1],
+      autoApprovals: [50, 5],
       emailsSent: [50, 2],
     });
     for (const [name, mock] of [
       ["expire", mocks.expireDueRequests],
       ["reconcile", mocks.reconcileStuckClaims],
       ["money", mocks.sweepMoneyMovements],
+      ["auto", mocks.retryAutoApprovals],
       ["emails", mocks.retryEmailOutbox],
     ] as const) {
       const run = mock.getMockImplementation();
@@ -149,16 +163,19 @@ describe("GET /api/cron/expire-requests", () => {
       expired: 207,
       reconciled: 54,
       moneyMovements: 51,
+      autoApprovals: 55,
       emailsSent: 52,
     });
     expect(order).toEqual([
       "reconcile",
       "expire",
       "money",
+      "auto",
       "emails",
       "reconcile",
       "expire",
       "money",
+      "auto",
       "emails",
       "expire",
     ]);
@@ -175,11 +192,13 @@ describe("GET /api/cron/expire-requests", () => {
       expired: 100,
       reconciled: 3,
       moneyMovements: 0,
+      autoApprovals: 0,
       emailsSent: 0,
     });
     expect(mocks.reconcileStuckClaims).toHaveBeenCalledTimes(1);
     expect(mocks.expireDueRequests).toHaveBeenCalledTimes(1);
     expect(mocks.sweepMoneyMovements).not.toHaveBeenCalled();
+    expect(mocks.retryAutoApprovals).not.toHaveBeenCalled();
     expect(mocks.retryEmailOutbox).not.toHaveBeenCalled();
   });
 

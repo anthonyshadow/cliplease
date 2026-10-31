@@ -39,6 +39,7 @@ export type CreatorContext = {
     handle: string;
     displayName: string;
     approvalWindowHours: ApprovalWindowHours;
+    autoApprove: boolean;
     timeZone: string;
     payoutCurrency: Currency;
     stripeAccountId: string | null;
@@ -96,6 +97,7 @@ export const getCreatorContext = cache(
           APPROVAL_WINDOW_HOURS.find(
             (h) => h === profile.approvalWindowHours,
           ) ?? 72,
+        autoApprove: profile.autoApprove,
         timeZone: profile.timeZone,
         payoutCurrency: profile.payoutCurrency,
         stripeAccountId: profile.stripeAccountId,

@@ -22,6 +22,13 @@ export const metadata: Metadata = {
 };
 
 /**
+ * Pay's work after the response can capture an auto-approve request and send the creator's transfer (07 D75, D81):
+ * every route that can send one stops within 60 s, inside the 2-minute claim lease (P19b). Its actions file is "use
+ * server", which can't export it.
+ */
+export const maxDuration = 60;
+
+/**
  * S28, the fake driver's checkout (05 §10; 07 D35), development and test only: the request's snapshot laid out like
  * Stripe's two line items, then Pay, Cancel and Let it expire (02 §5.8). 05 §10 draws no NavBar, so the page brings its
  * own <main> in the reading column. A request past checkout goes to its /r page. Like Stripe's, the buttons show no

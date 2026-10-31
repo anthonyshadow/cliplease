@@ -200,6 +200,7 @@ describe("GET /api/cron/expire-requests (02 §8.4 layer 2, §9.7; 07 D57)", () =
       expired: 1,
       reconciled: 1,
       moneyMovements: 0,
+      autoApprovals: 0,
       emailsSent: 1,
     });
     await flushAfter();

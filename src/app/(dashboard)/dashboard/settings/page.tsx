@@ -12,7 +12,6 @@ import { StatusPill } from "@/components/ui/status-pill";
 import { ToastOnMount } from "@/components/ui/toast";
 import { currencyLabel } from "@/lib/money/currency";
 import {
-  APPROVAL_WINDOW_LABEL,
   PAYOUTS_ON_MESSAGE,
   payoutsSetupHref,
   payoutsSetupLabel,
@@ -23,6 +22,7 @@ import { payoutsStatusForPage } from "@/server/creators/profile";
 import { settleCreatorMoney } from "@/server/licensing/lazy";
 import { failedTransferTotalCents } from "@/server/licensing/money";
 import { DisplayNameForm } from "./display-name-form";
+import { RequestsSettingsForm } from "./requests-settings-form";
 import { TimeZoneRow } from "./time-zone-row";
 
 export const metadata: Metadata = { title: "Settings" };
@@ -67,7 +67,8 @@ function Section({
  * active the creator's pending and failed transfers are sent (07 D75; 05 §6.11 callout 2): back from payout setup within
  * the settle budget, before the failed total is read, so the transfer Banner above Payouts shows what is still owed;
  * otherwise after the response. Settings shows that Banner alone, never the setup banners: its Payouts section already
- * says what setup needs.
+ * says what setup needs. Requests is the approval window and auto-approve form (07 D81), its Switch locked by the status
+ * read here, never the context's stored one.
  */
 export default async function SettingsPage({
   searchParams,
@@ -145,13 +146,10 @@ export default async function SettingsPage({
       </Section>
 
       <Section title="Requests">
-        <FactList
-          facts={[
-            {
-              label: "Time to answer",
-              value: APPROVAL_WINDOW_LABEL[creator.approvalWindowHours],
-            },
-          ]}
+        <RequestsSettingsForm
+          approvalWindowHours={creator.approvalWindowHours}
+          autoApprove={creator.autoApprove}
+          payoutsActive={status === "active"}
         />
       </Section>
 

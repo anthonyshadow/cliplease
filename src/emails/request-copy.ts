@@ -1,4 +1,6 @@
 import { APP_NAME } from "@/lib/app-name";
+import { sentences } from "@/lib/format";
+import { INBOX_COPY } from "@/lib/licensing/inbox";
 import {
   type DeclinedView,
   REQUEST_STATUS_COPY,
@@ -14,11 +16,21 @@ export const REQUEST_EMAIL_COPY = {
   receivedSubject: (handle: string) => `Request sent to @${handle}`,
   newBody: (scope: string, price: string, deadline: string) =>
     `${scope}. You get ${price}. Answer by ${deadline}. If you don't answer, the hold is released.`,
+  /** 04 §11.5: the Inbox row's line, word for word (07 D49). */
+  autoApproveFellBack: (deadline: string) =>
+    INBOX_COPY.autoApproveFellBack(deadline),
   /** request-new while the creator's payouts aren't active (07 D74, D77). */
   setUpPayouts: (deadline: string) =>
     `Set up payouts to approve before ${deadline}.`,
   /** 05 §8 callout 3: the status page's waiting sentence, word for word (07 D49). */
   receivedBody: REQUEST_STATUS_COPY.waitingBody,
+  /** 05 §8 (owner answer Q-152). */
+  receivedAutoBody: (handle: string, total: string, deadline: string) =>
+    sentences(
+      REQUEST_STATUS_COPY.autoApproves(handle),
+      `Your card has a hold of ${total} until it's approved, and we'll email your file and license in a moment.`,
+      `If it can't be approved automatically, @${handle} has until ${deadline} to approve.`,
+    ),
   /** license-approved (05 §8): the subject names the code, never a link or key (07 D34). */
   approvedSubject: (code: string) => `Approved: your license ${code} is ready`,
   /** /r's approved sentence, word for word (01 §4.8). */

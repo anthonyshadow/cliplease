@@ -5,6 +5,7 @@ import { db, type Tx } from "@/db/client";
 import { creatorProfile, licenseRequest, video } from "@/db/schema";
 import type { LicenseRequest } from "@/db/schema/types";
 import type { SocialProviderId } from "@/lib/domain/values";
+import { autoApprovesNewRequests } from "@/lib/licensing/auto-approve-rule";
 import type { DeclineResult } from "@/lib/licensing/request-dto";
 import {
   chosenMultipliers,
@@ -53,8 +54,9 @@ import {
   postingPlatformsColumn,
 } from "../videos/visibility";
 import { authorizationMismatches } from "./authorization";
+import { autoApproveRequest } from "./auto-approve";
 import { overdueColumn, pastDeadline } from "./deadline";
-import { runEffects } from "./effects";
+import { afterResponse, runEffects } from "./effects";
 import {
   applyTransition,
   type ClaimedRequest,
@@ -231,7 +233,8 @@ export async function createLicenseRequest(
 /**
  * The insert (T1), in one short transaction: the creator's row FOR SHARE, so the currency, the approval window and
  * auto-approve are the ones in force (07 D81, D94, I33), then the row, or nothing when the submission already has one,
- * and its audit. Nothing here calls the payments driver.
+ * and its audit. The request auto-approves only while the stored payouts status is active (owner answer Q-155), the
+ * rule the license page shows. Nothing here calls the payments driver.
  */
 async function saveRequest(
   values: NewRequest,
@@ -245,6 +248,7 @@ async function saveRequest(
         payoutCurrency: creatorProfile.payoutCurrency,
         approvalWindowHours: creatorProfile.approvalWindowHours,
         autoApprove: creatorProfile.autoApprove,
+        payoutsStatus: creatorProfile.payoutsStatus,
       })
       .from(creatorProfile)
       .where(eq(creatorProfile.id, values.creatorId))
@@ -258,7 +262,7 @@ async function saveRequest(
       .values({
         ...values,
         approvalWindowHours: creator.approvalWindowHours,
-        autoApprove: creator.autoApprove,
+        autoApprove: autoApprovesNewRequests(creator),
         termsAcceptedAt: sql`now()`,
         checkoutExpiresAt: sql`now() + make_interval(mins => ${CHECKOUT_SESSION_TTL_MINUTES}::int)`,
       })
@@ -333,7 +337,7 @@ async function resubmitted(
  * T2 or T3 (02 §8.1 row 1; 03 T2, T3; 07 D27, D28, D32): a request in checkout whose card is held becomes
  * awaiting_approval, or abandoned when the hold, the video or the time it leaves is wrong. Stripe is read first, the
  * decision is one short transaction; after the commit its emails are sent (after the response) or the abandoned hold is
- * released. Anything else changes
+ * released, and an auto_approve request's automatic approval runs after the response (07 D81). Anything else changes
  * nothing: another status (a webhook's late or second event is audited), no session or PaymentIntent, a session of
  * another request, a PaymentIntent not held. `platforms`: the enabled social platforms (tests pass their own).
  */
@@ -386,6 +390,13 @@ export async function markAuthorized(
   );
   runEffects(result.effects);
   if (result.changed && reason) await releaseHold(result.row, reason, actor);
+  if (
+    result.changed &&
+    result.to === "awaiting_approval" &&
+    result.row.autoApprove
+  ) {
+    afterResponse(() => autoApproveRequest(result.row.id));
+  }
   return result;
 }
 

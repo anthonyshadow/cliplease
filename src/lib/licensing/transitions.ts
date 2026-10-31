@@ -76,20 +76,42 @@ export function isTerminal(status: LicenseRequestStatus): boolean {
 export type DisplayStatus = LicenseRequestStatus | "processing";
 
 /**
- * What the request pages show (07 D26; owner answer Q-142 a): 'processing' while any claim (capture, decline or
+ * 07 D81: an auto_approve request whose automatic approval may still run — waiting, no fallback, before its deadline; a
+ * claim doesn't change it (the system's capture reads Processing… too).
+ */
+export function isAutoApproving(r: {
+  status: LicenseRequestStatus;
+  autoApprove: boolean;
+  autoApproveFallbackAt: Date | null;
+  overdue: boolean;
+}): boolean {
+  return (
+    r.status === "awaiting_approval" &&
+    r.autoApprove &&
+    r.autoApproveFallbackAt === null &&
+    !r.overdue
+  );
+}
+
+/**
+ * What the request pages show (07 D26, D81; owner answer Q-142 a): 'processing' while any claim (capture, decline or
  * expire) holds a waiting request, even past its deadline; 'expired' for an unclaimed waiting request at or past its
- * deadline, so its actions go while the lazy expiry runs; else the stored status. `overdue` comes from the database's
- * clock, the one the claims read (never the render's, 02 §4.4 rule 3). "Not charged" copy reads the stored status only
- * (07 D25).
+ * deadline, so its actions go while the lazy expiry runs; 'processing' too while its automatic approval may still run
+ * (isAutoApproving), so the creator gets no buttons; else the stored status. `overdue` comes from the database's clock,
+ * the one the claims read (never the render's, 02 §4.4 rule 3). "Not charged" copy reads the stored status only (07
+ * D25).
  */
 export function displayStatus(r: {
   status: LicenseRequestStatus;
   paymentAction: PaymentAction | null;
   overdue: boolean;
+  autoApprove: boolean;
+  autoApproveFallbackAt: Date | null;
 }): DisplayStatus {
   if (r.status !== "awaiting_approval") return r.status;
   if (r.paymentAction) return "processing";
-  return r.overdue ? "expired" : r.status;
+  if (r.overdue) return "expired";
+  return isAutoApproving(r) ? "processing" : r.status;
 }
 
 /**

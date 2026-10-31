@@ -1,7 +1,8 @@
 // Approvable requests for [int] tests (P18; P19, P19c and P19g reuse them): a creator whose payouts are active, and an
 // awaiting_approval request the fake driver resolves (`pi_fake_<its id>`), with a real sealed buyer key so its emails
 // compose. Built by the factories and one authorized transition, as markAuthorized commits it. P19 adds the clocks:
-// a request past its deadline (overdue) and a claim stuck since minutes ago (claimedMinutesAgo).
+// a request past its deadline (overdue) and a claim stuck since minutes ago (claimedMinutesAgo). P19c adds
+// auto-approve's: a request authorized minutes ago (authorizedMinutesAgo), as its retries and give-up read it.
 import { randomUUID } from "node:crypto";
 import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { db } from "../../src/db/client";
@@ -156,4 +157,25 @@ export async function claimedMinutesAgo(
     .returning({ id: licenseRequest.id });
   if (moved.length === 0) throw new Error("claimedMinutesAgo: no claim held");
   return claimedAt;
+}
+
+/**
+ * Backdates request `id`'s authorization to `minutes` ago on the database's clock, the one auto-approve's 2-minute retry
+ * floor and 10-minute give-up read (P19c; 07 D81). Only authorized_at moves: expires_at stays after it while the
+ * deadline is ahead (license_request_expires_after_auth), and capture_before is untouched.
+ */
+export async function authorizedMinutesAgo(
+  id: string,
+  minutes: number,
+): Promise<void> {
+  const moved = await db
+    .update(licenseRequest)
+    .set({
+      authorizedAt: sql`now() - make_interval(mins => ${minutes}::int)`,
+    })
+    .where(eq(licenseRequest.id, id))
+    .returning({ id: licenseRequest.id });
+  if (moved.length === 0) {
+    throw new Error("authorizedMinutesAgo: unknown request");
+  }
 }

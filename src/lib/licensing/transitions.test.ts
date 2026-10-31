@@ -7,6 +7,7 @@ import { HOUR_MS } from "@/lib/time";
 import {
   displayStatus,
   effectiveStatus,
+  isAutoApproving,
   isTerminal,
   LICENSE_REQUEST_EVENTS,
   type LicenseRequestEvent,
@@ -93,7 +94,18 @@ describe("isTerminal (03 §5.1, 07 D117)", () => {
   });
 });
 
-describe("displayStatus (07 D25, D26; owner answer Q-142 a)", () => {
+/** A manual request's auto-approve inputs. */
+const MANUAL = { autoApprove: false, autoApproveFallbackAt: null } as const;
+/** An auto_approve request that fell back to the creator. */
+const FELL_BACK = new Date("2026-10-27T12:05:00Z");
+/** Every auto-approve combination: manual, auto still running, auto fallen back. */
+const AUTO_INPUTS = [
+  MANUAL,
+  { autoApprove: true, autoApproveFallbackAt: null },
+  { autoApprove: true, autoApproveFallbackAt: FELL_BACK },
+] as const;
+
+describe("displayStatus (07 D25, D26, D81; owner answer Q-142 a)", () => {
   it.each([
     { paymentAction: "capture", overdue: false, shown: "processing" },
     { paymentAction: "capture", overdue: true, shown: "processing" },
@@ -104,25 +116,126 @@ describe("displayStatus (07 D25, D26; owner answer Q-142 a)", () => {
     { paymentAction: null, overdue: false, shown: "awaiting_approval" },
     { paymentAction: null, overdue: true, shown: "expired" },
   ] as const)(
-    "reads a waiting request with claim $paymentAction, overdue $overdue, as $shown: a claim is processing even past its deadline, and an unclaimed one past it expired until the expiry is stored",
+    "reads a waiting manual request with claim $paymentAction, overdue $overdue, as $shown: a claim is processing even past its deadline, and an unclaimed one past it expired until the expiry is stored",
     ({ paymentAction, overdue, shown }) => {
       expect(
-        displayStatus({ status: "awaiting_approval", paymentAction, overdue }),
+        displayStatus({
+          status: "awaiting_approval",
+          paymentAction,
+          overdue,
+          ...MANUAL,
+        }),
+      ).toBe(shown);
+    },
+  );
+
+  it.each([
+    {
+      name: "running, unclaimed, before its deadline",
+      paymentAction: null,
+      overdue: false,
+      autoApproveFallbackAt: null,
+      shown: "processing",
+    },
+    {
+      name: "running, past its deadline",
+      paymentAction: null,
+      overdue: true,
+      autoApproveFallbackAt: null,
+      shown: "expired",
+    },
+    {
+      name: "running, claimed by the system's capture",
+      paymentAction: "capture",
+      overdue: false,
+      autoApproveFallbackAt: null,
+      shown: "processing",
+    },
+    {
+      name: "fallen back, unclaimed",
+      paymentAction: null,
+      overdue: false,
+      autoApproveFallbackAt: FELL_BACK,
+      shown: "awaiting_approval",
+    },
+    {
+      name: "fallen back, past its deadline",
+      paymentAction: null,
+      overdue: true,
+      autoApproveFallbackAt: FELL_BACK,
+      shown: "expired",
+    },
+    {
+      name: "fallen back, claimed by the creator's capture",
+      paymentAction: "capture",
+      overdue: false,
+      autoApproveFallbackAt: FELL_BACK,
+      shown: "processing",
+    },
+  ] as const)(
+    "reads a waiting auto_approve request $name as $shown",
+    ({ paymentAction, overdue, autoApproveFallbackAt, shown }) => {
+      expect(
+        displayStatus({
+          status: "awaiting_approval",
+          paymentAction,
+          overdue,
+          autoApprove: true,
+          autoApproveFallbackAt,
+        }),
       ).toBe(shown);
     },
   );
 
   it.each(LICENSE_REQUEST_STATUSES.filter((s) => s !== "awaiting_approval"))(
-    "shows %s as stored, a claim left on the row or not, overdue or not",
+    "shows %s as stored, a claim left on the row or not, overdue or not, auto_approve or not",
     (status) => {
       for (const overdue of [false, true]) {
-        expect(
-          displayStatus({ status, paymentAction: "capture", overdue }),
-        ).toBe(status);
-        expect(displayStatus({ status, paymentAction: null, overdue })).toBe(
-          status,
-        );
+        for (const auto of AUTO_INPUTS) {
+          expect(
+            displayStatus({
+              status,
+              paymentAction: "capture",
+              overdue,
+              ...auto,
+            }),
+          ).toBe(status);
+          expect(
+            displayStatus({ status, paymentAction: null, overdue, ...auto }),
+          ).toBe(status);
+        }
       }
+    },
+  );
+});
+
+describe("isAutoApproving (07 D81)", () => {
+  const running = {
+    status: "awaiting_approval",
+    autoApprove: true,
+    autoApproveFallbackAt: null,
+    overdue: false,
+  } as const;
+
+  it("is true for a waiting auto_approve request with no fallback before its deadline", () => {
+    expect(isAutoApproving(running)).toBe(true);
+  });
+
+  it.each([
+    { name: "a manual request", change: { autoApprove: false } },
+    {
+      name: "one that fell back",
+      change: { autoApproveFallbackAt: FELL_BACK },
+    },
+    { name: "one past its deadline", change: { overdue: true } },
+  ] as const)("is false for $name", ({ change }) => {
+    expect(isAutoApproving({ ...running, ...change })).toBe(false);
+  });
+
+  it.each(LICENSE_REQUEST_STATUSES.filter((s) => s !== "awaiting_approval"))(
+    "is false once %s",
+    (status) => {
+      expect(isAutoApproving({ ...running, status })).toBe(false);
     },
   );
 });

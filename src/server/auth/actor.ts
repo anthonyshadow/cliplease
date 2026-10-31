@@ -31,6 +31,9 @@ export const WEBHOOK: Actor = { kind: "system", source: "webhook" };
 /** The expire-requests cron (07 D57): audited as actor_type cron (07 D47). */
 export const CRON: Actor = { kind: "system", source: "cron" };
 
+/** Auto-approve (07 D81): audited as actor_type system with data.source 'auto_approve'. */
+export const AUTO_APPROVE: Actor = { kind: "system", source: "auto_approve" };
+
 /** `a` as a creator actor; any other actor here is a programming error. */
 export function requireCreatorActor(a: Actor): CreatorActor {
   if (a.kind !== "creator") throw new Error("a creator actor is required");

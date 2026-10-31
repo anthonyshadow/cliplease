@@ -21,7 +21,8 @@ import {
 // Approve (02 §8.2; 03 T4–T6; 07 D24–D26, D29, D33, D74, D77): one tap claims the request, captures the hold outside any
 // transaction under the claim's key, and the fenced T5 finish issues the license. Never "not charged" while money may
 // have moved: a request whose capture outcome is unknown reads as claimed ("Processing…") until it is reconciled.
-// The video lock and availability check (07 D110) arrive with P19f and P19g (owner answer Q-122 a).
+// Auto-approve (P19c; 07 D81) approves as the system actor through the same path. The video lock and availability check
+// (07 D110) arrive with P19f and P19g (owner answer Q-122 a).
 
 /** Approve's view of a request, scoped to the creator: null when it isn't theirs. */
 async function approveState(requestId: string, creatorId: string) {
@@ -49,6 +50,32 @@ async function approveState(requestId: string, creatorId: string) {
 type ApproveState = NonNullable<Awaited<ReturnType<typeof approveState>>>;
 
 /**
+ * Whose request `actor` may approve (02 §8.2; 03 T4): a creator their own; the auto-approve system actor only an
+ * auto_approve request that hasn't fallen back (07 D81), and its claim checks that again. Null for anyone else: nothing
+ * about the request is told.
+ */
+async function approveScope(
+  requestId: string,
+  actor: Actor,
+): Promise<{ creatorId: string; autoApproveOnly: boolean } | null> {
+  if (actor.kind === "creator") {
+    return { creatorId: actor.creatorId, autoApproveOnly: false };
+  }
+  if (actor.kind !== "system" || actor.source !== "auto_approve") return null;
+  const [row] = await db
+    .select({
+      creatorId: licenseRequest.creatorId,
+      autoApprove: licenseRequest.autoApprove,
+      autoApproveFallbackAt: licenseRequest.autoApproveFallbackAt,
+    })
+    .from(licenseRequest)
+    .where(eq(licenseRequest.id, requestId));
+  return row?.autoApprove && row.autoApproveFallbackAt === null
+    ? { creatorId: row.creatorId, autoApproveOnly: true }
+    : null;
+}
+
+/**
  * A request this tap can't act on: decided or claimed by another tab or actor (not_actionable with its status, J8.8;
  * Processing… while claimed), or past its deadline. Only the tap whose claim captured reports ok.
  */
@@ -66,7 +93,9 @@ function refusedResult(s: ApproveState): ApproveResult | null {
  * reading at most 10 minutes old), else nothing is claimed. A refused claim reports the request as it is. A capture
  * that isn't ok goes to reconcileFromStripe, and the result follows Stripe: approved, a released claim (retry), or
  * capture_failed (T7 cancels the hold first). A tap past the deadline schedules the expiry it found due (02 §8.4), as
- * the system's work after the response. `payoutsRow`: the caller's creator context, read with the session.
+ * the system's work after the response. `actor`: the request's creator, or the auto-approve system actor on an
+ * auto_approve request that hasn't fallen back (approveScope). `payoutsRow`: the caller's creator context, read with the
+ * session.
  */
 export async function approveLicenseRequest(
   requestId: string,
@@ -85,10 +114,9 @@ async function approve(
   actor: Actor,
   { payoutsRow }: { payoutsRow?: PayoutsRow },
 ): Promise<ApproveResult> {
-  if (actor.kind !== "creator") {
-    return { ok: false, reason: "not_actionable", status: null };
-  }
-  const { creatorId } = actor;
+  const scope = await approveScope(requestId, actor);
+  if (!scope) return { ok: false, reason: "not_actionable", status: null };
+  const { creatorId } = scope;
   let before = await approveState(requestId, creatorId);
   if (!before) return { ok: false, reason: "not_actionable", status: null };
   if (await reconcileIfStuck(requestId, before, actor)) {
@@ -121,7 +149,9 @@ async function approve(
       status: "awaiting_approval",
     };
   }
-  const claimed = await claimPaymentAction(requestId, "capture");
+  const claimed = await claimPaymentAction(requestId, "capture", {
+    autoApproveOnly: scope.autoApproveOnly,
+  });
   if (!claimed) {
     const now = await stateOf(requestId, creatorId);
     return (

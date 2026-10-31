@@ -32,6 +32,14 @@ export const INBOX_COPY = {
   makeLicensable: "Make a video licensable",
   historyEmpty: "No decided requests yet.",
   setUpPayouts: "Set up payouts",
+  /** 04 §11.5 (07 D81): a waiting row that fell back, and request-new's first line; the deadline after mount (null). */
+  autoApproveFellBack: (deadline: string | null) =>
+    sentences(
+      "Auto-approve couldn't finish.",
+      deadline && `Tap Approve before ${deadline}.`,
+    ),
+  /** 04 §11.5: an auto-approved History row's footnote. */
+  autoApproved: "Auto-approved",
   /** 01 J8.3, 07 D77: while a request waits and payouts aren't active. */
   payoutsWaiting: (deadline: string | null) =>
     sentences(
@@ -128,6 +136,28 @@ export function outcomeLine(
   if (r.status === "declined" && r.statusReason === "video_disabled") {
     return { text: INBOX_COPY.videoDisabledLine, danger: false };
   }
+  return null;
+}
+
+/**
+ * Auto-approve's line (04 §11.5; 07 D81): a request it fell back on, while it waits for the creator, says to tap
+ * Approve before the deadline (amber); an auto-approved one reads "Auto-approved" (ink-2). Any other request has none,
+ * a fallen-back one while a claim runs (Processing…) or once decided included.
+ */
+export function autoApproveLine(
+  r: Pick<
+    CreatorRequest,
+    "displayStatus" | "status" | "autoApproveFallbackAt" | "autoApproved"
+  >,
+  deadline: string | null,
+): { text: string; tone: "awaiting" | "neutral" } | null {
+  if (
+    r.displayStatus === "awaiting_approval" &&
+    r.autoApproveFallbackAt !== null
+  ) {
+    return { text: INBOX_COPY.autoApproveFellBack(deadline), tone: "awaiting" };
+  }
+  if (r.autoApproved) return { text: INBOX_COPY.autoApproved, tone: "neutral" };
   return null;
 }
 

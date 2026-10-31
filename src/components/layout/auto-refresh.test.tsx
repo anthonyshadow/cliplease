@@ -6,6 +6,7 @@ import {
   AutoRefresh,
   useAutoRefresh,
 } from "./auto-refresh";
+import { REFRESH_EVERY_MS, REFRESH_TIMES } from "./refreshing-message";
 
 const mocks = vi.hoisted(() => {
   const refresh = vi.fn();
@@ -17,8 +18,14 @@ vi.mock("next/navigation", async (actual) => ({
 }));
 
 let restart: () => void = () => {};
-function Probe({ onRefresh }: { onRefresh?: () => void }) {
-  restart = useAutoRefresh({ onRefresh }).restart;
+function Probe({
+  onRefresh,
+  burst,
+}: {
+  onRefresh?: () => void;
+  burst?: boolean;
+}) {
+  restart = useAutoRefresh({ onRefresh, burst }).restart;
   return null;
 }
 
@@ -97,5 +104,56 @@ describe("AutoRefresh (01 J7.17; 05 §4.3, §6.3)", () => {
     comeBack();
     expect(mocks.refresh).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe("AutoRefresh's burst (05 §4.3 callouts 8–9: /r while auto-approve runs)", () => {
+  it("refreshes every 3 s 10 times, then every 30 s", () => {
+    render(<AutoRefresh burst />);
+    for (let n = 1; n <= REFRESH_TIMES; n += 1) {
+      act(() => vi.advanceTimersByTime(REFRESH_EVERY_MS - 1));
+      expect(mocks.refresh).toHaveBeenCalledTimes(n - 1);
+      act(() => vi.advanceTimersByTime(1));
+      expect(mocks.refresh).toHaveBeenCalledTimes(n);
+    }
+    act(() => vi.advanceTimersByTime(AUTO_REFRESH_EVERY_MS - 1));
+    expect(mocks.refresh).toHaveBeenCalledTimes(REFRESH_TIMES);
+    act(() => vi.advanceTimersByTime(1));
+    expect(mocks.refresh).toHaveBeenCalledTimes(REFRESH_TIMES + 1);
+    act(() => vi.advanceTimersByTime(2 * AUTO_REFRESH_EVERY_MS));
+    expect(mocks.refresh).toHaveBeenCalledTimes(REFRESH_TIMES + 3);
+  });
+
+  it("refreshes when the viewer comes back to the tab during the burst too", () => {
+    render(<AutoRefresh burst />);
+    act(() => vi.advanceTimersByTime(REFRESH_EVERY_MS + 1_500));
+    expect(mocks.refresh).toHaveBeenCalledTimes(1);
+    comeBack();
+    expect(mocks.refresh).toHaveBeenCalledTimes(2);
+  });
+
+  it("ends the burst on restart: the next refresh comes 30 s later", () => {
+    render(<Probe burst />);
+    act(() => vi.advanceTimersByTime(REFRESH_EVERY_MS));
+    expect(mocks.refresh).toHaveBeenCalledTimes(1);
+    act(() => restart());
+    act(() => vi.advanceTimersByTime(AUTO_REFRESH_EVERY_MS - 1));
+    expect(mocks.refresh).toHaveBeenCalledTimes(1);
+    act(() => vi.advanceTimersByTime(1));
+    expect(mocks.refresh).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    { name: "during the burst", after: REFRESH_EVERY_MS },
+    { name: "after it", after: REFRESH_EVERY_MS * REFRESH_TIMES },
+  ])("stops on unmount $name", ({ after }) => {
+    const { unmount } = render(<AutoRefresh burst />);
+    act(() => vi.advanceTimersByTime(after));
+    const before = mocks.refresh.mock.calls.length;
+    unmount();
+    expect(vi.getTimerCount()).toBe(0);
+    act(() => vi.advanceTimersByTime(5 * AUTO_REFRESH_EVERY_MS));
+    comeBack();
+    expect(mocks.refresh).toHaveBeenCalledTimes(before);
   });
 });

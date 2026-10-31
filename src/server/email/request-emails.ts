@@ -18,8 +18,9 @@ import {
 
 // The three request emails (05 §8): who gets each and its subject when it is queued, and its message when it is sent.
 // Each reads the request as it is now (02 §5.10): email_log keeps only the recipient's hash. The creator's email never
-// names the buyer's address (07 D47). Both switches cover every template, so a new one fails typecheck until it is
-// handled in each.
+// names the buyer's address (07 D47). An auto-approve request's request-received reads its snapshot (07 D81);
+// request-new opens with the fallback line once auto-approve fell back. Both switches cover every template, so a new
+// one fails typecheck until it is handled in each.
 
 export type RequestEmailTemplate =
   | "request-new"
@@ -50,6 +51,9 @@ export async function requestEmailFacts(
       currency: licenseRequest.currency,
       expiresAt: licenseRequest.expiresAt,
       statusReason: licenseRequest.statusReason,
+      // The request's own snapshot and fallback, never creator_profile's auto_approve.
+      autoApprove: licenseRequest.autoApprove,
+      autoApproveFallbackAt: licenseRequest.autoApproveFallbackAt,
       creatorEmail: user.email,
       creatorTimeZone: creatorProfile.timeZone,
       payoutsStatus: creatorProfile.payoutsStatus,
@@ -116,6 +120,7 @@ export async function composeRequestEmail(
           expiresAt: f.expiresAt,
           timeZone: f.creatorTimeZone,
           payoutsActive: f.payoutsStatus === "active",
+          fellBack: f.autoApproveFallbackAt !== null,
           url: `${env.APP_URL}${requestDetailPath(f.id)}`,
         }),
       };
@@ -131,6 +136,7 @@ export async function composeRequestEmail(
           currency: f.currency,
           expiresAt: f.expiresAt,
           timeZone: f.buyerTimeZone,
+          autoApprove: f.autoApprove,
           url: `${env.APP_URL}${requestStatusPath(f.id, revealBuyerToken(f))}`,
         }),
       };

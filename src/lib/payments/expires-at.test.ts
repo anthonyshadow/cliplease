@@ -48,6 +48,13 @@ describe("computeExpiresAt (07 D81)", () => {
     expect(expiresAt(null, 120)).toEqual(plus(108 * HOUR_MS));
   });
 
+  it("caps the 120 h window 6 h before a 4 d 18 h hold, and keeps the 24 h window when the hold is unknown", () => {
+    expect(expiresAt(plus(4 * DAY_MS + 18 * HOUR_MS), 120)).toEqual(
+      plus(108 * HOUR_MS),
+    );
+    expect(expiresAt(null, 24)).toEqual(plus(24 * HOUR_MS));
+  });
+
   it("is never later than 6 hours before the hold ends", () => {
     for (const window of APPROVAL_WINDOW_HOURS) {
       for (let h = 0; h <= 8 * 24; h += 7) {

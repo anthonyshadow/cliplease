@@ -44,10 +44,21 @@ export function payoutsSetupHref(returnTo?: string): string {
   return returnTo ? `${path}?${new URLSearchParams({ returnTo })}` : path;
 }
 
-/** The read-only approval window (05 §1.5's labels); P19c makes it a choice (07 D81). */
+/** The approval window's tile titles (05 §1.5; 07 D81). */
 export const APPROVAL_WINDOW_LABEL = {
   24: "24 hours",
   48: "48 hours",
   72: "72 hours",
   120: "5 days",
 } as const satisfies Record<ApprovalWindowHours, string>;
+
+/** Settings → Requests (04 §11.10; 05 §6.11 callouts 4 and 8; 07 D81). `saved`: 05 §6.11 States (proposed). */
+export const REQUESTS_SETTINGS_COPY = {
+  approvalWindow: "Approval window",
+  newRequestsOnly: "New requests only.",
+  autoApprove: "Approve requests automatically",
+  autoApproveHelper:
+    "We approve as soon as a buyer pays, if your payouts are on and the payment looks safe.",
+  autoApproveLocked: "Set up payouts to turn this on.",
+  saved: "Saved.",
+} as const;

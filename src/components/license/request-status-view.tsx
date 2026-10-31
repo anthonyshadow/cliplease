@@ -19,7 +19,8 @@ const HEADING = "text-title-1 text-ink wrap-anywhere";
  * view, as the page loaded, neither fades nor takes the focus.
  * The approved ending has the static 40 px seal above its title (04 §10.2; the draw-in is [H8]).
  * A deadline is formatted in the viewer's zone after mount: until then its sentence is left out (02 §4.4). "Finishing
- * checkout…" refreshes every 3 s with a spinner, and after 30 s says what to do instead.
+ * checkout…" refreshes every 3 s with a spinner, and after 30 s says what to do instead. While auto-approve runs,
+ * "Processing…" keeps the 16 px spinner with its body (05 §4.3 callouts 8–9; the page refreshes it).
  */
 export function RequestStatusView({
   view,
@@ -42,10 +43,11 @@ export function RequestStatusView({
   const changed = title !== firstTitle;
   const checked = useCheckingRefresh(view === "returning");
   const checking = view === "returning" && !checked;
+  const spinning = checking || view === "auto_approving";
   const deadline = useViewerDeadline(expiresAt);
   const heading = (
     <>
-      {checking ? (
+      {spinning ? (
         <span aria-hidden className="mr-2 inline-flex align-middle">
           <LoaderCircle size={16} strokeWidth={2} className="animate-spin" />
         </span>

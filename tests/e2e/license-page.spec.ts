@@ -55,9 +55,11 @@ test("J6.4, J7.1–J7.6, J7.20, J7.21: a logged-out buyer sees the video, who ow
 }) => {
   test.setTimeout(240_000);
   const { handle, slug, shareUrl, videoId } = await publishDemoVideo(page);
+  const timezoneId = "America/Toronto";
   const context = await browser.newContext({
     baseURL,
     viewport: { width: 390, height: 844 },
+    timezoneId,
   });
   const buyer = await context.newPage();
   const missing = `/@${handle}/no-such-video`;
@@ -66,12 +68,14 @@ test("J6.4, J7.1–J7.6, J7.20, J7.21: a logged-out buyer sees the video, who ow
   ]);
   const external = trackExternalRequests(buyer);
 
+  const before = Date.now();
   const response = await buyer.goto(shareUrl);
   expect(response?.status()).toBe(200);
   const html = (await response?.text()) ?? "";
   expect(html).not.toMatch(OBJECT_KEY);
   expect(html).not.toMatch(/<iframe|mock:\/\//);
   await hydrated(buyer);
+  const after = Date.now();
 
   // The poster, the page's only image, from the poster route; the title and the creator (01 J7; 07 D08).
   const title =
@@ -181,6 +185,18 @@ test("J6.4, J7.1–J7.6, J7.20, J7.21: a logged-out buyer sees the video, who ow
   await expect(submission).toHaveValue(
     /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
   );
+
+  // The manual hold paragraph, once: a hold of the total, released unless @handle approves within 72 h of the mount,
+  // in the buyer's zone (01 J7.6).
+  const hold = buyer.locator("p", {
+    hasText: LICENSE_PAGE_COPY.holdAmount(cad(173250)),
+  });
+  await expect(hold).toHaveCount(1);
+  const expected = [before, after].map(
+    (t) =>
+      `${LICENSE_PAGE_COPY.holdLead(handle)} ${LICENSE_PAGE_COPY.holdAmount(cad(173250))} ${LICENSE_PAGE_COPY.holdDeadline(handle, formatDeadline(new Date(t + 72 * HOUR_MS), timezoneId))}`,
+  );
+  expect(expected).toContain(await hold.textContent());
 
   // The currency, said once in the summary and once in the small print, and no bare $ anywhere (07 D94, D98).
   const main = buyer.locator("main");

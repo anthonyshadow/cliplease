@@ -35,11 +35,15 @@ import { readyUpload } from "../helpers/ready-videos";
 // requests, never one in checkout, an abandoned one or the buyer's email; /r reads one request through its key. P19:
 // an unclaimed request past its deadline reads as Expired, by the database's clock, without the reads writing anything,
 // and the payouts Banner's soonest deadline passes over it. P19b: the creator's reads carry the request's creator
-// transfer (status, amount, currency) for the payout line, never its Stripe id or error; /r's never carry it.
+// transfer (status, amount, currency) for the payout line, never its Stripe id or error; /r's never carry it. P19c: a
+// waiting auto-approve request reads Processing… while its automatic approval may still run; the creator's reads carry
+// the fallback instant and whether auto-approve approved it, /r's only whether it is still auto-approving (07 D81).
 
 /** The keys a creator's request carries, and nothing else. */
 const CREATOR_KEYS = [
   "amountTotalCents",
+  "autoApproveFallbackAt",
+  "autoApproved",
   "contactName",
   "createdAt",
   "currency",
@@ -60,6 +64,26 @@ const CREATOR_KEYS = [
   "transferAmountCents",
   "transferCurrency",
   "transferStatus",
+  "videoId",
+];
+
+/** The keys /r's request carries, and nothing else: of auto-approve, only whether it may still run (P19c). */
+const BUYER_KEYS = [
+  "amountTotalCents",
+  "autoApproving",
+  "currency",
+  "displayStatus",
+  "expiresAt",
+  "handle",
+  "id",
+  "licenseCode",
+  "licensePriceCents",
+  "posterUrl",
+  "scope",
+  "slug",
+  "status",
+  "statusReason",
+  "title",
   "videoId",
 ];
 
@@ -509,6 +533,138 @@ describe("an overdue request (owner answer Q-142 a; 07 D25, D26; 02 §4.4 rule 3
       count: 2,
       soonestExpiresAt: open.expiresAt?.toISOString(),
     });
+  });
+});
+
+describe("an auto-approve request (P19c; 07 D81; owner answer Q-155)", () => {
+  /** An auto-approve request on `live` in `status` (requestIn's), with a real buyer key for /r's read. */
+  async function autoRequest(
+    live: Video,
+    status: LicenseRequest["status"],
+    overrides: Partial<NewLicenseRequest> = {},
+  ) {
+    const id = randomUUID();
+    const key = generateBuyerToken(id);
+    const row = await requestIn(live, status, {
+      id,
+      buyerTokenHash: key.hash,
+      buyerTokenEnc: key.enc,
+      autoApprove: true,
+      ...overrides,
+    });
+    return { row, token: key.token };
+  }
+
+  it("reads Processing… for the creator and the buyer while its automatic approval may still run, unclaimed: no buttons, no deadline", async () => {
+    const { creator, live } = await creatorWithVideo();
+    const { row, token } = await autoRequest(live, "awaiting_approval");
+    const processing = {
+      id: row.id,
+      status: "awaiting_approval",
+      displayStatus: "processing",
+    };
+    expect(await listInbox(creator.id, "waiting")).toEqual([
+      expect.objectContaining({
+        ...processing,
+        autoApproveFallbackAt: null,
+        autoApproved: false,
+      }),
+    ]);
+    expect(await getRequestForCreator(creator.id, row.id)).toMatchObject(
+      processing,
+    );
+    expect(await getBuyerStatus(row.id, token)).toMatchObject({
+      ...processing,
+      autoApproving: true,
+    });
+    // Still waiting for the creator: it counts in the Inbox until it is decided, as a claimed request does.
+    expect((await waitingSummary(creator.id)).count).toBe(1);
+  });
+
+  it("reads Expired once overdue: the deadline wins over the automatic approval", async () => {
+    const { creator, live } = await creatorWithVideo();
+    const { row, token } = await autoRequest(live, "awaiting_approval");
+    await overdue(row.id);
+    const readsExpired = {
+      status: "awaiting_approval",
+      displayStatus: "expired",
+    };
+    expect(await getRequestForCreator(creator.id, row.id)).toMatchObject(
+      readsExpired,
+    );
+    expect(await getBuyerStatus(row.id, token)).toMatchObject({
+      ...readsExpired,
+      autoApproving: false,
+    });
+  });
+
+  it("reads Waiting with the fallback instant once auto-approve fell back, and the buyer sees a plain wait", async () => {
+    const { creator, live } = await creatorWithVideo();
+    const fellBackAt = new Date();
+    const { row, token } = await autoRequest(live, "awaiting_approval", {
+      autoApproveFallbackAt: fellBackAt,
+    });
+    const waiting = {
+      status: "awaiting_approval",
+      displayStatus: "awaiting_approval",
+    };
+    expect(await listInbox(creator.id, "waiting")).toEqual([
+      expect.objectContaining({
+        id: row.id,
+        ...waiting,
+        autoApproveFallbackAt: fellBackAt.toISOString(),
+        autoApproved: false,
+      }),
+    ]);
+    expect(await getRequestForCreator(creator.id, row.id)).toMatchObject({
+      ...waiting,
+      autoApproveFallbackAt: fellBackAt.toISOString(),
+    });
+    expect(await getBuyerStatus(row.id, token)).toMatchObject({
+      ...waiting,
+      autoApproving: false,
+    });
+  });
+
+  it("History marks Auto-approved only an approved auto-approve request that never fell back, not one the creator approved after a fallback", async () => {
+    const { creator, live } = await creatorWithVideo();
+    const auto = await autoRequest(live, "approved");
+    const afterFallback = await autoRequest(live, "approved", {
+      autoApproveFallbackAt: new Date(),
+    });
+    const manual = await requestIn(live, "approved");
+    const expired = await autoRequest(live, "expired");
+    const history = await listInbox(creator.id, "history");
+    expect(
+      Object.fromEntries(history.map((r) => [r.id, r.autoApproved])),
+    ).toEqual({
+      [auto.row.id]: true,
+      [afterFallback.row.id]: false,
+      [manual.id]: false,
+      [expired.row.id]: false,
+    });
+    expect(await getRequestForCreator(creator.id, auto.row.id)).toMatchObject({
+      autoApproved: true,
+      autoApproveFallbackAt: null,
+    });
+    for (const dto of history) {
+      expect(Object.keys(dto).sort()).toEqual(CREATOR_KEYS);
+    }
+  });
+
+  it("/r's request has exactly its keys: never the setting or the fallback instant", async () => {
+    const { live } = await creatorWithVideo();
+    const fresh = await autoRequest(live, "awaiting_approval");
+    const fellBack = await autoRequest(live, "awaiting_approval", {
+      autoApproveFallbackAt: new Date(),
+    });
+    for (const { row, token } of [fresh, fellBack]) {
+      const status = await getBuyerStatus(row.id, token);
+      expect(Object.keys(status ?? {}).sort()).toEqual(BUYER_KEYS);
+      expect(JSON.stringify(status)).not.toMatch(
+        /autoApproveFallbackAt|"autoApprove"/,
+      );
+    }
   });
 });
 

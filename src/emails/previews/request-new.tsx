@@ -13,6 +13,7 @@ export default function RequestNewPreview() {
       expiresAt={new Date("2026-11-01T17:00:00Z")}
       timeZone="America/Toronto"
       payoutsActive={false}
+      fellBack={false}
       url="http://localhost:3000/dashboard/requests/00000000-0000-4000-8000-000000000201"
     />
   );

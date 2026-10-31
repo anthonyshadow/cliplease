@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   approveOutcome,
+  autoApproveLine,
   declineOutcome,
   INBOX_COPY,
   outcomeLine,
@@ -137,6 +138,68 @@ describe("outcomeLine (04 §11.5)", () => {
     ["awaiting_approval", null],
   ] as const)("has no line for %s (%s)", (status, statusReason) => {
     expect(outcomeLine({ status, statusReason }, deadline)).toBeNull();
+  });
+});
+
+describe("autoApproveLine (04 §11.5; 05 §6.3 callouts 12, 17; 07 D81)", () => {
+  const deadline = "Mon 12 Oct, 3:10 PM EDT";
+  const fellBack = {
+    status: "awaiting_approval",
+    displayStatus: "awaiting_approval",
+    autoApproveFallbackAt: "2026-10-09T19:20:00.000Z",
+    autoApproved: false,
+  } as const;
+  const autoApproved = {
+    status: "approved",
+    displayStatus: "approved",
+    autoApproveFallbackAt: null,
+    autoApproved: true,
+  } as const;
+
+  it("tells the creator to tap Approve before the deadline once auto-approve fell back, in the awaiting tone", () => {
+    expect(autoApproveLine(fellBack, deadline)).toEqual({
+      text: "Auto-approve couldn't finish. Tap Approve before Mon 12 Oct, 3:10 PM EDT.",
+      tone: "awaiting",
+    });
+  });
+
+  it("leaves the deadline out until the viewer's zone is read", () => {
+    expect(autoApproveLine(fellBack, null)).toEqual({
+      text: "Auto-approve couldn't finish.",
+      tone: "awaiting",
+    });
+  });
+
+  it("notes an auto-approved History row in the neutral tone", () => {
+    expect(autoApproveLine(autoApproved, deadline)).toEqual({
+      text: "Auto-approved",
+      tone: "neutral",
+    });
+  });
+
+  it.each([
+    {
+      name: "a fallen-back request approved by the creator later",
+      r: { ...fellBack, status: "approved", displayStatus: "approved" },
+    },
+    {
+      name: "a fallen-back request while a claim runs (Processing…)",
+      r: { ...fellBack, displayStatus: "processing" },
+    },
+    {
+      name: "a fallen-back request past its deadline (Expired)",
+      r: { ...fellBack, displayStatus: "expired" },
+    },
+    {
+      name: "a manual waiting request",
+      r: { ...fellBack, autoApproveFallbackAt: null },
+    },
+    {
+      name: "a manual approved request",
+      r: { ...autoApproved, autoApproved: false },
+    },
+  ] as const)("has no line for $name", ({ r }) => {
+    expect(autoApproveLine(r, deadline)).toBeNull();
   });
 });
 

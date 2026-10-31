@@ -15,7 +15,7 @@ import type {
   InboxView,
 } from "@/lib/licensing/request-dto";
 import { scopeLabel } from "@/lib/licensing/selection";
-import { displayStatus } from "@/lib/licensing/transitions";
+import { displayStatus, isAutoApproving } from "@/lib/licensing/transitions";
 import { isUuid } from "@/lib/validation/uuid";
 import { enabledPlatforms } from "../social/registry";
 import { findRequestForBuyer } from "../tokens/buyer-token";
@@ -49,6 +49,9 @@ const FACTS = {
   paymentAction: licenseRequest.paymentAction,
   // displayStatus's deadline, on the database's clock as the claims read it (02 §4.4 rule 3).
   overdue: overdueColumn,
+  // displayStatus's and isAutoApproving's (07 D81): never mapped into the shared DTO as they are.
+  autoApprove: licenseRequest.autoApprove,
+  autoApproveFallbackAt: licenseRequest.autoApproveFallbackAt,
   useKey: licenseRequest.useKey,
   termKey: licenseRequest.termKey,
   territoryKey: licenseRequest.territoryKey,
@@ -143,12 +146,18 @@ function creatorRequestOf(r: CreatorRow): CreatorRequest {
     transferStatus: r.transferStatus,
     transferAmountCents: r.transferAmountCents,
     transferCurrency: r.transferCurrency,
+    autoApproveFallbackAt: r.autoApproveFallbackAt?.toISOString() ?? null,
+    autoApproved:
+      r.status === "approved" &&
+      r.autoApprove &&
+      r.autoApproveFallbackAt === null,
   };
 }
 
 /**
  * The request a buyer link opens (03 §7.6), or null for a wrong key, an unknown id or anything malformed. A pure read:
  * nothing is asked of Stripe. The poster only while the video is public: the route answers anyone else with a 404.
+ * Of auto-approve, only whether it may still run (07 D81): never the setting or the fallback instant.
  */
 export async function getBuyerStatus(
   requestId: string,
@@ -168,12 +177,15 @@ export async function getBuyerStatus(
     { status: r.videoStatus, postingPlatforms: r.postingPlatforms },
     enabledPlatforms(),
   );
-  return factsOf(
-    r,
-    visible
-      ? posterSrc({ id: r.videoId, posterObjectKey: r.posterObjectKey })
-      : null,
-  );
+  return {
+    ...factsOf(
+      r,
+      visible
+        ? posterSrc({ id: r.videoId, posterObjectKey: r.posterObjectKey })
+        : null,
+    ),
+    autoApproving: isAutoApproving(r),
+  };
 }
 
 /**

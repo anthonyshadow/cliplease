@@ -39,8 +39,8 @@ import { readLatestEmail } from "../helpers/read-latest-email";
 // The email outbox (P17; 02 §5.10; 03 §3.8, I21; 07 D34, D47, D84): the authorized transition queues request-new and
 // request-received in its own transaction, they are sent after the response (after() runs at once here), and the
 // retry picks up what is left. P19: the declined transition queues request-declined to the buyer the same way; no
-// other ending of a waiting request emails anyone in CORE. The console driver writes .data/emails; a test can make it
-// fail.
+// other ending of a waiting request emails anyone in CORE. P19c: an auto-approve request's authorization queues
+// request-received only. The console driver writes .data/emails; a test can make it fail.
 
 const driver = vi.hoisted(() => ({
   fail: false,
@@ -168,6 +168,17 @@ describe("queueing (07 D34; 02 §5.10 step 1)", () => {
     for (const r of rows) {
       expect(r.subject).not.toMatch(/http|t=|\/r\//);
     }
+  });
+
+  it("an auto-approve request's authorized transition queues request-received only: request-new waits for a fallback (07 D81)", async () => {
+    const { row, result } = await waitingRequest({}, { autoApprove: true });
+    const rows = await rowsOf(row.id);
+    expect(rows.map((r) => r.idempotencyKey)).toEqual([
+      `request-received/${row.id}`,
+    ]);
+    expect(result.effects).toEqual(
+      rows.map((r) => ({ kind: "email", emailLogId: r.id })),
+    );
   });
 
   it("keeps no row when the transition's transaction rolls back", async () => {

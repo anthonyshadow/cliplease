@@ -127,16 +127,18 @@ export async function publishDemoVideo(
 
 /**
  * A buyer licenses the video at `url` (a share link) in a fresh logged-out 390 × 844 context: requestLicense with
- * `email` run-unique unless given, then Pay on the fake checkout, ending on /r "Waiting for @…". Returns the request's
- * id, its buyer link as the email sends it (no session id), the context (the caller closes it) and the address.
+ * `email` run-unique unless given, then Pay on the fake checkout, ending on /r `landing` (default 'Waiting for @…'; an
+ * auto-approve creator's /r reads Processing… or Approved). Returns the request's id, its buyer link as the email sends
+ * it (no session id), the context (the caller closes it) and the address.
  */
 export async function buyLicense(
   browser: Browser,
   url: string,
   {
     email = `buyer+${randomUUID().slice(0, 8)}@example.com`,
+    landing = /^Waiting for @/,
     ...choice
-  }: LicenseChoice,
+  }: LicenseChoice & { landing?: RegExp },
 ): Promise<{
   requestId: string;
   statusUrl: string;
@@ -151,9 +153,7 @@ export async function buyLicense(
   const paid = requestEnded(page, isServerAction);
   await pressLocator(page.getByRole("button", { name: /^Pay CA\$/ }));
   await paid;
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText(
-    /^Waiting for @/,
-  );
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText(landing);
   const statusUrl = page.url().replace(/&session_id=[^&]*$/, "");
   return { requestId, statusUrl, context, email };
 }

@@ -4,6 +4,13 @@ import { sentences } from "@/lib/format";
 // The buyer's request status page, /r/{id} (S03; 01 §4.8, J7.13, J7.14, J7.16, J7.17, J7.19; 04 §11.3; 05 §4.3, §10;
 // 07 D25, D27, D28): its words, and which view a request shows. Pure.
 
+/** 01 J7.6, 05 §4.3 callout 9, 05 §8 (07 D81): the opening the license page, /r and request-received share. */
+const autoApproves = (handle: string) =>
+  `@${handle} approves requests automatically.`;
+
+/** 04 §11.3: under the waiting countdown, and the last sentence of /r's auto-approving body. */
+const UPDATES_ITSELF = "This page updates by itself.";
+
 /** The words with nothing to fill in, and the ones a view builds from the request. */
 export const REQUEST_STATUS_COPY = {
   /** S27's "Buyer link dead" (05 §10): the 404 title, with no hint that the request exists. */
@@ -31,7 +38,16 @@ export const REQUEST_STATUS_COPY = {
       "We'll email you either way.",
     ),
   /** 04 §11.3: under the waiting countdown. */
-  updatesItself: "This page updates by itself.",
+  updatesItself: UPDATES_ITSELF,
+  /** 01 J7.6, 05 §4.3 callout 9, 05 §8 (07 D81): "@{handle} approves requests automatically." */
+  autoApproves,
+  /** 05 §4.3 callouts 8–9 (proposed): /r while the automatic approval runs; no deadline. */
+  autoApprovingBody: (handle: string, total: string) =>
+    sentences(
+      autoApproves(handle),
+      `Your card has a hold of ${total} until it's approved.`,
+      UPDATES_ITSELF,
+    ),
   /** 04 §9.9, 07 D26: a claimed request's pill. */
   processing: "Processing…",
   approvedTitle: "Approved",
@@ -76,7 +92,8 @@ const fixed = (text: string) => () => text;
 
 /**
  * Every view /r shows (05 §4.3): `returning` is "Finishing checkout…" for a buyer just back from Checkout, which keeps
- * checking for a while; `waiting` covers a claimed request too, its countdown swapped for "Processing…" (07 D26).
+ * checking for a while; `waiting` covers a claimed request too, its countdown swapped for "Processing…" (07 D26);
+ * `auto_approving`: 05 §4.3 callouts 8–9, no deadline (07 D81).
  */
 export const VIEW_COPY = {
   canceled: {
@@ -107,6 +124,11 @@ export const VIEW_COPY = {
   waiting: {
     title: COPY.waitingTitle,
     body: (f) => COPY.waitingBody(f.handle, f.total, f.deadline),
+    backLink: false,
+  },
+  auto_approving: {
+    title: fixed(COPY.processing),
+    body: (f) => COPY.autoApprovingBody(f.handle, f.total),
     backLink: false,
   },
   approved: {
@@ -154,11 +176,16 @@ export function declinedView(statusReason: string | null): DeclinedView {
  * The view for a request (05 §4.3), from its stored status first (07 D25: an ending shows only once it is stored):
  * `canceled` (Stripe's cancel_url) and `returning` (its success_url) only mean something while checkout is pending, so
  * a link replayed later shows where the request is. An abandoned request says why, as 07 D27 words it; a reason it
- * doesn't know reads as a checkout not completed. A declined one says why through declinedView. null (a 404) for the
+ * doesn't know reads as a checkout not completed. A declined one says why through declinedView. A waiting one reads
+ * Processing… while its automatic approval may still run (07 D81), else it waits for the creator. null (a 404) for the
  * renewal rows, which live on My licenses (01 §4.8).
  */
 export function requestView(
-  r: { status: LicenseRequestStatus; statusReason: string | null },
+  r: {
+    status: LicenseRequestStatus;
+    statusReason: string | null;
+    autoApproving: boolean;
+  },
   q: { canceled: boolean; returning: boolean },
 ): RequestView | null {
   switch (r.status) {
@@ -166,7 +193,7 @@ export function requestView(
       if (q.canceled) return "canceled";
       return q.returning ? "returning" : "finishing";
     case "awaiting_approval":
-      return "waiting";
+      return r.autoApproving ? "auto_approving" : "waiting";
     case "approved":
       return "approved";
     case "declined":

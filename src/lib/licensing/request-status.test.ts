@@ -25,15 +25,45 @@ describe("requestView (05 §4.3, 07 D27)", () => {
     [{ canceled: true, returning: true }, "canceled"],
   ] as const)("a pending request with %o is %s", (q, view) => {
     expect(
-      requestView({ status: "checkout_pending", statusReason: null }, q),
+      requestView(
+        {
+          status: "checkout_pending",
+          statusReason: null,
+          autoApproving: false,
+        },
+        q,
+      ),
     ).toBe(view);
   });
 
   it.each(QUERIES)("an awaiting request is waiting with %o", (q) => {
     expect(
-      requestView({ status: "awaiting_approval", statusReason: null }, q),
+      requestView(
+        {
+          status: "awaiting_approval",
+          statusReason: null,
+          autoApproving: false,
+        },
+        q,
+      ),
     ).toBe("waiting");
   });
+
+  it.each(QUERIES)(
+    "an awaiting request whose automatic approval may still run is auto_approving with %o (07 D81)",
+    (q) => {
+      expect(
+        requestView(
+          {
+            status: "awaiting_approval",
+            statusReason: null,
+            autoApproving: true,
+          },
+          q,
+        ),
+      ).toBe("auto_approving");
+    },
+  );
 
   it.each([
     ["checkout_expired", "canceled"],
@@ -47,9 +77,12 @@ describe("requestView (05 §4.3, 07 D27)", () => {
     "an abandoned request for %s is %s, whatever the query",
     (statusReason, view) => {
       for (const q of QUERIES) {
-        expect(requestView({ status: "abandoned", statusReason }, q)).toBe(
-          view,
-        );
+        expect(
+          requestView(
+            { status: "abandoned", statusReason, autoApproving: false },
+            q,
+          ),
+        ).toBe(view);
       }
     },
   );
@@ -65,7 +98,9 @@ describe("requestView (05 §4.3, 07 D27)", () => {
     "a %s request (%s) is %s, whatever the query",
     (status, statusReason, view) => {
       for (const q of QUERIES) {
-        expect(requestView({ status, statusReason }, q)).toBe(view);
+        expect(
+          requestView({ status, statusReason, autoApproving: false }, q),
+        ).toBe(view);
       }
     },
   );
@@ -74,7 +109,9 @@ describe("requestView (05 §4.3, 07 D27)", () => {
     "%s has no view: renewals live on My licenses (01 §4.8)",
     (status) => {
       for (const q of QUERIES) {
-        expect(requestView({ status, statusReason: null }, q)).toBeNull();
+        expect(
+          requestView({ status, statusReason: null, autoApproving: false }, q),
+        ).toBeNull();
       }
     },
   );
@@ -82,7 +119,10 @@ describe("requestView (05 §4.3, 07 D27)", () => {
   it("gives every status a view but the renewal ones", () => {
     const viewless = LICENSE_REQUEST_STATUSES.filter(
       (status) =>
-        requestView({ status, statusReason: null }, QUERIES[0]) === null,
+        requestView(
+          { status, statusReason: null, autoApproving: false },
+          QUERIES[0],
+        ) === null,
     );
     expect(viewless).toEqual([
       "renewal_pending",
@@ -100,9 +140,12 @@ describe("declinedView (01 §4.8, 07 D28): /r's and request-declined's reason ru
     ["something_new", "declined"],
   ] as const)("a decline for %s is %s, on /r too", (statusReason, view) => {
     expect(declinedView(statusReason)).toBe(view);
-    expect(requestView({ status: "declined", statusReason }, QUERIES[0])).toBe(
-      view,
-    );
+    expect(
+      requestView(
+        { status: "declined", statusReason, autoApproving: false },
+        QUERIES[0],
+      ),
+    ).toBe(view);
   });
 });
 
@@ -181,6 +224,21 @@ describe("the views' words, verbatim from 01 §4.8 (07 D27, D28)", () => {
     });
     expect(words("waiting").body).toBe(
       "Your card has a hold of CA$1,732.50, not a charge. We'll email you either way.",
+    );
+  });
+
+  it("auto_approving reads Processing… with 05 §4.3 callout 9's body and no deadline (07 D81)", () => {
+    const deadline = "Fri 30 Oct, 3:10 PM EDT";
+    expect(words("auto_approving", deadline)).toEqual({
+      title: "Processing…",
+      body: "@maya approves requests automatically. Your card has a hold of CA$1,732.50 until it's approved. This page updates by itself.",
+      backLink: false,
+    });
+    expect(words("auto_approving").body).toBe(
+      words("auto_approving", deadline).body,
+    );
+    expect(COPY.autoApproves("maya")).toBe(
+      "@maya approves requests automatically.",
     );
   });
 

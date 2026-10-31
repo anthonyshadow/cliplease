@@ -7,6 +7,7 @@ import {
   screen,
   within,
 } from "@testing-library/react";
+import { renderToString } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Toaster } from "@/components/ui/toast";
 import { formatDeadline } from "@/lib/format";
@@ -227,6 +228,81 @@ describe("InboxRow's payout line (04 §9.11, §11.5; 07 D75; owner answer Q-146 
     expect(
       screen.queryByText(/Paid out|Payout pending|setup to receive/),
     ).toBeNull();
+  });
+});
+
+describe("InboxRow's auto-approve states (04 §9.11, §11.5; 05 §6.3 callouts 12, 17; 07 D81)", () => {
+  const fellBack: CreatorRequest = {
+    ...waiting,
+    autoApproveFallbackAt: "2026-10-27T19:20:00.000Z",
+  };
+  const fellBackLine = `Auto-approve couldn't finish. Tap Approve before ${viewerDeadline}.`;
+
+  it("shows a fallen-back request's awaiting line under the title's line, with the deadline once mounted, and both buttons", () => {
+    const server = document.createElement("div");
+    server.innerHTML = renderToString(
+      <ul>
+        <InboxRow request={fellBack} />
+      </ul>,
+    );
+    expect(
+      within(server).getByText("Auto-approve couldn't finish."),
+    ).toBeTruthy();
+    const { container } = inList(fellBack);
+    const row = within(firstRow(container));
+    const line = row.getByText(fellBackLine);
+    expect(line.className).toContain("text-footnote");
+    expect(line.className).toContain("text-awaiting-text");
+    expect(line.previousElementSibling).toBe(
+      row.getByText("First snow · You get CA$1,575.00"),
+    );
+    expect(line.closest("[data-row-status]")).toBeNull();
+    expect(row.getByRole("button", { name: "Decline" })).toBeTruthy();
+    expect(row.getByRole("button", { name: "Approve" })).toBeTruthy();
+  });
+
+  it("notes an auto-approved History row with 'Auto-approved' before its payout line", () => {
+    const { container } = inList({
+      ...waiting,
+      status: "approved",
+      displayStatus: "approved",
+      licenseCode: "CL-7K3M-9QXA",
+      autoApproved: true,
+      transferStatus: "succeeded",
+      transferAmountCents: 157500,
+      transferCurrency: "cad",
+    });
+    const row = within(firstRow(container));
+    const note = row.getByText("Auto-approved");
+    expect(note.className).toContain("text-footnote");
+    expect(note.className).toContain("text-ink-2");
+    expect(note.previousElementSibling).toBe(
+      row.getByText("First snow · CA$1,575.00"),
+    );
+    expect(
+      note.compareDocumentPosition(row.getByText("Paid out")) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(row.getByText("Approved")).toBeTruthy();
+  });
+
+  it("reads Processing… with no countdown, no buttons and no line while auto-approve runs (05 §6.3 'Auto-approving')", () => {
+    const { container } = inList({ ...waiting, displayStatus: "processing" });
+    const row = within(firstRow(container));
+    expect(row.getByText("Processing…")).toBeTruthy();
+    expect(container.querySelector("time")).toBeNull();
+    expect(row.queryByRole("button", { name: "Approve" })).toBeNull();
+    expect(row.queryByRole("button", { name: "Decline" })).toBeNull();
+    expect(row.queryByText(/Auto-approve/)).toBeNull();
+  });
+
+  it("drops the fallback line once the row holds an Approve tap's outcome", async () => {
+    answers({ ok: true, licenseCode: "CL-7K3M-9QXA" });
+    const view = render(<InboxList rows={[fellBack]} empty={null} />);
+    expect(screen.getByText(fellBackLine)).toBeTruthy();
+    await pressApprove(firstRow(view.container));
+    expect(screen.getByText("License CL-7K3M-9QXA issued")).toBeTruthy();
+    expect(screen.queryByText(/Auto-approve couldn't finish/)).toBeNull();
   });
 });
 
