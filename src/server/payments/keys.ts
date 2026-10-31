@@ -2,7 +2,7 @@ import "server-only";
 
 // Stripe idempotency keys and the transfer group (07 §2.4, D74, D95). Pure, so the drivers and the domain wrappers share
 // them without an import cycle (index.ts re-exports transferGroupFor and CancelReason). A key never names the currency:
-// request ids are unique across platform accounts. P19b and P21b add the transfer, refund and reversal keys.
+// request ids are unique across platform accounts. P21b adds the refund and reversal keys.
 
 /** Why a PaymentIntent is canceled (02 §5.8). Stripe hears requested_by_customer for a decline, abandoned otherwise. */
 export type CancelReason =
@@ -30,6 +30,11 @@ export function cancelKey(
   attempt: number,
 ): string {
   return `pi-cancel:${requestId}:${reason}:${attempt}`;
+}
+
+/** A creator transfer claim (07 D75): `attempt` is the money_movement row's attempt of that claim. */
+export function transferKey(requestId: string, attempt: number): string {
+  return `transfer:${requestId}:${attempt}`;
 }
 
 /** The charge's and the creator transfer's transfer_group (separate charges and transfers, 07 D74). */

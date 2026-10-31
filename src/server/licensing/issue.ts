@@ -5,6 +5,7 @@ import {
   creatorProfile,
   license,
   licenseRequest,
+  moneyMovement,
   socialPost,
   video,
   videoPosting,
@@ -28,7 +29,8 @@ import { generateLicenseCode } from "../codes/license-code";
 
 // Issuing a license (02 §5.7; 03 §3.7.2, T5; 07 D33, D71): inside the caller's transaction, which has already fenced the
 // request. It reads no status and decides nothing from one, so any finish that has made the request approved, before or
-// after this call, can use it. The license copies the original's key (DB13) and carries the immutable snapshot.
+// after this call, can use it. The license copies the original's key (DB13) and carries the immutable snapshot. In the
+// same transaction it leaves the creator's pending transfer (07 D75), which the caller sends after the commit.
 
 /** Insert attempts before giving up: a collision of 40-bit codes is rare (research/license.md §6.1). */
 const CODE_ATTEMPTS = 5;
@@ -39,9 +41,22 @@ export type IssuedLicense = { licenseId: string; code: string };
  * The request's license: the existing one (idempotent), or a new one starting at `startsAt` with a fresh code. Each
  * insert attempt runs in its own savepoint with ON CONFLICT DO NOTHING (a taken code, or another writer's license for
  * the request); an empty result re-checks by request first, then retries with a new code. After 5 collisions it throws,
- * and the caller's transaction rolls back. Audits `license.issued` with the code only, as `opts.actor`.
+ * and the caller's transaction rolls back. Audits `license.issued` with the code only, as `opts.actor`. Whichever license
+ * it returns, it leaves the request's one creator_transfer row (pending until sent).
  */
 export async function issueLicense(
+  tx: Tx,
+  requestId: string,
+  startsAt: Date,
+  opts: { actor: Actor },
+): Promise<IssuedLicense> {
+  const issued = await licenseFor(tx, requestId, startsAt, opts);
+  await ensureCreatorTransfer(tx, requestId);
+  return issued;
+}
+
+/** The existing license, or a new one: issueLicense without the transfer. */
+async function licenseFor(
   tx: Tx,
   requestId: string,
   startsAt: Date,
@@ -90,6 +105,33 @@ export async function issueLicense(
     if (theirs) return theirs;
   }
   throw new Error("issueLicense: no free license code after 5 attempts");
+}
+
+/**
+ * The request's creator transfer, pending (07 D75, 03 T5): the license price in the request's currency (I29, I33), never
+ * a fresh quote. One per request: a repeated T5 path inserts nothing.
+ */
+async function ensureCreatorTransfer(tx: Tx, requestId: string): Promise<void> {
+  const [request] = await tx
+    .select({
+      currency: licenseRequest.currency,
+      licensePriceCents: licenseRequest.licensePriceCents,
+    })
+    .from(licenseRequest)
+    .where(eq(licenseRequest.id, requestId));
+  if (!request) throw new Error("issueLicense: unknown request");
+  await tx
+    .insert(moneyMovement)
+    .values({
+      licenseRequestId: requestId,
+      kind: "creator_transfer",
+      status: "pending",
+      currency: request.currency,
+      amountCents: request.licensePriceCents,
+    })
+    .onConflictDoNothing({
+      target: [moneyMovement.licenseRequestId, moneyMovement.kind],
+    });
 }
 
 async function licenseOf(

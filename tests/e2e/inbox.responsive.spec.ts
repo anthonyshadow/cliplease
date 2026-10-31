@@ -3,6 +3,7 @@ import { expect, type Locator, type Page, test } from "@playwright/test";
 import { APP_NAME } from "../../src/lib/app-name";
 import { formatDeadline } from "../../src/lib/format";
 import { INBOX_COPY } from "../../src/lib/licensing/inbox";
+import { PAYOUT_LINE_COPY } from "../../src/lib/licensing/payout-line";
 import { REQUEST_STATUS_COPY } from "../../src/lib/licensing/request-status";
 import { BARE_DOLLAR } from "../helpers/money";
 import { readLatestEmail } from "../helpers/read-latest-email";
@@ -27,22 +28,25 @@ import {
 } from "./helpers/press";
 import { cleanCreatedVideos } from "./helpers/videos";
 
-// G.6 for the Inbox, the request page and /r (P17, P18, P19; 05 §1.6 S03, S14, S15; 04 §9.11, §10.2; 07 D144–D146,
-// D149, D154) on all four projects: a creator publishes Demo post 01 and three buyers pay (buyLicense; the third for
-// Northwind Brands Inc., so each row is picked by its licensee); the creator approves the second on its request page
-// (the toast above the TabBar below 1024, and the buyer's license-approved email), then declines the third from its
-// Inbox row on a running clock (01 J8.4): the row keeps its place with the line, the Declined pill and the focus while
-// the counts drop, the toast repeats the line without a seal, and only the next focus refresh moves it to History (02
-// §4.4 rule 2; the buyer gets request-declined). The Inbox fills the max-w-app column and its row stacks below 768 (the
-// countdown under the Licensed-to name, Decline and Approve half width each, Approve on the right, Details under them)
-// and is wide from 768 (the countdown on the name's line at the row's right edge, Details · Decline · Approve, Approve
-// the rightmost control); the declined row's line wraps inside it. History keeps each decided row's pill (and the
-// approved one's code) inside it; the request page is one 640 px column left-aligned with its heading, Decline before
-// Approve; /r, opened in a fresh logged-out context at the project's own viewport, is one centered 640 px column (the
-// approved one with its 40 px seal, the declined one's heading neutral). Each page's clock is paused after it loads (the
-// Inbox's after the decline: a page loaded after a pause stays paused until a resume), so the 30 s refresh can't fire
-// mid-sweep. A second test forces another creator's request overdue with the dev script and no cron call: its /r
-// expires it before rendering and reads "No answer in time" (owner answer Q-142 a).
+// G.6 for the Inbox, the request page and /r (P17, P18, P19, P19b; 05 §1.6 S03, S14, S15; 04 §9.11, §10.2; 07
+// D144–D146, D149, D154) on all four projects: a creator publishes Demo post 01 and three buyers pay (buyLicense; the
+// third for Northwind Brands Inc., so each row is picked by its licensee); the creator approves the second on its
+// request page (the toast above the TabBar below 1024, Paid out or Payout pending under the code in its status block,
+// and the buyer's license-approved email), then declines the third from its Inbox row on a running clock (01 J8.4): the
+// row keeps its place with the line, the Declined pill and the focus while the counts drop, the toast repeats the line
+// without a seal, and only the next focus refresh moves it to History (02 §4.4 rule 2; the buyer gets
+// request-declined). The Inbox fills the max-w-app column and its row stacks below 768 (the countdown under the
+// Licensed-to name, Decline and Approve half width each, Approve on the right, Details under them) and is wide from 768
+// (the countdown on the name's line at the row's right edge, Details · Decline · Approve, Approve the rightmost
+// control); the declined row's line wraps inside it. History keeps each decided row's pill (and the approved one's
+// code) inside it, and the approved row reads Paid out inside its text column (owner answer Q-146 a; the transfer runs
+// after the approval's response, so History reloads while it reads Payout pending); the request page is one 640 px
+// column left-aligned with its heading, Decline before Approve; /r, opened in a fresh logged-out context at the
+// project's own viewport, is one centered 640 px column (the approved one with its 40 px seal, the declined one's
+// heading neutral). Each page's clock is paused after it loads (the Inbox's after the decline: a page loaded after a
+// pause stays paused until a resume), so the 30 s refresh can't fire mid-sweep. A second test forces another creator's
+// request overdue with the dev script and no cron call: its /r expires it before rendering and reads "No answer in
+// time" (owner answer Q-142 a).
 test.use({ reducedMotion: "reduce" });
 test.afterEach(cleanCreatedVideos);
 
@@ -160,6 +164,16 @@ test("G.6, 07 D146, 01 J8.4: the Inbox row stacks below 768 and is wide from 768
   await expect(page.getByText(/^License CL-.* issued$/)).toHaveText(
     new RegExp(`^License ${LICENSE_CODE.source} issued$`),
   );
+  // The payout line under the code in the status block (P19b): the transfer runs after the response, so either word.
+  await expect(
+    page
+      .locator("#request-status")
+      .getByText(
+        new RegExp(
+          `^(${PAYOUT_LINE_COPY.paidOut}|${PAYOUT_LINE_COPY.pending})$`,
+        ),
+      ),
+  ).toBeVisible();
   await expect(pageApprove).toHaveCount(0);
   await expect(pageDecline).toHaveCount(0);
   const email = await readLatestEmail({
@@ -326,7 +340,9 @@ test("G.6, 07 D146, 01 J8.4: the Inbox row stacks below 768 and is wide from 768
   expect(declinedEmail.text).toContain(`Or open: ${declined.statusUrl}`);
   expect(declinedEmail.text).not.toMatch(BARE_DOLLAR);
 
-  // History: the approved row keeps its pill and code inside it, the declined row its pill.
+  // History: the approved row keeps its pill and code inside it and reads Paid out inside its text column (P19b; owner
+  // answer Q-146 a), the declined row its pill. The transfer runs in after(), so a page still reading Payout pending is
+  // reloaded until it lands.
   await openPaused(page, "/dashboard?view=history");
   const done = page.locator("[data-inbox-row]");
   await expect(done).toHaveCount(2);
@@ -334,12 +350,24 @@ test("G.6, 07 D146, 01 J8.4: the Inbox row stacks below 768 and is wide from 768
   const declinedDone = done.filter({ hasText: NORTHWIND });
   const pill = approvedDone.getByText("Approved", { exact: true });
   const code = approvedDone.getByText(LICENSE_CODE);
+  const paidOut = approvedDone.getByText(PAYOUT_LINE_COPY.paidOut, {
+    exact: true,
+  });
+  const payoutPending = approvedDone.getByText(PAYOUT_LINE_COPY.pending, {
+    exact: true,
+  });
+  await expect(async () => {
+    if (await payoutPending.isVisible()) await page.reload();
+    await expect(paidOut).toBeVisible({ timeout: 1_000 });
+  }).toPass({ timeout: 30_000 });
+  const textColumn = approvedDone.locator("[data-licensee]").locator("..");
   const declinedDonePill = declinedDone.getByText("Declined", { exact: true });
   await expect(declinedDonePill).toBeVisible();
   await atEveryWidth(page, testInfo, async ({ width }) => {
     await expectCreatorFrame(page, width);
     await expectInside(pill, approvedDone);
     await expectInside(code, approvedDone);
+    await expectTextInside(paidOut, textColumn);
     await expectInside(declinedDonePill, declinedDone);
   });
 

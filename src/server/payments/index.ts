@@ -3,6 +3,7 @@ import type { Currency } from "@/lib/domain/values";
 import {
   type Authorization,
   type CreateCheckoutInput,
+  type MoneyCallFailure,
   type StripeCallOutcome,
   settled,
 } from "./driver";
@@ -11,13 +12,15 @@ import {
   cancelKey,
   captureKey,
   stripeCancelReason,
+  transferKey,
 } from "./keys";
 import { paymentsDriver } from "./registry";
 
 // The domain's payment calls (02 §5.8, 07 §8.2, D95): the currency comes first and picks that platform account's driver;
 // callers pass license_request.currency. Never called inside db.transaction (07 D24): claim and commit, then call.
-// capture and cancel never throw: a thrown call or a timeout comes back as a transient failure, and the caller's
-// reconcileFromStripe reads what really happened (07 D25). A configuration error (a currency not enabled) still throws.
+// capture, cancel and transfer never throw: a thrown call or a timeout comes back as a transient failure, and the caller
+// reads what really happened (reconcileFromStripe, findTransfers; 07 D25, D75). A configuration error (a currency not
+// enabled) still throws.
 
 export { type CancelReason, transferGroupFor } from "./keys";
 
@@ -70,4 +73,33 @@ export async function cancel(
       cancelKey(requestId, reason, attempt),
     ),
   );
+}
+
+/**
+ * Pays the creator their share of `chargeId` (07 D74, D75): `attempt` is the money_movement row's attempt of this claim,
+ * so a new claim gets a new key. The caller has reconciled with findTransfers first.
+ */
+export async function transfer(
+  currency: Currency,
+  requestId: string,
+  chargeId: string,
+  destinationAccountId: string,
+  amountCents: number,
+  attempt: number,
+): Promise<{ ok: true; transferId: string } | MoneyCallFailure> {
+  const driver = paymentsDriver(currency);
+  return settled(() =>
+    driver.createTransfer({
+      requestId,
+      chargeId,
+      destinationAccountId,
+      amountCents,
+      idempotencyKey: transferKey(requestId, attempt),
+    }),
+  );
+}
+
+/** The request's transfers on that currency's account (at most one per transfer_group, 07 D75). Throws when unreadable. */
+export async function findTransfers(currency: Currency, requestId: string) {
+  return paymentsDriver(currency).findTransfers(requestId);
 }

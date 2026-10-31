@@ -29,6 +29,9 @@ export const WAITING_REQUEST: CreatorRequest = {
   contactName: "Jordan Lee",
   intendedUse: "Instagram + TikTok ads, Q4 campaign",
   createdAt: "2026-10-27T19:10:00.000Z",
+  transferStatus: null,
+  transferAmountCents: null,
+  transferCurrency: null,
 };
 
 /** Taps the button named `name` (in `container`, else the page) and lets the action's answer render. */

@@ -34,7 +34,7 @@
 -->
 
 ## Status
-Current prompt: P19b · Last verified: P19 · Blockers: none
+Current prompt: P19c · Last verified: P19b · Blockers: none
 Gates: A (P22) [ ] · R (P22h) [ ] · B (P25) [ ] · C (P27) [ ] · S12 Stripe renewal sign-off (P25d, not a gate) [ ]
 Later: P34 (USD) not run · P05b (teens) not scheduled
 
@@ -364,7 +364,7 @@ D5); their follow-ups for prompts still to do are under "Follow-ups from archive
     - `decline.spec`: assert the line inside `<main>` (exact) and the toast as `ol > li`, because the line, the toast and Radix's announcer share the sentence.
     - Any spec that dispatches a focus refresh (or waits for the 30 s tick) and then navigates must first await `requestEnded(page, isRouterRefresh)` (`tests/e2e/helpers/press.ts`). WebKit cancels the in-flight refresh, and Next falls back to a hard navigation that interrupts the goto.
   - **P24/P25:**
-    - Give the Stripe client an explicit `timeout`. Size it so timeout × (maxNetworkRetries + 1) plus backoff fits the pages and their actions (60 s, including the re-render that `refresh()` runs inside the action), the cron's 45 s budget, and /r (no maxDuration).
+    - Give the Stripe client an explicit `timeout`. Size it so timeout × (maxNetworkRetries + 1) plus backoff fits the pages and their actions (60 s, including the re-render that `refresh()` runs inside the action), the cron's 45 s budget, and /r (60 s since P19b).
     - Map an "already canceled" cancel error to ok only when Stripe reports the PaymentIntent canceled. Any other unexpected state is permanent and goes to the reconcile, so a decline racing a late capture never stores `declined`.
   - **P26:**
     - A request-received or request-new retried after a decline or expiry still says "hold"; skip obsolete ones then.
@@ -401,13 +401,81 @@ D5); their follow-ups for prompts still to do are under "Follow-ups from archive
     - 06 §9 says "the claiming path finishes" decline and expire claims; the webhook does too.
     - 07 D57 and §11 say "P19" for purge-social-cache (old number; now P27).
 
-### P19b — Pay the creator: transfer after approval (separate charges and transfers) · [ ] to do
+### P19b — Pay the creator: transfer after approval (separate charges and transfers) ✅ (2026-10-31)
 > 90 min · Depends on: P19, P18 · Record: Q1–Q4 answers, the `sendCreatorTransfer` second argument, `maxDuration = 60` on Settings, where `CREATOR_FIXABLE_TRANSFER_CODES` lives
 - Done:
+  - **Step 0** (Q-88): `bun run check:step0 tests/e2e/request-received.spec.ts tests/e2e/inbox.responsive.spec.ts`: typecheck, lint, token lint, invariant lint and unit green; integration and e2e not re-run (the code was that of the last green `check:full`).
+    - Every Step 0 grep passed, and the matrix's three named cases are green.
+    - The `money_movement` columns, its three indexes and its two CHECKs exist; `createTransfer`/`findTransfers` were already declared in driver.ts.
+    - Dev server, after P19's simplify pass: a decline ("Declined. The buyer wasn't charged.", /r "Not approved", one request-declined email), and an expiry through the dev script (cron `"expired":1`, /r "No answer in time", 401 without the bearer). SQL: `expired/deadline/expire/1` and `declined/creator/decline/1`.
+  - **Audit:** a workflow of 5 area readers (payments seam and double, money core, sweep/cron/Settings, creator UI, test plan), each checked by a skeptic, then a completeness critic: 86 findings kept (56 confirmed, 30 adjusted), 12 from the critic. The owner answered Q-145–Q-151 in chat, all the recommended option.
+  - **Payments seam:** `transferKey` (keys.ts); `transfer(currency, requestId, chargeId, destinationAccountId, amountCents, attempt)` through `settled` and `findTransfers(currency, requestId)` (index.ts); `CREATOR_FIXABLE_TRANSFER_CODES: readonly string[] = []` (driver.ts, after the interface); the fake's DB-free `createTransfer` (`tr_fake_<requestId>`) and a `findTransfers` that checks the account first and lists the creator_transfer once it has a `stripe_object_id`.
+  - **Money core** (`src/server/licensing/money.ts`):
+    - `sendCreatorTransfer(requestId, { source })`: load; payouts gate; charge (stored, else read); claim with `attempt + 1` and a JS-clock `claimed_at`; reconcile with `findTransfers` (a mismatch fails, Q-151); `transfer` under the claimed attempt's key; a fenced finish with its audit in one short transaction.
+    - `sweepMoneyMovements({ olderThanMinutes | creatorId, limit, actor, stopAt? })`: the cron's rows (pending older than `olderThanMinutes`, failed with a fixable code, creators whose payouts may be active (`payoutsMayBeActive`, profile.ts), unpayable rows sent behind) or one creator's of any age (pending and failed, 2-minute cool-down); per-row catch.
+    - `failedTransferTotalCents(creatorId)`.
+    - issueLicense leaves the pending `creator_transfer` (license price, the request's currency) whichever license it returns; state-machine.ts schedules `sendCreatorTransfer` through `afterResponse` after finishCapture and on an approved `succeeded`; `settleCreatorMoney` (lazy.ts) for Settings and the payouts return.
+  - **Cron:** the `moneyMovements` step after the expiry, `{ expired, reconciled, moneyMovements, emailsSent }`; route.test.ts and the README follow.
+  - **UI:** `payoutLine` and `PAYOUT_LINE_COPY` (src/lib/licensing/payout-line.ts); `PayoutLineView` (result-line.tsx) on History rows (text column) and the request page (after "License {code} issued"); the creator DTO's `transferStatus`/`transferAmountCents`/`transferCurrency` (LEFT JOIN with the kind in ON); `TransferFailedBanner` and FinishPayoutsBanner's required `failedTransfer` (checked before the active return, Q-150's two lines, the unavailable line for rejected/unsupported, a plain `<a href="/api/stripe/onboarding">`) on the Inbox, Library and Settings (between the title and Payouts); `maxDuration = 60` on Settings and /r; the video page's payouts return schedules the creator sweep.
+  - **Review:** a workflow of 4 dimensions (money core, seam and cron, UI and privacy, contracts), each checked by a skeptic: 13 findings, 2 refuted. Applied:
+    - the audit-once rule judged from the claim's RETURNING (MC-2);
+    - the after-response sweep's deadline fixed when scheduled (UI-1);
+    - /r's maxDuration moved above PRIVATE's doc (UI-3);
+    - the cron sends an unpayable row behind the others (MC-4, CRON-MM-1), with a test and a mutation check.
+    The rest are follow-ups and plan-kit fixes below.
+  - **Simplify** (`/simplify`): 4 reviewers (reuse, simplification, efficiency, altitude), then a workflow that refactored the test harness and 3 read-only reviewers who diffed the pass against the tree before it (2 found only stale comments and one unused export, fixed). Applied:
+    - money.ts: the transfer row carries the creator's payouts columns, passed to `refreshPayoutsStatus` as `row` (one read less per transfer); one `audit()` adds the attempt and amount, and `finish()` clears the claim itself; `SENDABLE`; `olderThanMinutes` is the cron's only (a type union, so a creator sweep can't pass one); `sendToBack(id)`; the payouts filter is `payoutsMayBeActive()` next to the rule it mirrors in profile.ts (now on the app's clock, like the sync time it compares).
+    - issueLicense leaves the transfer from one place (`licenseFor` plus `ensureCreatorTransfer`); `settleCreatorMoney`'s flag is `wait`; `TransferFailedBanner` takes `failedTransfer` and renders nothing at 0, so Settings has no guard of its own.
+    - Harness: the scripted double's hooked methods use one method-to-call map with generic `onCall`/`hold`/`next`/`callsOf` (no casts), one `failureOf`, `TransferOutcome = Exclude<Outcome, "stripe">`, and checks keys with `transferKey`; `finishRecordedTest` (shared by finishScriptedTest and the fake-driver tests); `tests/helpers/cron.ts` (`CRON_URL`, `cron`, `countsOf`); `cronSweep`, `approveCrashed` and `expectPaidOnce` in transfer-fixtures.ts, the last used by approve, money-matrix, the cron test and 18 creator-transfer sites (each still asserts all it did: movement, audit, key and ledger).
+    - Skipped: the transfer as an `Effect` kind (later prompts are written against `afterResponse(() => sendCreatorTransfer(…))`); one INSERT … SELECT for the transfer row (Drizzle 0.45's insert-select lists every column); the DTO's three transfer fields as one object (the prompt names them); a shared lease constant with `STUCK_CLAIM_MINUTES` (07 D26 and D75 set them apart); `SetUpPayoutsLink` for the transfer Banner (a route handler needs a plain `<a>`, never a prefetching `Link`); per-sweep row reuse, the extra send-to-back UPDATE and the audit-less finish's transaction (rare paths).
+  - **Tests:**
+    - Unit: `keys.test.ts` (transferKey), `registry.test.ts` (createTransfer out of "rejects what later prompts add"), new `fake-driver.test.ts`, `index.test.ts` (transfer: key, TypeError → transient, usd not enabled), the cron route's 6 cases with the fourth step, `payout-line.test.ts`, `finish-payouts-banner.test.tsx` (the transfer Banner wins, shows while active, Q-150, unavailable, href), `inbox-row.test.tsx` (each status's line and token), new `tests/unit/after.test.ts` (queue mode).
+    - Harness: the scripted double's transfer path with money-safety problems at each createTransfer, `tests/helpers/after.ts` queue mode, `uninstallScriptedPayments`, `finishRecordedTest`, `tests/helpers/transfer-fixtures.ts`, `tests/helpers/cron.ts`, `movementsOf`.
+    - [int] new `creator-transfer.test.ts` (25: on the fake, Approve pays once with the exact key and audit, the fake's reconcile, the OQ-18 floor, USD on the usd account only; on the double, the webhook T5, the crash healed by the sweep and the cron, ambiguous, the lease, transient, lookup failure, permanent once then healed, mismatch, payouts off, null charge, payouts read failing, one payment only, the cron's payouts filter and send-behind, a retried row not stopping the sweep, settleCreatorMoney three ways, issueLicense's existing path, the failed total) and `creator-transfer-fixable.test.ts` (3, the codes mocked).
+    - Narrowed: money-matrix asserts the payout (or its absence) on all 42 rows; approve.test.ts flushes after() before two audit snapshots and asserts one movement and one transfer on the double-taps; the cron [int] JSON gains `moneyMovements: 0` and the stuck request's cron-actor payout; inbox-queries 17 → 21 (the transfer keys, privacy, one row with another movement kind, /r carries none).
+    - e2e `inbox.responsive.spec.ts`: the request page shows "Paid out" or "Payout pending" in `#request-status`, and History's approved row reads "Paid out" inside its text column at every width (a recorded change to a spec the prompt called unchanged).
+    - Mutation checks: the cron payouts filter, the audit-once rule, the creator cool-down, the approved-branch schedule, issueLicense's existing path and the send-behind each fail a test when removed; files restored byte-identical.
 - Verified:
-- Decisions:
-- Open questions:
+  - `bun run typecheck` ✅ · `bun run lint` ✅ (765 files) · `bun run lint:tokens` ✅ (prints nothing) · `bun run lint:invariants` ✅ (prints nothing) · `bun run test` ✅ (179 files, 3592 tests).
+  - `bun run test:int` ✅ (43 files, 854 tests: creator-transfer 25, creator-transfer-fixable 3, money-matrix 42, approve 33, decline-expiry 53, authorization 41, email-outbox 25, inbox-queries 21, expire-requests-cron 7), twice; creator-transfer and the fixable file 5× each, money-matrix 5×.
+  - One `bun run test:e2e tests/e2e/request-received.spec.ts tests/e2e/inbox.responsive.spec.ts tests/e2e/onboarding.responsive.spec.ts` ✅ (30 passed, all four projects).
+  - `bun run check:full` ✅ before the simplify pass (lint 764 files; 3591 unit; 854 integration; 259 e2e passed, 3 skipped) and again after it, the last code change (lint 765 files; 3592 unit in 179 files; 854 integration in 43 files, per-file counts unchanged; 259 e2e passed, 3 skipped by project), recorded in `.data/last-green`.
+  - Greps: `grep -rn -A25 "db.transaction" src/server/licensing | grep -E "capture\(|cancel\(|getAuthorization\(|transfer\(|findTransfers\("` prints nothing (money.ts's one transaction, `finish`, is a fenced UPDATE plus its audit); `grep -rn "scripted-payments" src` and `grep -n "amount_total_cents\|amountTotalCents" src/server/licensing/money.ts` print nothing; later prompts' declarations (`export async function sendCreatorTransfer`/`sweepMoneyMovements`, `export function transferKey`, `export function payoutLine`, `creator_transfer` in issue.ts, `moneyMovements` in the route, `CREATOR_FIXABLE_TRANSFER_CODES` in driver.ts, `maxDuration = 60` on Settings) are all found.
+  - Verify on the dev server (maya, the fake driver):
+    - **Approve:** two logged-out requests at 375 × 812 (Paid social ads · 1 year · Worldwide, CA$1,732.50, fake Pay); Approve → the toast "Approved. CA$1,575.00 is on its way to your Stripe balance." unchanged; History reads "Paid out" in each row's text column beside «Approved» and its code. SQL: `creator_transfer`, `succeeded`, `cad`, 157500, attempt 1, `tr_fake_<id>`, unclaimed, for both.
+    - **Failed → healed on Settings:** with one row set `failed`/`manual_check` (updated_at 3 min back, the cool-down): the Inbox shows only the warning Banner "Finish your payout setup to receive CA$1,575.00." with **Set up payouts** → `/api/stripe/onboarding`, and the History row the same sentence in the awaiting tone; the Banner spans the list card's column at 320, 768, 1024 (dark), 1280 (dark), 1920 (dark) and 2560, no horizontal scroll. Settings shows the Banner between the title and Payouts; a reload shows none, History reads "Paid out". SQL: `succeeded`, attempt 2, the same `tr_fake_<id>` (found by `findTransfers`), and a success audit with `reconciled: true`, attempt 2, 157500, `cad`, source `lazy`.
+    - **Pending → paid by the cron:** the second row set pending (no transfer, 11 min back) and maya's payouts `restricted` with a fresh reading → History "Payout pending", the cron `{"expired":0,"reconciled":0,"moneyMovements":0,"emailsSent":0}`; payouts `active` with a fresh reading → `"moneyMovements":1`, the row `succeeded`, History "Paid out". The bearer was read from `.env.local` and never printed.
+    - **Keyboard:** from the title, Tab reaches Waiting, History, then the Banner's Set up payouts with a 2 px focus ring (`:focus-visible`), 44 px tall.
+    - **Errors:** no page errors and no server errors (the console held only Node's Postgres SSL-mode warning and hot-reload reconnects from the previous dev server's restart).
+- Decisions: see the Decisions table (2026-10-31, P19b) in `progress/decisions.md`. Q1–Q4 are Q-145–Q-148 (all a); the `sendCreatorTransfer` second argument is `{ source }` typed as any system source; `maxDuration = 60` on Settings (and /r); `CREATOR_FIXABLE_TRANSFER_CODES` lives in `src/server/payments/driver.ts`; the Banner shows for every failed transfer (07 D75 over 02 §5.8).
+- Open questions: none (Q-145–Q-151 answered).
 - Follow-ups for later prompts:
+  - **P19c:** the approve and T5-reconcile transfers are scheduled by the private `scheduleCreatorTransfer` in state-machine.ts, so auto-approve inherits it through finishCapture (nested after() is supported; no direct call). Reuse `tests/helpers/after.ts`'s queue mode. The cron's `autoApprovals` step goes after `moneyMovements`, before the outbox, taking `stopAt`; update route.test.ts and the [int] toEqual.
+  - **P20:** render `payoutLine` (through `PayoutLineView`) on `/dashboard/licenses` rows.
+  - **P21:** Events lists `license_request.transfer_failed` (data `{ code, attempt, amountCents, currency }`, plus `count` for `transfer_mismatch`) and failed movements with **Retry**; for a creator_transfer, Retry calls `sendCreatorTransfer(requestId)` without claiming first and writes its own admin audit. Also worth surfacing: transfers still `pending` after many attempts, and the `money_movement.*` log events (`transfer_retry`, `finish_lost`).
+  - **P21b:** a live `claimed_at` means "in flight" only (no lease after a failure); buyer_refund/transfer_reversal get their own sweep branch (not the creator payouts filter or the creator_transfer kind); new money.ts helpers go above `finish()`, which stays the last function; money.ts may import only db, schema, payments, creators/profile, audit, auth/actor and log (state-machine.ts imports it).
+  - **P22e/P22g:** issueLicense already inserts the transfer on its existing path; schedule with `afterResponse(() => sendCreatorTransfer(id, { source: "renewals" }))`, never from a route longer than 60 s (P22g's 150 s licenses segment: leave the send to the sweep or the cron).
+  - **P24:** fill `CREATOR_FIXABLE_TRANSFER_CODES` from spike S5 on the CAD account.
+  - **P24/P25:** every route that can send a transfer stops within 60 s, inside the 2-minute claim lease: P25's webhook route exports `maxDuration = 60`; size the Stripe client timeout × (maxNetworkRetries + 1) plus backoff well under the lease. P25: real `transfers.create`/`transfers.list` and the J11.4 dashboard proof in CAD; decide how a real mismatched transfer (Q-151) is investigated.
+  - **Known:** a failed transfer whose account later turns rejected shows the "Payouts unavailable" line twice on Settings (the Banner and the Payouts section), as the spec decided.
+  - **Plan-kit fixes:**
+    - P19b:
+      - Step 0 and Verify run commands that AGENTS §2 replaces (`check:step0`; one `test:e2e`).
+      - Its "History reads 'License CL-… issued' and 'Paid out'" (lines 4, 318) means the code beside the pill plus "Paid out"; P19c:57 says the same.
+      - Task 2's `issueLicense(tx, id, startsAt)` takes `{ actor }`; "the shared T5 finish helper" is `finishCapture`.
+      - Task 3's Call must use the claimed attempt; `destinationAccountId` is the creator's stored account, not `acct_fake_<creatorId>` (line 239).
+      - Task 3's permanent lease (`claimed_at` kept) conflicts with P21b's revoke and Retry: finishes clear it, and the sweeps cool down instead.
+      - Task 4's refreshPayoutsStatus(maxAgeMs: 0) on the return is the page's existing reading; "add to each loop pass"/"return 0" and "update only the key assertion" are P19's full-batch rule and miss route.test.ts; the cron filter is `inArray`, never `= ANY(...)`.
+      - Task 5 also narrows money-matrix's audits, not just counts; the success audit is a new row on every approval.
+      - Task 6's Set up payouts target differs from Q-10's Settings link on purpose; 05 §6.3 callout 16 should say `Banner warning` (Q-147).
+      - The Verify filter `bun run test payout-line keys fake-driver` should add `payments/index`; the "Failed → healed" SQL should also move `updated_at` back 3 minutes (the cool-down).
+    - P19c:34 `rg -n "import 'server-only'"` should be quote-agnostic (Biome writes double quotes); P19c:42-43 expects three separate `sendCreatorTransfer(` callers (there is one shared scheduler).
+    - P21b:191 should say the creator_transfer with `stripe_object_id IS NOT NULL`.
+    - P22:130 and P33a:29 should not `toEqual` the old three-key cron JSON; P33a:171's order should be `{expired, reconciled, moneyMovements, autoApprovals, emailsSent, abandoned, cleaned}`.
+    - P22c:326, P22e:375/384: `issueLicense(tx, id, startsAt, { actor })` and `afterResponse(() => sendCreatorTransfer(…))`.
+    - P25 Ask 3: the codes decide only the cron retry; the Banner covers every failed transfer (07 D75).
+    - 02 §5.7/§5.8 and 03 §5.5/§7.8/§7.10: the additive `actor`/`stopAt`, the source option, the cool-downs, the cron payouts filter and send-behind, no lease after a permanent failure.
+    - 04 §11.5, §9.11 and 05 §6.3 callout 12: add the payout-line strings.
 
 ### P19c — Creator settings: approval window and auto-approve · [ ] to do
 > 105 min · Depends on: P19b, P17, P15 · Record: the Ask 1 wording and Ask 2 rule, the fallback reason values, the nested `after()` finding, the follow-up "P19d adds the per-video price editor"; status line "Current prompt: P19d · Last verified: P19c"
@@ -843,7 +911,7 @@ D107–D131 (07 §9), for OQ-34–OQ-38 and OQ-49–OQ-53 by D132–D143 (07 §1
 
 ## Open questions
 
-None open: every owner question (OQ-01–OQ-57, Q-01–Q-03 from P02, Q-04–Q-05 from P04, Q-06–Q-11 from P05, Q-12–Q-15 from P06, Q-16 from P07, Q-17–Q-24 from P08, Q-25–Q-33 from P09, Q-34–Q-39 from P10a, Q-40–Q-44 from P10b, Q-45–Q-51 from P10c, Q-52–Q-61 from the full-project review, Q-62–Q-68 from P11, Q-69–Q-72 from P11b, Q-73–Q-81 from P11c, Q-82–Q-86 from the P10–P11 review, Q-87–Q-89 from the test-speed work, Q-90–Q-93 from P12, Q-94–Q-100 from P13, Q-101–Q-104 from P14b, Q-105–Q-117 from P15, Q-118–Q-122 from P16a, Q-123 from P16b, Q-124–Q-129 from P17 and Q-130–Q-131 from the audit's batch 2, Q-132–Q-135 from its batch 3, Q-136–Q-138 from the code review, Q-139–Q-141 from P18 and Q-142–Q-144 from P19) is answered (07 §4.1, §10; Decisions 2026-10-17 and 2026-10-18). Add new questions below the line with the next free
+None open: every owner question (OQ-01–OQ-57, Q-01–Q-03 from P02, Q-04–Q-05 from P04, Q-06–Q-11 from P05, Q-12–Q-15 from P06, Q-16 from P07, Q-17–Q-24 from P08, Q-25–Q-33 from P09, Q-34–Q-39 from P10a, Q-40–Q-44 from P10b, Q-45–Q-51 from P10c, Q-52–Q-61 from the full-project review, Q-62–Q-68 from P11, Q-69–Q-72 from P11b, Q-73–Q-81 from P11c, Q-82–Q-86 from the P10–P11 review, Q-87–Q-89 from the test-speed work, Q-90–Q-93 from P12, Q-94–Q-100 from P13, Q-101–Q-104 from P14b, Q-105–Q-117 from P15, Q-118–Q-122 from P16a, Q-123 from P16b, Q-124–Q-129 from P17 and Q-130–Q-131 from the audit's batch 2, Q-132–Q-135 from its batch 3, Q-136–Q-138 from the code review, Q-139–Q-141 from P18, Q-142–Q-144 from P19 and Q-145–Q-151 from P19b) is answered (07 §4.1, §10; Decisions 2026-10-17 and 2026-10-18). Add new questions below the line with the next free
 number (Q-25, Q-26, …); when one is answered, set its status to "answered (Pxx)" and add the answer to Decisions.
 
 | ID | Question | Default if unanswered | Asked in | Status |
@@ -986,6 +1054,13 @@ number (Q-25, Q-26, …); when one is answered, set its status to "answered (Pxx
 | Q-142 | A waiting request past its deadline whose expiry isn't stored yet: what do the Inbox row, the request page and /r show? | The neutral «Expired» pill, judged on the database's clock: no Approve, no Decline, no "You get", no payouts Notice and no sentence until the expiry is stored; lazy expiry runs in after(), and /r awaits its own request's expiry | P19 | answered (P19): the default |
 | Q-143 | A Decline that finds the request expired: what does the creator see? | The «Expired» pill and "This request expired. The buyer wasn't charged."; Approve keeps D160's pill-only rule when it loses a race | P19 | answered (P19): the default |
 | Q-144 | P19 runs past 2× its 120-min estimate: split it, or one step with a bigger budget? | One step, bigger budget | P19 | answered (P19): the default |
+| Q-145 | The audit row for a successful creator transfer | `license_request.transfer_succeeded` `{ transferId, attempt, amountCents, currency, reconciled }` | P19b | answered (P19b): the default |
+| Q-146 | The payout line on approved History rows and the request page | "Paid out" (succeeded) · "Payout pending" (pending) · "Finish your payout setup to receive {amount}." (failed) | P19b | answered (P19b): the default |
+| Q-147 | The failed-transfer Banner's tone (04 §9.21 warning vs 05 §6.3 #16 error) | `warning` (`role="status"`, not an alert) | P19b | answered (P19b): the default |
+| Q-148 | Which failed transfers the cron retries | Pending rows, plus failed rows with a creator-fixable code (`CREATOR_FIXABLE_TRANSFER_CODES`, empty until P24); Settings and the payouts return retry all of the creator's; admin Retry (P21) covers the rest | P19b | answered (P19b): the default |
+| Q-149 | P19b runs past 2× its 90-min estimate: split, or one step with a bigger budget? | One step, bigger budget | P19b | answered (P19b): the default |
+| Q-150 | A failed transfer while payouts aren't active and a request waits: which Inbox Banner? | One warning Banner: the transfer sentence, then J8.3's deadline sentence, one Set up payouts link | P19b | answered (P19b): the default |
+| Q-151 | Reconcile finds a transfer that doesn't match the movement (amount, destination, reversal or count) | Create nothing; the movement fails with `transfer_mismatch` plus the transfer_failed audit, never "Paid out" | P19b | answered (P19b): the default |
 
 ## Prompt map
 

@@ -3,6 +3,8 @@
 import { SetUpPayoutsLink } from "@/components/payouts/set-up-payouts-link";
 import { SupportEmailLink } from "@/components/ui/support-email-link";
 import { INBOX_COPY, type ResultLine } from "@/lib/licensing/inbox";
+import { payoutLine } from "@/lib/licensing/payout-line";
+import type { CreatorRequest } from "@/lib/licensing/request-dto";
 import { cn } from "@/lib/utils";
 import { PayoutsWaiting } from "./payouts-waiting";
 
@@ -23,6 +25,39 @@ export function LicenseIssuedLine({
       {INBOX_COPY.licenseIssued(code)}
     </p>
   );
+}
+
+const PAYOUT_TONE = {
+  cleared: "text-cleared-text",
+  neutral: "text-ink-2",
+  awaiting: "text-awaiting-text",
+} as const;
+
+/**
+ * An approved request's payout line (04 §9.11, §11.5; owner answer Q-146 a): Paid out, Payout pending, or "Finish your
+ * payout setup to receive {amount}.", in the History row's text column and under the request page's code. Nothing before
+ * the transfer row exists, or for a canceled one.
+ */
+export function PayoutLineView({
+  request,
+}: {
+  request: Pick<
+    CreatorRequest,
+    "transferStatus" | "transferAmountCents" | "transferCurrency"
+  >;
+}) {
+  const {
+    transferStatus: status,
+    transferAmountCents: amountCents,
+    transferCurrency: currency,
+  } = request;
+  const line = payoutLine(
+    status && amountCents !== null && currency
+      ? { status, amountCents, currency }
+      : null,
+  );
+  if (!line) return null;
+  return <p className={cn(LINE, PAYOUT_TONE[line.tone])}>{line.text}</p>;
 }
 
 /** An action's result in words (04 §11.5), under a row's "You get" line or above the request page's actions. */

@@ -40,6 +40,7 @@ import {
 import {
   endingsOf,
   licensesOf,
+  movementsOf,
   outcomeEmails,
   stripeEventsOf,
 } from "../helpers/request-outcomes";
@@ -54,6 +55,7 @@ import {
   finishScriptedTest,
   installScriptedPayments,
 } from "../helpers/scripted-suite";
+import { expectPaidOnce } from "../helpers/transfer-fixtures";
 
 // The D25 money matrix (P19; 07 D24–D26, D30; 03 T4–T10, T13; 02 §8.1, §8.2; 01 J8.8, J8.9, J8.14): Approve's capture,
 // a decline's cancel and an expiry's cancel, each ok, transient, permanent or ambiguous (Stripe acted, the answer was
@@ -61,6 +63,8 @@ import {
 // approved only once its PaymentIntent is captured, and declined, expired or capture_failed ("not charged") only once
 // it is canceled. The payments driver is the scripted double: its PaymentIntents move only by its own capture and
 // cancel, a scripted read or an explicit move, and it checks the invariant before every move and at every call.
+// P19b: an approved ending also pays the creator, once, after the response (07 D74–D76): one creator_transfer of the
+// license price under the double's ledger id and one transfer_succeeded audit. No other ending moves money to anyone.
 
 vi.mock("@/server/payments/registry", async (importOriginal) =>
   (await import("../helpers/scripted-suite")).scriptedRegistry(
@@ -151,7 +155,10 @@ const expiry = (changed: boolean, to: LicenseRequestStatus) =>
     to,
   });
 
-/** How a row ends: the stored request, Stripe's calls, the emails, the answer, the audits and Stripe's events. */
+/**
+ * How a row ends: the stored request, Stripe's calls, the emails, the answer, the audits and Stripe's events. The
+ * creator's pay follows from `status` (expectPayout): paid once when approved, nothing otherwise.
+ */
 type Ending = {
   status: LicenseRequestStatus;
   statusReason: string | null;
@@ -554,7 +561,10 @@ async function runRow(row: Row) {
   return { ...subj, result, delivered, claimsDuring };
 }
 
-/** The request's audits beyond its transitions and late events: none here (no money moved late, no failed issue). */
+/**
+ * The request's audits beyond its transitions, late events and the creator's pay (expectPayout counts that one): none
+ * here (no money moved late, no failed issue, no failed transfer).
+ */
 async function otherAudits(requestId: string) {
   const rows = await db
     .select({ action: auditEvent.action })
@@ -563,8 +573,29 @@ async function otherAudits(requestId: string) {
   return rows.filter(
     ({ action }) =>
       action !== "license_request.transition" &&
-      action !== "license_request.ignored_event",
+      action !== "license_request.ignored_event" &&
+      action !== "license_request.transfer_succeeded",
   );
+}
+
+/**
+ * The creator's pay for an ending (P19b; 07 D74–D76): approved, paid once (expectPaidOnce) the license price on the
+ * first attempt, under the fake's id in the double's ledger (nothing scripted here), whichever T5 scheduled it
+ * (Approve's, the webhook's, the lazy system's); any other ending, no money movement, no transfer call and no
+ * transfer_succeeded audit.
+ */
+async function expectPayout(
+  stored: LicenseRequest,
+  approved: boolean,
+): Promise<void> {
+  const { id, licensePriceCents } = stored;
+  if (approved) {
+    await expectPaidOnce(id, { amountCents: licensePriceCents, scripted });
+    return;
+  }
+  expect(await movementsOf(id)).toEqual([]);
+  expect(scripted.keys("createTransfer")).toEqual([]);
+  expect(await auditsOf(id, "license_request.transfer_succeeded")).toEqual([]);
 }
 
 const EVENT_OF: Partial<Record<LicenseRequestStatus, LicenseRequestEvent>> = {
@@ -692,6 +723,7 @@ async function expectEnding(run: Run, want: Ending): Promise<void> {
       : [],
   );
   expect(await otherAudits(id)).toEqual([]);
+  await expectPayout(stored, want.status === "approved");
 
   expect(scripted.piStatus(run.pi)).toBe(PI_OF[want.status]);
   await expectInvariant(id);

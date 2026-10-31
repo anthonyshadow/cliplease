@@ -15,6 +15,7 @@ import {
 } from "@/server/auth/session";
 import { payoutsStatusForPage } from "@/server/creators/profile";
 import { env } from "@/server/env";
+import { settleCreatorMoney } from "@/server/licensing/lazy";
 import { getOriginalUploadProgress } from "@/server/storage/uploads";
 import { getVideoForCreator } from "@/server/videos/queries";
 import { videoView } from "./video-view";
@@ -38,7 +39,8 @@ export async function generateMetadata({
  * posted (both sources), then Rights and Review. Past the draft, ?step=postings is Where posted, editable while
  * unpublished and read-only once published; ?step=rights is the Rights form; a published video's Review is the success
  * view Publish lands on; anything else is the video page (S19, videoView). Review reads the payouts status as Settings
- * does: again when back from payout setup (?payouts=returned, owner answer Q-94 a), then goes to its plain address.
+ * does: again when back from payout setup (?payouts=returned, owner answer Q-94 a), then goes to its plain address; with
+ * payouts active, the creator's pending and failed transfers are sent after the response (07 D75).
  */
 export default async function VideoPage({
   params,
@@ -53,11 +55,17 @@ export default async function VideoPage({
 
   const { step, connected, error, payouts } = await searchParams;
   // Back from payout setup (owner answer Q-94 a): the status read again, then the same address without ?payouts=, so a
-  // later refresh doesn't read it again, whichever view the address now shows.
+  // later refresh doesn't read it again, whichever view the address now shows. The transfers go after the response,
+  // never awaited before the redirect (Settings awaits them).
   if (payouts === "returned") {
-    await payoutsStatusForPage(ctx.creator.id, {
+    const status = await payoutsStatusForPage(ctx.creator.id, {
       row: ctx.creator,
       returned: true,
+    });
+    await settleCreatorMoney({
+      creatorId: ctx.creator.id,
+      payoutsStatus: status,
+      wait: false,
     });
     redirect(
       typeof step === "string"

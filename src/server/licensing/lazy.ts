@@ -1,16 +1,21 @@
 import "server-only";
+import type { PayoutsStatus } from "@/lib/domain/values";
 import type { BuyerStatus } from "@/lib/licensing/request-dto";
 import { errorName, logEvent } from "../log";
 import { afterResponse } from "./effects";
+import { sweepMoneyMovements } from "./money";
 import { expireDueRequests } from "./requests";
 import { reconcileStuckClaims, STUCK_CLAIM_MINUTES } from "./state-machine";
 
-// The lazy layers of expiry and stuck claims (02 §8.4; 07 D25, D26, D57): what a request page does about its requests
-// before it shows them, and after it responds. The reads themselves stay pure (queries.ts), so admin pages, which call
-// none of this, never expire anything.
+// The lazy layers of expiry, stuck claims and creator transfers (02 §8.4; 07 D25, D26, D57, D75): what a page does about
+// its requests before it shows them, and after it responds. The reads themselves stay pure (queries.ts), so admin pages,
+// which call none of this, never expire or pay anything.
 
 /** How long a creator's page waits on stuck-claim reads before it renders: claims not reached keep reading Processing…. */
 const SETTLE_BUDGET_MS = 5_000;
+
+/** How long the creator transfers a page sends after its response may start: well inside the route's 60 s. */
+const AFTER_BUDGET_MS = 45_000;
 
 /**
  * Before a creator's page reads its requests (the Inbox, or one request's page with `requestId`): their claims stuck
@@ -67,4 +72,34 @@ export async function settleBuyerRequest(
     });
   }
   return true;
+}
+
+/**
+ * The creator's transfers on a payouts page (07 D75; 03 §7.8): once payouts are on, the pending and failed ones are sent.
+ * With `wait` (Settings back from payout setup), awaited within the settle budget, so the page's Banner shows the result;
+ * without, after the response. Rows not reached go on the next load or by the cron. Never throws.
+ */
+export async function settleCreatorMoney({
+  creatorId,
+  payoutsStatus,
+  wait,
+}: {
+  creatorId: string;
+  payoutsStatus: PayoutsStatus;
+  wait: boolean;
+}): Promise<void> {
+  if (payoutsStatus !== "active") return;
+  // The budget counts from now, the request's work, not from when after() starts.
+  const stopAt = Date.now() + (wait ? SETTLE_BUDGET_MS : AFTER_BUDGET_MS);
+  const sweep = () => sweepMoneyMovements({ creatorId, limit: 50, stopAt });
+  if (!wait) {
+    afterResponse(sweep);
+    return;
+  }
+  await sweep().catch((error: unknown) => {
+    logEvent("warn", "money_movement.lazy_sweep_failed", {
+      creatorId,
+      error: errorName(error),
+    });
+  });
 }

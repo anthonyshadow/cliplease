@@ -24,6 +24,7 @@ import {
   insertCreator,
   insertLicense,
   insertLicenseRequest,
+  insertMoneyMovement,
   insertRateCard,
   publishVideo,
   requestRow,
@@ -33,7 +34,8 @@ import { readyUpload } from "../helpers/ready-videos";
 // The request pages' reads (P17; 03 §7.1, §7.6; 01 §3.0; 07 D26, D47; 02 §9.11): each creator sees only their own
 // requests, never one in checkout, an abandoned one or the buyer's email; /r reads one request through its key. P19:
 // an unclaimed request past its deadline reads as Expired, by the database's clock, without the reads writing anything,
-// and the payouts Banner's soonest deadline passes over it.
+// and the payouts Banner's soonest deadline passes over it. P19b: the creator's reads carry the request's creator
+// transfer (status, amount, currency) for the payout line, never its Stripe id or error; /r's never carry it.
 
 /** The keys a creator's request carries, and nothing else. */
 const CREATOR_KEYS = [
@@ -55,8 +57,18 @@ const CREATOR_KEYS = [
   "status",
   "statusReason",
   "title",
+  "transferAmountCents",
+  "transferCurrency",
+  "transferStatus",
   "videoId",
 ];
+
+/** What a request without a creator transfer reads (a waiting one, until T5 leaves the row). */
+const NO_TRANSFER = {
+  transferStatus: null,
+  transferAmountCents: null,
+  transferCurrency: null,
+};
 
 async function creatorWithVideo(): Promise<{
   creator: CreatorProfile;
@@ -247,6 +259,96 @@ describe("the creator's request never carries the buyer's private fields (07 D47
   });
 });
 
+describe("the creator transfer on the creator's request (P19b; 07 D75; 03 §7.1)", () => {
+  it("reads null while the request waits, and on a decided one with no transfer row", async () => {
+    const { creator, live } = await creatorWithVideo();
+    const waiting = await requestIn(live, "awaiting_approval");
+    const approved = await requestIn(live, "approved");
+    await insertLicense(approved);
+    expect(await listInbox(creator.id, "waiting")).toEqual([
+      expect.objectContaining({ id: waiting.id, ...NO_TRANSFER }),
+    ]);
+    expect(await listInbox(creator.id, "history")).toEqual([
+      expect.objectContaining({ id: approved.id, ...NO_TRANSFER }),
+    ]);
+    for (const { id } of [waiting, approved]) {
+      expect(await getRequestForCreator(creator.id, id)).toMatchObject(
+        NO_TRANSFER,
+      );
+    }
+  });
+
+  it("reads a paid and a failed transfer's status, amount and currency, and never its Stripe id or error", async () => {
+    const { creator, live } = await creatorWithVideo();
+    const paid = await requestIn(live, "approved");
+    await insertLicense(paid);
+    const paidMove = await insertMoneyMovement(paid, {
+      status: "succeeded",
+      stripeObjectId: "tr_fake_x",
+      succeededAt: new Date(),
+      attempt: 1,
+    });
+    const failed = await requestIn(live, "approved");
+    await insertLicense(failed);
+    const failedMove = await insertMoneyMovement(failed, {
+      status: "failed",
+      lastError: "test_permanent",
+      attempt: 1,
+    });
+
+    const history = await listInbox(creator.id, "history");
+    const details = [
+      await getRequestForCreator(creator.id, failed.id),
+      await getRequestForCreator(creator.id, paid.id),
+    ];
+    const want = [
+      [failed.id, "failed", failedMove.amountCents, "cad"],
+      [paid.id, "succeeded", paidMove.amountCents, "cad"],
+    ];
+    for (const dtos of [history, details]) {
+      expect(
+        dtos.map((r) => [
+          r?.id,
+          r?.transferStatus,
+          r?.transferAmountCents,
+          r?.transferCurrency,
+        ]),
+      ).toEqual(want);
+    }
+    for (const dto of [...history, ...details]) {
+      expect(Object.keys(dto ?? {}).sort()).toEqual(CREATOR_KEYS);
+      const json = JSON.stringify(dto);
+      for (const secret of ["tr_fake_x", "test_permanent", "claimedAt"]) {
+        expect(json).not.toContain(secret);
+      }
+    }
+  });
+
+  it("reads a request with another kind of movement too as one row, with its creator transfer's amount", async () => {
+    const { creator, live } = await creatorWithVideo();
+    const approved = await requestIn(live, "approved");
+    await insertLicense(approved);
+    await insertMoneyMovement(approved);
+    await insertMoneyMovement(approved, {
+      kind: "buyer_refund",
+      amountCents: approved.amountTotalCents,
+    });
+    const history = await listInbox(creator.id, "history");
+    expect(history).toEqual([
+      expect.objectContaining({
+        id: approved.id,
+        transferStatus: "pending",
+        transferAmountCents: approved.licensePriceCents,
+        transferCurrency: "cad",
+      }),
+    ]);
+    expect(await getRequestForCreator(creator.id, approved.id)).toMatchObject({
+      transferStatus: "pending",
+      transferAmountCents: approved.licensePriceCents,
+    });
+  });
+});
+
 describe("waitingSummary (05 §6.3)", () => {
   it("counts the creator's waiting requests and names the soonest deadline", async () => {
     const { creator, live } = await creatorWithVideo();
@@ -325,6 +427,23 @@ describe("getBuyerStatus (03 §7.6)", () => {
     expect((await getBuyerStatus(id, key.token))?.displayStatus).toBe(
       "processing",
     );
+  });
+
+  it("never carries the creator transfer: the payout line is the creator's alone (P19b)", async () => {
+    const { live } = await creatorWithVideo();
+    const { row, token } = await withKey(live, "approved");
+    await insertLicense(row);
+    await insertMoneyMovement(row, {
+      status: "failed",
+      lastError: "test_permanent",
+      attempt: 1,
+    });
+    const status = await getBuyerStatus(row.id, token);
+    expect(status).toMatchObject({ id: row.id, status: "approved" });
+    expect(
+      Object.keys(status ?? {}).filter((key) => key.startsWith("transfer")),
+    ).toEqual([]);
+    expect(JSON.stringify(status)).not.toContain("test_permanent");
   });
 });
 

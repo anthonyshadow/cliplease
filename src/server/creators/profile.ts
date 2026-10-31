@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, isNull, lt, or, sql } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import { db } from "@/db/client";
 import { creatorProfile, rateCard, rateOption, user } from "@/db/schema";
 import type { PayoutsStatus } from "@/lib/domain/values";
@@ -177,6 +177,25 @@ export async function updateTimeZone(
 const PAYOUTS_STATUS_MAX_AGE_MS = 10 * MINUTE_MS;
 
 /**
+ * The creators refreshPayoutsStatus may find active now, as a SQL condition on creator_profile (the cron's transfer
+ * sweep, 07 D75): an account, and a stored 'active' or a reading old enough to be redone. The freshness rule of
+ * payoutsStatus below, on the app's clock like the sync time it compares.
+ */
+export function payoutsMayBeActive() {
+  return and(
+    isNotNull(creatorProfile.stripeAccountId),
+    or(
+      eq(creatorProfile.payoutsStatus, "active"),
+      isNull(creatorProfile.payoutsStatusSyncedAt),
+      lt(
+        creatorProfile.payoutsStatusSyncedAt,
+        new Date(Date.now() - PAYOUTS_STATUS_MAX_AGE_MS),
+      ),
+    ),
+  );
+}
+
+/**
  * The payout setup route and the return to Settings force a re-read, but one made in the last 10 s is reused (owner
  * answer): repeated hits, and the re-renders a Settings action causes, make no new driver call.
  */
@@ -216,7 +235,10 @@ async function storePayoutsReading(
   return newer?.status ?? status;
 }
 
-/** What a payouts read needs; a caller passes its creator context's copy, read with the session, to skip the select. */
+/**
+ * What a payouts read needs; a caller passes the copy it already read (its creator context, a transfer's row) to skip
+ * the select.
+ */
 export type PayoutsRow = Pick<
   CreatorContext["creator"],
   | "stripeAccountId"
@@ -295,7 +317,7 @@ async function payoutsStatus(
 /**
  * The payouts status, re-read from the creator's payments driver when the stored one is older than `maxAgeMs` (0 always
  * re-reads). No account yet → 'not_started' without a call. A failed read throws, so Approve (07 D29) never acts on a
- * stale 'active'. `row` is the caller's creator context, read with the session.
+ * stale 'active'. `row` is the caller's copy of the creator's payouts columns (its creator context, a transfer's row).
  */
 export async function refreshPayoutsStatus(
   creatorId: string,

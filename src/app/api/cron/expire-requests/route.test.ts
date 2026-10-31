@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   env: { CRON_SECRET: "unit-test-cron-secret-0123456789abcdef" },
   expireDueRequests: vi.fn(),
   reconcileStuckClaims: vi.fn(),
+  sweepMoneyMovements: vi.fn(),
   retryEmailOutbox: vi.fn(),
   logEvent: vi.fn(),
 }));
@@ -17,6 +18,9 @@ vi.mock("@/server/licensing/requests", () => ({
 }));
 vi.mock("@/server/licensing/state-machine", () => ({
   reconcileStuckClaims: mocks.reconcileStuckClaims,
+}));
+vi.mock("@/server/licensing/money", () => ({
+  sweepMoneyMovements: mocks.sweepMoneyMovements,
 }));
 vi.mock("@/server/email/send", () => ({
   retryEmailOutbox: mocks.retryEmailOutbox,
@@ -42,6 +46,7 @@ const get = (authorization?: string) =>
 function script(results: {
   expired?: number[];
   reconciled?: number[];
+  moneyMovements?: number[];
   emailsSent?: number[];
 }) {
   const queue = (list: number[] = []) => {
@@ -50,6 +55,7 @@ function script(results: {
   };
   mocks.expireDueRequests.mockImplementation(queue(results.expired));
   mocks.reconcileStuckClaims.mockImplementation(queue(results.reconciled));
+  mocks.sweepMoneyMovements.mockImplementation(queue(results.moneyMovements));
   mocks.retryEmailOutbox.mockImplementation(queue(results.emailsSent));
 }
 
@@ -77,16 +83,22 @@ describe("GET /api/cron/expire-requests", () => {
     });
     expect(mocks.expireDueRequests).not.toHaveBeenCalled();
     expect(mocks.reconcileStuckClaims).not.toHaveBeenCalled();
+    expect(mocks.sweepMoneyMovements).not.toHaveBeenCalled();
     expect(mocks.retryEmailOutbox).not.toHaveBeenCalled();
   });
 
   it("runs each step once when none fills its batch, and answers the counts", async () => {
-    script({ expired: [2], reconciled: [1], emailsSent: [0] });
+    script({
+      expired: [2],
+      reconciled: [1],
+      moneyMovements: [3],
+      emailsSent: [0],
+    });
     const response = await get(BEARER);
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(await response.text()).toBe(
-      '{"expired":2,"reconciled":1,"emailsSent":0}',
+      '{"expired":2,"reconciled":1,"moneyMovements":3,"emailsSent":0}',
     );
     const stopAt = START.getTime() + 45_000;
     expect(mocks.expireDueRequests).toHaveBeenCalledExactlyOnceWith({
@@ -95,6 +107,12 @@ describe("GET /api/cron/expire-requests", () => {
       stopAt,
     });
     expect(mocks.reconcileStuckClaims).toHaveBeenCalledExactlyOnceWith({
+      olderThanMinutes: 10,
+      limit: 50,
+      actor: CRON,
+      stopAt,
+    });
+    expect(mocks.sweepMoneyMovements).toHaveBeenCalledExactlyOnceWith({
       olderThanMinutes: 10,
       limit: 50,
       actor: CRON,
@@ -111,11 +129,13 @@ describe("GET /api/cron/expire-requests", () => {
     script({
       expired: [100, 100, 7],
       reconciled: [50, 4],
+      moneyMovements: [50, 1],
       emailsSent: [50, 2],
     });
     for (const [name, mock] of [
       ["expire", mocks.expireDueRequests],
       ["reconcile", mocks.reconcileStuckClaims],
+      ["money", mocks.sweepMoneyMovements],
       ["emails", mocks.retryEmailOutbox],
     ] as const) {
       const run = mock.getMockImplementation();
@@ -128,14 +148,17 @@ describe("GET /api/cron/expire-requests", () => {
     expect(await response.json()).toEqual({
       expired: 207,
       reconciled: 54,
+      moneyMovements: 51,
       emailsSent: 52,
     });
     expect(order).toEqual([
       "reconcile",
       "expire",
+      "money",
       "emails",
       "reconcile",
       "expire",
+      "money",
       "emails",
       "expire",
     ]);
@@ -151,10 +174,12 @@ describe("GET /api/cron/expire-requests", () => {
     expect(await response.json()).toEqual({
       expired: 100,
       reconciled: 3,
+      moneyMovements: 0,
       emailsSent: 0,
     });
     expect(mocks.reconcileStuckClaims).toHaveBeenCalledTimes(1);
     expect(mocks.expireDueRequests).toHaveBeenCalledTimes(1);
+    expect(mocks.sweepMoneyMovements).not.toHaveBeenCalled();
     expect(mocks.retryEmailOutbox).not.toHaveBeenCalled();
   });
 

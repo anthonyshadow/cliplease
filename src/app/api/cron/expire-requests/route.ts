@@ -2,6 +2,7 @@ import { CRON } from "@/server/auth/actor";
 import { isCronAuthorized } from "@/server/cron/auth";
 import { retryEmailOutbox } from "@/server/email/send";
 import { NO_STORE, unauthorizedJson } from "@/server/http";
+import { sweepMoneyMovements } from "@/server/licensing/money";
 import { expireDueRequests } from "@/server/licensing/requests";
 import { reconcileStuckClaims } from "@/server/licensing/state-machine";
 import { errorName, logEvent } from "@/server/log";
@@ -18,20 +19,25 @@ export const maxDuration = 60;
 const CRON_BUDGET_MS = 45_000;
 
 /** The JSON (02 §8.4): each step's total over the run's passes, in 02 §8.4's key order. */
-type CronCounts = { expired: number; reconciled: number; emailsSent: number };
+type CronCounts = {
+  expired: number;
+  reconciled: number;
+  moneyMovements: number;
+  emailsSent: number;
+};
 
 type CronStep = {
   key: keyof CronCounts;
   /** The batch: a run that fills it may have left more, and only that keeps the step due for another pass. */
   limit: number;
-  /** How many this run settled; no request, claim or email starts at or after `stopAt` (epoch ms). */
+  /** How many this run settled; no request, claim, transfer or email starts at or after `stopAt` (epoch ms). */
   run: (limit: number, stopAt: number) => Promise<number>;
 };
 
 // The reconcile runs first (06 §9, as the lazy layers do), so a claim it releases on an overdue request expires in the
-// same pass. P19b adds sweepMoneyMovements ({ olderThanMinutes: 10, limit: 50 }, moneyMovements) after the expiry,
-// and P19c retryAutoApprovals ({ limit: 50 }, autoApprovals) before the outbox. P33a adds abandonStaleCheckouts
-// (abandoned) before the outbox too, and runs cleanupExpiredRecords once after the loop (the `cleaned` object).
+// same pass; the creator transfers a crash or a retry left pending follow (07 D75). P19c adds retryAutoApprovals
+// ({ limit: 50 }, autoApprovals) before the outbox. P33a adds abandonStaleCheckouts (abandoned) before the outbox too,
+// and runs cleanupExpiredRecords once after the loop (the `cleaned` object).
 const STEPS: readonly CronStep[] = [
   {
     key: "reconciled",
@@ -50,6 +56,12 @@ const STEPS: readonly CronStep[] = [
     run: (limit, stopAt) => expireDueRequests({ limit, actor: CRON, stopAt }),
   },
   {
+    key: "moneyMovements",
+    limit: 50,
+    run: (limit, stopAt) =>
+      sweepMoneyMovements({ olderThanMinutes: 10, limit, actor: CRON, stopAt }),
+  },
+  {
     key: "emailsSent",
     limit: 50,
     run: (limit, stopAt) => retryEmailOutbox({ limit, stopAt }),
@@ -62,7 +74,12 @@ const STEPS: readonly CronStep[] = [
  * fell short; P22d's renewals cron keeps the same rule). No step starts at or after `stopAt`.
  */
 async function sweep(stopAt: number): Promise<CronCounts> {
-  const counts: CronCounts = { expired: 0, reconciled: 0, emailsSent: 0 };
+  const counts: CronCounts = {
+    expired: 0,
+    reconciled: 0,
+    moneyMovements: 0,
+    emailsSent: 0,
+  };
   let due = STEPS;
   while (due.length > 0) {
     const again: CronStep[] = [];

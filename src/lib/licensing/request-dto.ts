@@ -1,4 +1,8 @@
-import type { Currency, LicenseRequestStatus } from "@/lib/domain/values";
+import type {
+  Currency,
+  LicenseRequestStatus,
+  MoneyMovementStatus,
+} from "@/lib/domain/values";
 import type { DisplayStatus } from "./transitions";
 
 // What the request pages get of a request (02 §4.1; 03 §7.1, §7.6): plain values, instants as ISO strings, mapped field
@@ -31,12 +35,19 @@ type RequestFacts = {
 /** /r's request (S03). */
 export type BuyerStatus = RequestFacts;
 
-/** A request in the creator's inbox and on its page (S14, S15): the buyer's entries, but never their email. */
+/**
+ * A request in the creator's inbox and on its page (S14, S15): the buyer's entries, but never their email; and once it
+ * is approved, its creator transfer for the payout line (P19b; 07 D75): status, amount and currency only, never its
+ * Stripe id or error. The three are null together until T5 leaves the row.
+ */
 export type CreatorRequest = RequestFacts & {
   licenseeName: string;
   contactName: string;
   intendedUse: string | null;
   createdAt: string;
+  transferStatus: MoneyMovementStatus | null;
+  transferAmountCents: number | null;
+  transferCurrency: Currency | null;
 };
 
 /** The inbox's two lists (05 §6.3). */

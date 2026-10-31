@@ -21,8 +21,9 @@ import { licenseApprovedSubject } from "../email/subjects";
 import { errorName, logEvent } from "../log";
 import { cancel, getAuthorization } from "../payments";
 import type { StripeCallOutcome } from "../payments/driver";
-import { runEffects } from "./effects";
+import { afterResponse, runEffects } from "./effects";
 import { issueLicense } from "./issue";
+import { sendCreatorTransfer, transferSourceOf } from "./money";
 
 // The license request state machine (02 §5.7; 03 §5.1; 07 §2.2, D24–D26, D47): the only writer of
 // license_request.status, and the payment claims every capture and cancel of a waiting request goes through: claim,
@@ -468,11 +469,12 @@ const NOT_CHARGED: ReadonlySet<LicenseRequestStatus> = new Set([
  * Reads the request's PaymentIntent and makes the row agree with it (07 D25): after every non-ok capture or cancel, for
  * stuck claims, and for payment_intent.succeeded. `succeeded` on a waiting request → T5 (finishCapture), whatever was
  * claimed; on an ending that never charges → audit `license_request.money_moved_late`, nothing else (OQ-12); on an
- * approved request → nothing (P19b hooks the transfer here). `canceled` on a waiting request → the claimed action's
- * ending (finishCanceled). `requires_capture` → the caller's own `claim` is released (the caller says retry), unless
- * its capture failed for good (`captureOutcome` permanent): then T7 cancels the hold (cancelFailedCapture). A claim the
- * caller doesn't hold is left alone. A retrieve that throws throws: the claim stays for the next reconcile, and a
- * webhook delivery fails, so Stripe sends it again. Requests without a PaymentIntent are left as they are.
+ * approved request → its creator transfer is scheduled, a no-op once paid and the heal of one a crash left pending (06
+ * §7). `canceled` on a waiting request → the claimed action's ending (finishCanceled). `requires_capture` → the
+ * caller's own `claim` is released (the caller says retry), unless its capture failed for good (`captureOutcome`
+ * permanent): then T7 cancels the hold (cancelFailedCapture). A claim the caller doesn't hold is left alone. A retrieve
+ * that throws throws: the claim stays for the next reconcile, and a webhook delivery fails, so Stripe sends it again.
+ * Requests without a PaymentIntent are left as they are.
  */
 export async function reconcileFromStripe(
   requestId: string,
@@ -501,6 +503,7 @@ export async function reconcileFromStripe(
         const done = await finishCapture(requestId, { claim, actor });
         return done ? "finished" : "unchanged";
       }
+      if (row.status === "approved") scheduleCreatorTransfer(requestId, actor);
       if (NOT_CHARGED.has(row.status)) {
         await writeAudit(db, actor, {
           action: "license_request.money_moved_late",
@@ -593,9 +596,10 @@ async function lockHeld(
  * T5 (03 §5.1; 07 D33): Stripe captured the hold, so the waiting request becomes approved with its license, in one
  * transaction fenced on `claim` (or on no claim): the license starts at the capture claim's time (approved_at =
  * payment_action_at = starts_at), or now when the capture wasn't the app's; then license-approved is queued (its subject
- * names the code) and sent after the commit. Null when the fence finds the request resolved by another actor. A finish
- * that throws is audited `license_request.issue_failed` and rethrown. Every T5 goes through here: Approve,
- * reconcileFromStripe, and later auto-approve (P19c).
+ * names the code) and sent after the commit, and the creator transfer issueLicense left pending is sent after the
+ * response (07 D75). Null when the fence finds the request resolved by another actor. A finish that throws is audited
+ * `license_request.issue_failed` and rethrown. Every T5 goes through here: Approve, reconcileFromStripe, and later
+ * auto-approve (P19c).
  */
 export async function finishCapture(
   requestId: string,
@@ -639,7 +643,18 @@ export async function finishCapture(
     });
   if (!finished) return null;
   runEffects(finished.effects);
+  scheduleCreatorTransfer(requestId, actor);
   return { licenseCode: finished.licenseCode };
+}
+
+/**
+ * The creator's pay for an approved request (07 D75, 02 §8.2 step 5): sendCreatorTransfer after the response, outside
+ * the T5 transaction, run as the system on behalf of `actor` (a creator's Approve, the webhook, the cron).
+ */
+function scheduleCreatorTransfer(requestId: string, actor: Actor): void {
+  afterResponse(() =>
+    sendCreatorTransfer(requestId, { source: transferSourceOf(actor) }),
+  );
 }
 
 /** The ending a canceled hold gives a waiting request, by its claim (03 T6, T8–T10): no claim means Stripe's own cancel. */

@@ -1,6 +1,7 @@
 // The payments seam (02 §5.8, 07 §8.2): one driver per currency, so e2e runs the whole flow without Stripe (ADR-21).
 // P05 declares what Phase A uses; the renewal methods, SavedCard, the renewal checkout fields and the
-// payment_method.automatically_updated event arrive with P22c and P22e, CREATOR_FIXABLE_TRANSFER_CODES with P24.
+// payment_method.automatically_updated event arrive with P22c and P22e. CREATOR_FIXABLE_TRANSFER_CODES is P19b's, filled
+// by P24's spike.
 import "server-only";
 import type { Currency, PayoutsStatus } from "@/lib/domain/values";
 import { errorName } from "../log";
@@ -182,3 +183,9 @@ export interface PaymentsDriver {
   /** Async (07 D107). */
   parseWebhook(rawBody: string, signature: string): Promise<PaymentsEvent>;
 }
+
+/**
+ * Transfer error codes the creator can fix in their own Stripe account (02 §5.8): the cron retries a failed transfer only
+ * for these (owner answer Q-148). Empty until P24's spike S5 lists them for the CAD account.
+ */
+export const CREATOR_FIXABLE_TRANSFER_CODES: readonly string[] = [];

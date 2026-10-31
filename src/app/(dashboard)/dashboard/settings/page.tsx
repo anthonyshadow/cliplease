@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
+import { TransferFailedBanner } from "@/components/layout/finish-payouts-banner";
 import { SignOutSettingsButton } from "@/components/layout/sign-out";
 import { PayoutCurrencyFacts } from "@/components/payouts/payout-currency-facts";
 import { PayoutsStatusLine } from "@/components/payouts/payouts-status-line";
@@ -19,10 +20,18 @@ import {
 import { GENERIC_ERROR_MESSAGE } from "@/lib/result";
 import { requireCreator } from "@/server/auth/session";
 import { payoutsStatusForPage } from "@/server/creators/profile";
+import { settleCreatorMoney } from "@/server/licensing/lazy";
+import { failedTransferTotalCents } from "@/server/licensing/money";
 import { DisplayNameForm } from "./display-name-form";
 import { TimeZoneRow } from "./time-zone-row";
 
 export const metadata: Metadata = { title: "Settings" };
+
+/**
+ * This page sends the creator's transfers (07 D75), awaited back from payout setup and after the response otherwise, and
+ * its actions re-render it with ?payouts=returned kept: 60 s keeps every send under the claim's 2-minute lease (07 D26).
+ */
+export const maxDuration = 60;
 
 function Section({
   title,
@@ -54,7 +63,11 @@ function Section({
  * S23 (05 §6.11): Payouts, Profile, Requests, Emails, Account, in one max-w-reading column left-aligned with the title
  * at every tier (07 D145). The payouts status is re-read when older than 10 minutes, and on the return from payout
  * setup (?payouts=returned) unless it was read in the last 10 s; a failed read shows the stored one. Payout setup that
- * failed comes back with ?payouts=error: an error Banner, with the setup button as the retry (05 §1).
+ * failed comes back with ?payouts=error: an error Banner, with the setup button as the retry (05 §1). While payouts are
+ * active the creator's pending and failed transfers are sent (07 D75; 05 §6.11 callout 2): back from payout setup within
+ * the settle budget, before the failed total is read, so the transfer Banner above Payouts shows what is still owed;
+ * otherwise after the response. Settings shows that Banner alone, never the setup banners: its Payouts section already
+ * says what setup needs.
  */
 export default async function SettingsPage({
   searchParams,
@@ -66,11 +79,26 @@ export default async function SettingsPage({
     row: creator,
     returned,
   });
+  await settleCreatorMoney({
+    creatorId: creator.id,
+    payoutsStatus: status,
+    wait: returned,
+  });
+  // After the sweep, never beside it: the total counts what it couldn't send.
+  const failedCents = await failedTransferTotalCents(creator.id);
   const setupLabel = payoutsSetupLabel(status);
 
   return (
     <div className="flex w-full max-w-reading flex-col gap-8 py-6 lg:py-12">
       <h1 className="text-title-1 text-ink">Settings</h1>
+
+      <TransferFailedBanner
+        failedTransfer={{
+          cents: failedCents,
+          currency: creator.payoutCurrency,
+        }}
+        payoutsStatus={status}
+      />
 
       <Section title="Payouts" id="payouts">
         {payouts === "error" ? (

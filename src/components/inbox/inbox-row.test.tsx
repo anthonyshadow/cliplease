@@ -164,6 +164,72 @@ describe("InboxRow (04 §9.11; 05 §6.3)", () => {
   });
 });
 
+describe("InboxRow's payout line (04 §9.11, §11.5; 07 D75; owner answer Q-146 a)", () => {
+  const approved: CreatorRequest = {
+    ...waiting,
+    status: "approved",
+    displayStatus: "approved",
+    licenseCode: "CL-7K3M-9QXA",
+  };
+  const transfer = {
+    transferAmountCents: 157500,
+    transferCurrency: "cad",
+  } as const;
+
+  it.each([
+    {
+      transferStatus: "succeeded",
+      text: "Paid out",
+      token: "text-cleared-text",
+    },
+    {
+      transferStatus: "pending",
+      text: "Payout pending",
+      token: "text-ink-2",
+    },
+    {
+      transferStatus: "failed",
+      text: "Finish your payout setup to receive CA$1,575.00.",
+      token: "text-awaiting-text",
+    },
+  ] as const)(
+    "reads '$text' for a $transferStatus transfer, in the row's text column",
+    ({ transferStatus, text, token }) => {
+      const { container } = inList({
+        ...approved,
+        ...transfer,
+        transferStatus,
+      });
+      const row = within(firstRow(container));
+      const line = row.getByText(text);
+      expect(line.className).toContain("text-footnote");
+      expect(line.className).toContain(token);
+      // Under the title's line, never in the pill's auto-width column.
+      expect(line.parentElement).toBe(
+        row.getByText("First snow · CA$1,575.00").parentElement,
+      );
+      expect(line.closest("[data-row-status]")).toBeNull();
+      expect(row.getByText("CL-7K3M-9QXA")).toBeTruthy();
+      // History keeps P18's layout: the code beside the pill, never "License {code} issued".
+      expect(row.queryByText(/^License .* issued$/)).toBeNull();
+    },
+  );
+
+  it.each<{ name: string; request: CreatorRequest }>([
+    { name: "an approved request with no transfer row", request: approved },
+    {
+      name: "a canceled transfer",
+      request: { ...approved, ...transfer, transferStatus: "canceled" },
+    },
+    { name: "a waiting request", request: waiting },
+  ])("has no payout line for $name", ({ request }) => {
+    inList(request);
+    expect(
+      screen.queryByText(/Paid out|Payout pending|setup to receive/),
+    ).toBeNull();
+  });
+});
+
 describe("InboxRow after Approve (05 §6.3 States; 04 §10.3)", () => {
   it("keeps an approved row's waiting layout with the Approved pill, the seal before You get and the code line", () => {
     const { container } = render(

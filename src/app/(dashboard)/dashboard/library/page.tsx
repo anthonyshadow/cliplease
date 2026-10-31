@@ -39,6 +39,7 @@ import {
 } from "@/lib/library/filter";
 import { requireCreator, toActor } from "@/server/auth/session";
 import { listLibraryPosts } from "@/server/library/queries";
+import { failedTransferTotalCents } from "@/server/licensing/money";
 import { SOCIAL_SYNC_MAX_POSTS } from "@/server/social/sync";
 
 export const metadata: Metadata = { title: "Library" };
@@ -49,8 +50,9 @@ export const maxDuration = 60;
 
 /**
  * S12 (05 §6.1): every linked account's posts in one grid with the account strip, the sync line and Sync all, the sync
- * banners, platform chips, caption search, Show more and Load older videos; the four empty states replace the grid.
- * Nothing syncs on render (07 D13). A connect started here comes back with ?connected= or ?error= (07 D37).
+ * banners, platform chips, caption search, Show more and Load older videos; the four empty states replace the grid. The
+ * payouts Banner is the Inbox's (the failed-transfer one first, 07 D75). Nothing syncs on render (07 D13). A connect
+ * started here comes back with ?connected= or ?error= (07 D37).
  */
 export default async function LibraryPage({
   searchParams,
@@ -58,12 +60,19 @@ export default async function LibraryPage({
   const ctx = await requireCreator(LIBRARY_PATH);
   const params = await searchParams;
   const filter = LibraryFilterSchema.parse(params);
-  const library = await listLibraryPosts(toActor(ctx), filter);
+  const [library, failedCents] = await Promise.all([
+    listLibraryPosts(toActor(ctx), filter),
+    failedTransferTotalCents(ctx.creator.id),
+  ]);
   const { accounts, posts, allExpired, visibleCount } = library;
   // The posts query runs beside the summaries: on the rare redirect it reads nothing, which costs less than waiting for
   // the summaries before the posts on every load.
   const to = libraryRedirect(filter, accounts, posts.length);
   if (to) redirect(to);
+  const failedTransfer = {
+    cents: failedCents,
+    currency: ctx.creator.payoutCurrency,
+  };
 
   const errorBanner = connectErrorBanner(params.error);
   const connectedToast = connectedToastMessage(params.connected);
@@ -88,6 +97,7 @@ export default async function LibraryPage({
       <>
         <FinishPayoutsBanner
           payoutsStatus={ctx.creator.payoutsStatus}
+          failedTransfer={failedTransfer}
           className="mt-6 lg:mt-12"
         />
         {errorLine ? <div className="mt-6">{errorLine}</div> : null}
@@ -135,6 +145,7 @@ export default async function LibraryPage({
           <LibraryTitle />
           <FinishPayoutsBanner
             payoutsStatus={ctx.creator.payoutsStatus}
+            failedTransfer={failedTransfer}
             className="md:col-span-2"
           />
           <div className="min-w-0 md:col-span-2">

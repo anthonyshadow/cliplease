@@ -1,7 +1,7 @@
 import "server-only";
-import { eq } from "drizzle-orm";
+import { and, eq, isNotNull } from "drizzle-orm";
 import { db } from "@/db/client";
-import { licenseRequest } from "@/db/schema";
+import { creatorProfile, licenseRequest, moneyMovement } from "@/db/schema";
 import type { Currency } from "@/lib/domain/values";
 import { DAY_MS } from "@/lib/time";
 import { isUuid } from "@/lib/validation/uuid";
@@ -55,6 +55,44 @@ async function requestRow(requestId: string, currency: Currency) {
 type RequestRow = Awaited<ReturnType<typeof requestRow>>;
 
 /**
+ * The request's transfers as Stripe would list them (02 §5.8): the creator_transfer row once it has recorded a transfer,
+ * to the creator's account. P21b derives amountReversedCents from the reversal row.
+ */
+async function transfersOf(requestId: string) {
+  const rows = await db
+    .select({
+      transferId: moneyMovement.stripeObjectId,
+      amountCents: moneyMovement.amountCents,
+      destinationAccountId: creatorProfile.stripeAccountId,
+    })
+    .from(moneyMovement)
+    .innerJoin(
+      licenseRequest,
+      eq(licenseRequest.id, moneyMovement.licenseRequestId),
+    )
+    .innerJoin(creatorProfile, eq(creatorProfile.id, licenseRequest.creatorId))
+    .where(
+      and(
+        eq(moneyMovement.licenseRequestId, requestId),
+        eq(moneyMovement.kind, "creator_transfer"),
+        isNotNull(moneyMovement.stripeObjectId),
+      ),
+    );
+  return rows.flatMap(({ transferId, amountCents, destinationAccountId }) =>
+    transferId && destinationAccountId
+      ? [
+          {
+            transferId,
+            amountCents,
+            amountReversedCents: 0,
+            destinationAccountId,
+          },
+        ]
+      : [],
+  );
+}
+
+/**
  * The PaymentIntent a request's status stands for (07 D35). A request still in checkout reports a hold placed now (owner
  * answer Q-119 a): the fake Pay (P16b) authorizes through its event before the buyer comes back, and P16b's return path
  * accepts a session only once it is complete. A request that never got a hold, or a renewal row (P22e), has none.
@@ -85,8 +123,8 @@ function piStatusOf(row: RequestRow): PiStatus {
  * the creator id, setup returns straight to Settings and payouts are always on. Checkout: the session, the PaymentIntent
  * and the charge are `cs_fake_` / `pi_fake_` / `ch_fake_` + the request id, every answer derived from the request's row
  * (a platform charge on this currency's account: no destination, no application fee, 07 D74); capture and cancel always
- * succeed and send no event. Transfers arrive with P19b, refunds and reversals with P21b. `appUrl` is the app's origin,
- * as the Stripe driver takes it.
+ * succeed and send no event. A transfer is `tr_fake_` + the request id, read back from the creator_transfer row that
+ * recorded it; refunds and reversals arrive with P21b. `appUrl` is the app's origin, as the Stripe driver takes it.
  */
 export function createFakeDriver({
   currency,
@@ -184,8 +222,15 @@ export function createFakeDriver({
       requestIdOf("pi", paymentIntentId);
       return { ok: true };
     },
-    createTransfer: notYet("createTransfer", "P19b"),
-    findTransfers: notYet("findTransfers", "P19b"),
+    async createTransfer({ requestId }) {
+      // Stateless (07 D35): the caller records the transfer on its money_movement row, which findTransfers reads back.
+      if (!isUuid(requestId)) throw new Error("fake driver: not a request id");
+      return { ok: true, transferId: `tr_fake_${requestId}` };
+    },
+    async findTransfers(requestId) {
+      await requestRow(requestId, currency);
+      return transfersOf(requestId);
+    },
     refund: notYet("refund", "P21b"),
     reverseTransfer: notYet("reverseTransfer", "P21b"),
     async parseWebhook() {

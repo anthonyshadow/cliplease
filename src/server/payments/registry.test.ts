@@ -127,14 +127,12 @@ describe("the fake driver (07 D35)", () => {
 
   it("rejects what later prompts add, and every webhook", async () => {
     await expect(
-      fake.createTransfer({
+      fake.reverseTransfer({
         requestId: "r1",
-        chargeId: "ch_1",
-        destinationAccountId: "acct_fake_c1",
-        amountCents: 100,
+        transferId: "tr_1",
         idempotencyKey: "k",
       }),
-    ).rejects.toThrow("arrives in P19b");
+    ).rejects.toThrow("arrives in P21b");
     await expect(
       fake.refund({
         requestId: "r1",

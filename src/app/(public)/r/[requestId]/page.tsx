@@ -49,6 +49,12 @@ async function pageFor({ params, searchParams }: PageProps<"/r/[requestId]">) {
 }
 
 /**
+ * Its settle can finish a capture and schedule the creator's transfer (07 D75): every route that can send one stops
+ * within 60 s, well inside the transfer claim's 2-minute lease, so a slow call never outlives its claim.
+ */
+export const maxDuration = 60;
+
+/**
  * No referrer and no index on every answer (05 §4.3; 02 §9.5): a client navigation here (the fake checkout's redirects)
  * never gets next.config's headers. The title names the state (owner answer Q-121 a); a dead link gets none, so it
  * reads "ClipLease" whatever the reason.

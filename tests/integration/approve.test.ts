@@ -73,6 +73,7 @@ import { readyLibraryVideo } from "../helpers/ready-videos";
 import {
   endingsOf,
   licensesOf,
+  movementsOf,
   onlyLicense,
 } from "../helpers/request-outcomes";
 import type { ScriptedPayments } from "../helpers/scripted-payments";
@@ -80,12 +81,14 @@ import {
   expectScriptPlayed,
   installScriptedPayments,
 } from "../helpers/scripted-suite";
+import { expectPaidOnce } from "../helpers/transfer-fixtures";
 
 // Approve: capture and issue the license (P18; 02 §8.2; 03 T4–T6, T10; 07 D24–D26, D29, D33, D71, D74, D94, D101; 01
 // J4.7, J8.2, J8.3, J8.8, J9.1, J9.3, J9.7; OQ-12, Q-123 a). P19 adds the expiry a tap past the deadline schedules and
 // T7, a capture Stripe refuses for good (03 T7; 01 J8.9). The payments driver is the scripted double: the fake's
 // answers unless a test scripts getAuthorization or queues an outcome; capture is spied on (never fault injection in
-// the fake, 07 D35).
+// the fake, 07 D35). P19b: T5 also leaves the creator's transfer, sent after the response (07 D75), so a test that
+// compares audits across a later T5 path waits for that first, and Approve tapped twice still pays once.
 
 vi.mock("@/server/payments/registry", async (importOriginal) =>
   (await import("../helpers/scripted-suite")).scriptedRegistry(
@@ -328,6 +331,12 @@ describe("Approve (02 §8.2; 01 J8.2, J9.1, J9.3)", () => {
     ]);
     await flushAfter();
     expect(await approvedEmails(row.id)).toHaveLength(1);
+    // One creator transfer, sent once by the Approve that won (P19b).
+    await expectPaidOnce(row.id, {
+      by: "system",
+      amountCents: row.licensePriceCents,
+      scripted,
+    });
   });
 
   it("refuses without a claim while payouts aren't active (07 D29, D74, D77)", async () => {
@@ -805,11 +814,22 @@ describe("reconcileFromStripe's base branches (07 D25; 03 T5, T6, T10)", () => {
   it("succeeded on an approved request changes nothing and writes nothing", async () => {
     const { actor, row } = await waiting();
     expect((await approveLicenseRequest(row.id, actor)).ok).toBe(true);
+    // Approve's transfer first (P19b): the snapshot holds its audit.
+    await flushAfter();
+    const paidOnce = {
+      by: "system",
+      amountCents: row.licensePriceCents,
+      scripted,
+    } as const;
+    const paid = await expectPaidOnce(row.id, paidOnce);
     const audits = await auditsFor(row.id);
     scripted.script({ getAuthorization: { status: "succeeded" } });
     expect(await reconcileFromStripe(row.id)).toBe("unchanged");
+    // The transfer the reconcile schedules finds it paid: skipped, nothing sent or written.
+    await flushAfter();
     expect(await auditsFor(row.id)).toEqual(audits);
     expect(await licensesOf(row.id)).toHaveLength(1);
+    expect(await expectPaidOnce(row.id, paidOnce)).toEqual(paid);
   });
 
   it("reconciles a capture claim stuck for over 2 minutes from Stripe's succeeded (07 D26)", async () => {
@@ -858,15 +878,25 @@ describe("payment_intent.succeeded and Approve together (01 J9.7)", () => {
   it("Approve first: the webhook changes nothing", async () => {
     const { actor, row } = await waiting();
     expect((await approveLicenseRequest(row.id, actor)).ok).toBe(true);
+    // Approve's transfer first (P19b): the snapshot holds its audit.
+    await flushAfter();
+    const paidOnce = {
+      by: "system",
+      amountCents: row.licensePriceCents,
+      scripted,
+    } as const;
+    const paid = await expectPaidOnce(row.id, paidOnce);
     const audits = await auditsFor(row.id);
     scripted.script({ getAuthorization: { status: "succeeded" } });
     expect(
       await onWebhookEvent(piEvent("payment_intent.succeeded", row.id), "cad"),
     ).toBe("processed");
+    // The webhook's transfer finds it paid: skipped, nothing sent or written.
     await flushAfter();
     expect(await licensesOf(row.id)).toHaveLength(1);
     expect(await approvedEmails(row.id)).toHaveLength(1);
     expect(await auditsFor(row.id)).toEqual(audits);
+    expect(await expectPaidOnce(row.id, paidOnce)).toEqual(paid);
   });
 
   it("both at once: one license and one email", async () => {
@@ -885,6 +915,11 @@ describe("payment_intent.succeeded and Approve together (01 J9.7)", () => {
     expect(await licensesOf(row.id)).toHaveLength(1);
     expect(await approvedEmails(row.id)).toHaveLength(1);
     expect((await requestRow(row.id)).status).toBe("approved");
+    // Whichever T5 won, and whichever path scheduled it, the creator is paid once (P19b).
+    await expectPaidOnce(row.id, {
+      amountCents: row.licensePriceCents,
+      scripted,
+    });
   });
 
   it("a webhook whose retrieve fails stays unprocessed, so Stripe sends it again (02 §8.1 step 5)", async () => {
@@ -933,6 +968,7 @@ describe("issueLicense (07 D33, D101)", () => {
       ),
     ).rejects.toThrow("no free license code");
     expect(await licensesOf(row.id)).toEqual([]);
+    expect(await movementsOf(row.id)).toEqual([]);
   });
 
   it("returns the request's license when called again, with no second audit", async () => {
@@ -948,5 +984,17 @@ describe("issueLicense (07 D33, D101)", () => {
     );
     expect(second).toEqual(first);
     expect(await auditsOf(first.licenseId, "license.issued")).toHaveLength(1);
+    // The creator's transfer, left pending for the caller to send (P19b): one, however often T5 runs.
+    expect(await movementsOf(row.id)).toEqual([
+      expect.objectContaining({
+        kind: "creator_transfer",
+        status: "pending",
+        currency: "cad",
+        amountCents: row.licensePriceCents,
+        attempt: 0,
+        stripeObjectId: null,
+        claimedAt: null,
+      }),
+    ]);
   });
 });

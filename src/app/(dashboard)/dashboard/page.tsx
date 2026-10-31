@@ -14,6 +14,7 @@ import { INBOX_VIEWS, type InboxView } from "@/lib/licensing/request-dto";
 import { PUBLISHED_COPY } from "@/lib/videos/review";
 import { requireCreator } from "@/server/auth/session";
 import { settleCreatorRequests } from "@/server/licensing/lazy";
+import { failedTransferTotalCents } from "@/server/licensing/money";
 import { listInbox, waitingSummary } from "@/server/licensing/queries";
 import { latestLiveShareUrl } from "@/server/videos/public";
 
@@ -28,11 +29,11 @@ const Query = z.object({
 });
 
 /**
- * S14, the Inbox (05 §6.3; 04 §9.11, §11.5; 01 J8): the two-tone count, Waiting · History, the payouts Banner, then the
- * list card or the empty state, in the max-w-app column at every tier (07 D146, D149). Waiting is soonest deadline first;
- * History the 20 newest decided requests. The list refreshes on focus and every 30 s. Each waiting row has Decline and
- * Approve. Each render first settles the creator's requests: stuck claims reconciled, overdue ones expired after the
- * response (02 §8.4).
+ * S14, the Inbox (05 §6.3; 04 §9.11, §11.5; 01 J8): the two-tone count, Waiting · History, the payouts Banner (the
+ * failed-transfer one first, 07 D75), then the list card or the empty state, in the max-w-app column at every tier (07
+ * D146, D149). Waiting is soonest deadline first; History the 20 newest decided requests. The list refreshes on focus
+ * and every 30 s. Each waiting row has Decline and Approve. Each render first settles the creator's requests: stuck
+ * claims reconciled, overdue ones expired after the response (02 §8.4).
  */
 export default async function InboxPage({
   searchParams,
@@ -40,10 +41,12 @@ export default async function InboxPage({
   const { creator } = await requireCreator("/dashboard");
   const { view } = Query.parse(await searchParams);
   await settleCreatorRequests({ creatorId: creator.id });
-  const [{ count: waiting, soonestExpiresAt }, rows] = await Promise.all([
-    waitingSummary(creator.id),
-    listInbox(creator.id, view),
-  ]);
+  const [{ count: waiting, soonestExpiresAt }, rows, failedCents] =
+    await Promise.all([
+      waitingSummary(creator.id),
+      listInbox(creator.id, view),
+      failedTransferTotalCents(creator.id),
+    ]);
   return (
     <div className={WIDE_COLUMN}>
       <SyncInboxCount count={waiting} />
@@ -79,6 +82,10 @@ export default async function InboxPage({
       <FinishPayoutsBanner
         payoutsStatus={creator.payoutsStatus}
         soonestExpiresAt={soonestExpiresAt}
+        failedTransfer={{
+          cents: failedCents,
+          currency: creator.payoutCurrency,
+        }}
       />
       <InboxList
         key={view}

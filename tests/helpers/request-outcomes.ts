@@ -1,10 +1,15 @@
 // What a waiting request's ending left, for [int] tests (P19; P19b, P19c and P19g reuse them): its licenses, the
-// transitions that ended it, its outcome emails and its Stripe events.
+// transitions that ended it, its outcome emails, its Stripe events and (P19b) its money movements.
 import { and, asc, eq } from "drizzle-orm";
 import { expect } from "vitest";
 import { db } from "../../src/db/client";
-import { emailLog, license, stripeEvent } from "../../src/db/schema";
-import type { License } from "../../src/db/schema/types";
+import {
+  emailLog,
+  license,
+  moneyMovement,
+  stripeEvent,
+} from "../../src/db/schema";
+import type { License, MoneyMovement } from "../../src/db/schema/types";
 import { auditsOf } from "./connect-flow";
 
 /** The licenses issued for the request. */
@@ -59,3 +64,11 @@ export const stripeEventsOf = (requestId: string) =>
     .from(stripeEvent)
     .where(eq(stripeEvent.licenseRequestId, requestId))
     .orderBy(asc(stripeEvent.receivedAt));
+
+/** The request's money_movement rows, every kind (P19b; 07 D75): T5 leaves its creator_transfer, sending it ends it. */
+export const movementsOf = (requestId: string): Promise<MoneyMovement[]> =>
+  db
+    .select()
+    .from(moneyMovement)
+    .where(eq(moneyMovement.licenseRequestId, requestId))
+    .orderBy(asc(moneyMovement.kind));

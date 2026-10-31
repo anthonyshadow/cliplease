@@ -2,7 +2,13 @@ import "server-only";
 import { and, asc, count, desc, eq, inArray, sql } from "drizzle-orm";
 import { cache } from "react";
 import { db } from "@/db/client";
-import { creatorProfile, license, licenseRequest, video } from "@/db/schema";
+import {
+  creatorProfile,
+  license,
+  licenseRequest,
+  moneyMovement,
+  video,
+} from "@/db/schema";
 import type {
   BuyerStatus,
   CreatorRequest,
@@ -58,13 +64,19 @@ const FACTS = {
   slug: video.slug,
   licenseCode: license.code,
 };
-/** A creator's view adds the buyer's entries (never their email). */
+/**
+ * A creator's view adds the buyer's entries (never their email) and the creator transfer's status, amount and currency
+ * for the payout line (P19b): never its Stripe id, its error or its claim. Never in FACTS: /r's buyer never sees it.
+ */
 const CREATOR_FACTS = {
   ...FACTS,
   licenseeName: licenseRequest.licenseeName,
   contactName: licenseRequest.contactName,
   intendedUse: licenseRequest.intendedUse,
   createdAt: licenseRequest.createdAt,
+  transferStatus: moneyMovement.status,
+  transferAmountCents: moneyMovement.amountCents,
+  transferCurrency: moneyMovement.currency,
 };
 /** /r adds what decides whether its poster may load. */
 const BUYER_FACTS = {
@@ -73,14 +85,25 @@ const BUYER_FACTS = {
   postingPlatforms: postingPlatformsColumn,
 };
 
-/** A creator's request rows with their video, creator and license (license_license_request_uidx: at most one). */
+/**
+ * A creator's request rows with their video, creator, license (license_license_request_uidx: at most one) and creator
+ * transfer (money_movement_request_kind_uidx: at most one). The kind sits in the join's ON clause, so a request with no
+ * transfer (a waiting one) or with other movements still reads as one row.
+ */
 const creatorRequests = () =>
   db
     .select(CREATOR_FACTS)
     .from(licenseRequest)
     .innerJoin(video, eq(video.id, licenseRequest.videoId))
     .innerJoin(creatorProfile, eq(creatorProfile.id, licenseRequest.creatorId))
-    .leftJoin(license, eq(license.licenseRequestId, licenseRequest.id));
+    .leftJoin(license, eq(license.licenseRequestId, licenseRequest.id))
+    .leftJoin(
+      moneyMovement,
+      and(
+        eq(moneyMovement.licenseRequestId, licenseRequest.id),
+        eq(moneyMovement.kind, "creator_transfer"),
+      ),
+    );
 
 type CreatorRow = Awaited<ReturnType<typeof creatorRequests>>[number];
 type FactsRow = Pick<CreatorRow, keyof typeof FACTS>;
@@ -117,6 +140,9 @@ function creatorRequestOf(r: CreatorRow): CreatorRequest {
     contactName: r.contactName,
     intendedUse: r.intendedUse,
     createdAt: r.createdAt.toISOString(),
+    transferStatus: r.transferStatus,
+    transferAmountCents: r.transferAmountCents,
+    transferCurrency: r.transferCurrency,
   };
 }
 
@@ -152,7 +178,7 @@ export async function getBuyerStatus(
 
 /**
  * The inbox (03 §7.1): `waiting`, every request waiting for the creator, soonest deadline first; `history`, the 20
- * newest decided ones, with the license's code when there is one.
+ * newest decided ones, with the license's code and the creator transfer when there are.
  */
 export async function listInbox(
   creatorId: string,

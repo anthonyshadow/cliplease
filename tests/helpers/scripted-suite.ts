@@ -1,5 +1,7 @@
 // The scripted payments double as an [int] file's Stripe (P19): installScriptedPayments in beforeEach puts a fresh one
-// behind paymentsDriver(currency), and the checks every test on it ends with. Each file keeps its own registry mock:
+// behind paymentsDriver(currency), and the checks every test on it ends with. uninstallScriptedPayments (P19b) gives
+// the tests that follow the real registry's driver (the fake) again, for a file that runs some tests on each. Each
+// file keeps its own registry mock:
 //   vi.mock("@/server/payments/registry", async (importOriginal) =>
 //     (await import("../helpers/scripted-suite")).scriptedRegistry(
 //       await importOriginal<typeof import("@/server/payments/registry")>(),
@@ -7,7 +9,7 @@
 //   );
 import { expect, vi } from "vitest";
 import type { Currency } from "../../src/lib/domain/values";
-import { flushAfter } from "./after";
+import { flushAfter, resetAfter } from "./after";
 import { dropStderr, endStderr } from "./logs";
 import {
   createScriptedPayments,
@@ -20,6 +22,11 @@ let installed: ScriptedPayments | undefined;
 export function installScriptedPayments(): ScriptedPayments {
   installed = createScriptedPayments();
   return installed;
+}
+
+/** Back to the real registry's driver (the fake) for the tests that follow: call it in their beforeEach. */
+export function uninstallScriptedPayments(): void {
+  installed = undefined;
 }
 
 /** The registry `real`, its paymentsDriver answering from the installed double (the real driver until one is). */
@@ -59,20 +66,28 @@ export async function expectInvariant(requestId: string): Promise<void> {
 }
 
 /**
- * The afterEach of a file whose tests all record stderr from beforeEach (logs.ts recordStderr): held calls let go, the
- * after() work waited for, the recording stopped and checked (endStderr); whatever failed, the recording forgotten and
- * the mocks restored; then expectScriptPlayed.
+ * The afterEach of a file whose tests all record stderr from beforeEach (logs.ts recordStderr): `double`'s held calls
+ * let go, the after() work waited for, after() back to running at once (resetAfter: a test that queued tasks ran or
+ * dropped them), the recording stopped and checked (endStderr: no after() task failed); whatever failed, the recording
+ * forgotten, `double`'s held calls let go and the mocks restored. A test on the real driver passes no double.
  */
-export async function finishScriptedTest(): Promise<void> {
-  const scripted = installedDouble();
+export async function finishRecordedTest(
+  double?: ScriptedPayments,
+): Promise<void> {
   try {
-    scripted.releaseHolds();
+    double?.releaseHolds();
     await flushAfter();
+    resetAfter();
     endStderr();
   } finally {
     dropStderr();
-    scripted.releaseHolds();
+    double?.releaseHolds();
     vi.restoreAllMocks();
   }
+}
+
+/** The afterEach of a file on the double whose tests all record stderr: finishRecordedTest, then expectScriptPlayed. */
+export async function finishScriptedTest(): Promise<void> {
+  await finishRecordedTest(installedDouble());
   expectScriptPlayed();
 }

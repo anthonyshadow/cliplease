@@ -1,6 +1,5 @@
 import { and, asc, eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { z } from "zod";
 import { GET, maxDuration } from "../../src/app/api/cron/expire-requests/route";
 import { db } from "../../src/db/client";
 import { emailLog } from "../../src/db/schema";
@@ -20,22 +19,29 @@ import {
   waitingRequest,
 } from "../helpers/approval-fixtures";
 import { auditsOf } from "../helpers/connect-flow";
+import { CRON_URL, countsOf, cron } from "../helpers/cron";
 import { resetDb } from "../helpers/db";
 import { requestRow } from "../helpers/factories";
 import { AFTER_FAILED, captureLogEvents } from "../helpers/logs";
-import { endingsOf, onlyLicense } from "../helpers/request-outcomes";
+import {
+  endingsOf,
+  movementsOf,
+  onlyLicense,
+} from "../helpers/request-outcomes";
 import type { ScriptedPayments } from "../helpers/scripted-payments";
 import {
   expectInvariant,
   expectScriptPlayed,
   installScriptedPayments,
 } from "../helpers/scripted-suite";
+import { expectPaidOnce } from "../helpers/transfer-fixtures";
 
 // GET /api/cron/expire-requests against the test database (P19; 02 §5.11, §8.4 layer 2, §9.7; 03 §7.10; 07 D26, D34,
 // D47, D57): the bearer first, then one run's passes: the claims stuck for over 10 minutes reconciled from Stripe, the
-// waiting requests past their deadline expired, the failed emails retried, all as the cron, and the totals as JSON. A request whose cancel keeps failing is tried once per run, so a run never spins until its budget. The sweeps
-// are global: each run starts from an empty database. The bearer is built from .env.test's CRON_SECRET and never
-// printed. The payments driver is the scripted double, each PaymentIntent seeded as Stripe has it.
+// waiting requests past their deadline expired, the creator transfers due sent (P19b), the failed emails retried, all as
+// the cron, and the totals as JSON. A request whose cancel keeps failing is tried once per run, so a run never spins
+// until its budget. The sweeps are global: each run starts from an empty database. The bearer is built from .env.test's
+// CRON_SECRET and never printed. The payments driver is the scripted double, each PaymentIntent seeded as Stripe has it.
 
 vi.mock("@/server/payments/registry", async (importOriginal) =>
   (await import("../helpers/scripted-suite")).scriptedRegistry(
@@ -51,8 +57,6 @@ vi.mock("next/server", async (importOriginal) => ({
 
 /** Far under a run's 45 s budget: the run stopped on its own, it didn't spend the budget. */
 const AT_ONCE_MS = 5_000;
-
-const CRON_URL = `${env.APP_URL}/api/cron/expire-requests`;
 
 let scripted: ScriptedPayments;
 let stderr: ReturnType<typeof captureLogEvents> | null = null;
@@ -81,24 +85,6 @@ afterEach(async () => {
   expect(printed).not.toContain(`"${AFTER_FAILED}"`);
   expectScriptPlayed();
 });
-
-/** Vercel Cron's call (02 §9.7): `Authorization: Bearer <CRON_SECRET>`. */
-const cron = () =>
-  GET(
-    new Request(CRON_URL, {
-      headers: { authorization: `Bearer ${env.CRON_SECRET}` },
-    }),
-  );
-
-/** A run's counts by step: every value a count. */
-const COUNTS = z.record(z.string(), z.number().int().nonnegative());
-
-/** A run's answer: 200, never cached, and its counts. */
-async function countsOf(response: Response): Promise<Record<string, number>> {
-  expect(response.status).toBe(200);
-  expect(response.headers.get("cache-control")).toBe("no-store");
-  return COUNTS.parse(await response.json());
-}
 
 /** A run that found nothing to do: every count 0, the counts later prompts add included (one toEqual names them all). */
 function expectNothingDone(counts: Record<string, number>): void {
@@ -209,7 +195,13 @@ describe("GET /api/cron/expire-requests (02 §8.4 layer 2, §9.7; 07 D57)", () =
     await failedEmail(mailed.id, "request-new", 3);
 
     const body = await countsOf(await cron());
-    expect(body).toEqual({ expired: 1, reconciled: 1, emailsSent: 1 });
+    // The stuck request's transfer is sent after the response, not by the sweep: a fresh pending row isn't due (P19b).
+    expect(body).toEqual({
+      expired: 1,
+      reconciled: 1,
+      moneyMovements: 0,
+      emailsSent: 1,
+    });
     await flushAfter();
 
     // The due request: the expire claim, the cancel under its key, then expired with deadline, by the cron.
@@ -263,6 +255,18 @@ describe("GET /api/cron/expire-requests (02 §8.4 layer 2, §9.7; 07 D57)", () =
       status: "sent",
       attempts: 1,
     });
+    // And its creator is paid once, after the response, as the cron (P19b; 07 D47, D75): the license price.
+    const { licensePriceCents } = await requestRow(stuck.id);
+    const paidByCron = {
+      by: "cron",
+      amountCents: licensePriceCents,
+      scripted,
+    } as const;
+    await expectPaidOnce(stuck.id, paidByCron);
+    // Nothing else was approved: no other money movement.
+    for (const { id } of [due, inFlight, mailed]) {
+      expect(await movementsOf(id)).toEqual([]);
+    }
 
     // The claim a minute old is its holder's: untouched, and Stripe isn't asked about it.
     expect(await requestRow(inFlight.id)).toMatchObject({
@@ -291,6 +295,7 @@ describe("GET /api/cron/expire-requests (02 §8.4 layer 2, §9.7; 07 D57)", () =
     expect(scripted.callsOf("cancel")).toHaveLength(1);
     expect(scripted.callsOf("getAuthorization")).toHaveLength(1);
     expect(scripted.callsOf("capture")).toEqual([]);
+    await expectPaidOnce(stuck.id, paidByCron);
     await onlyLicense(stuck.id);
     expect((await requestRow(inFlight.id)).paymentActionAt).toEqual(inFlightAt);
     expect(await emailsOf(mailed.id)).toEqual([

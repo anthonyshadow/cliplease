@@ -24,7 +24,7 @@ export CRON_SECRET="$(grep '^CRON_SECRET=' .env.local | cut -d= -f2-)"   # expec
 curl -i -H "Authorization: Bearer $CRON_SECRET" http://localhost:3000/api/cron/expire-requests
 ```
 
-Without the bearer the route answers 401. With it, it reconciles payment claims stuck for more than 10 minutes, expires the overdue requests and retries the email outbox, then answers 200 with `Cache-Control: no-store` and the counts: `{"expired":…,"reconciled":…,"emailsSent":…}`. Use `-i` to see the status and headers, never `-v`: it prints the request headers, the secret among them.
+Without the bearer the route answers 401. With it, it reconciles payment claims stuck for more than 10 minutes, expires the overdue requests, sends the creator transfers a crash or a retry left pending, and retries the email outbox, then answers 200 with `Cache-Control: no-store` and the counts: `{"expired":…,"reconciled":…,"moneyMovements":…,"emailsSent":…}`. Use `-i` to see the status and headers, never `-v`: it prints the request headers, the secret among them.
 
 ### Force a request overdue
 
