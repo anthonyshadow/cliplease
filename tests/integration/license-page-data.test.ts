@@ -1,23 +1,15 @@
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { db } from "../../src/db/client";
-import {
-  creatorProfile,
-  socialPost,
-  video,
-  videoPosting,
-} from "../../src/db/schema";
-import type { NewCreatorProfile, Video } from "../../src/db/schema/types";
+import { socialPost, video, videoPosting } from "../../src/db/schema";
+import type { Video } from "../../src/db/schema/types";
+import type { PayoutsStatus } from "../../src/lib/domain/values";
 import { MUSIC_DISABLED_USES } from "../../src/lib/videos/rights";
 import {
   getLicensePageData,
   readLicensePageData,
 } from "../../src/server/videos/public";
-import {
-  insertVideoPosting,
-  publishVideo,
-  randomHex,
-} from "../helpers/factories";
+import { insertVideoPosting, publishVideo } from "../helpers/factories";
 import { OBJECT_KEY } from "../helpers/object-key";
 import { postingsOf } from "../helpers/postings";
 import {
@@ -25,6 +17,7 @@ import {
   readyLibraryVideo,
   readyUpload,
 } from "../helpers/ready-videos";
+import { storedPayouts } from "../helpers/transfer-fixtures";
 
 // The license page's data (P15; 03 §7.5; 07 D03, D70, D72, D82, D94) against the test database: a published video gives
 // the page's plain DTO in the creator's currency, every other state nothing (the page 404s), and the buyer's postings
@@ -216,15 +209,14 @@ describe("readLicensePageData", () => {
     const { creator } = await pricedCreator();
     const live = await publishVideo(await readyUpload(creator.id));
     expect((await read(creator.handle, live))?.creator.autoApprove).toBe(false);
-    // An account, so the payouts status can be past not_started (creator_profile_payouts_needs_account).
-    const stripeAccountId = `acct_fake_${randomHex(6)}`;
-    const autoApproveWith = async (
-      set: Pick<NewCreatorProfile, "autoApprove" | "payoutsStatus">,
-    ) => {
-      await db
-        .update(creatorProfile)
-        .set({ stripeAccountId, ...set })
-        .where(eq(creatorProfile.id, creator.id));
+    const autoApproveWith = async ({
+      autoApprove,
+      payoutsStatus,
+    }: {
+      autoApprove: boolean;
+      payoutsStatus: PayoutsStatus;
+    }) => {
+      await storedPayouts(creator.id, payoutsStatus, 0, { autoApprove });
       return (await read(creator.handle, live))?.creator.autoApprove;
     };
 

@@ -75,9 +75,17 @@ export function isTerminal(status: LicenseRequestStatus): boolean {
 /** A request's status as a page names it: a stored one, or 'processing' while a claim is in flight (07 D26). */
 export type DisplayStatus = LicenseRequestStatus | "processing";
 
+/** 07 D81: an auto_approve request that hasn't fallen back to its creator (the server's SQL is autoApproveOpen). */
+export function isAutoApproveOpen(r: {
+  autoApprove: boolean;
+  autoApproveFallbackAt: Date | null;
+}): boolean {
+  return r.autoApprove && r.autoApproveFallbackAt === null;
+}
+
 /**
- * 07 D81: an auto_approve request whose automatic approval may still run — waiting, no fallback, before its deadline; a
- * claim doesn't change it (the system's capture reads Processing… too).
+ * 07 D81: an auto_approve request whose automatic approval may still run — waiting, auto-approve open, before its
+ * deadline; a claim doesn't change it (the system's capture reads Processing… too).
  */
 export function isAutoApproving(r: {
   status: LicenseRequestStatus;
@@ -85,12 +93,7 @@ export function isAutoApproving(r: {
   autoApproveFallbackAt: Date | null;
   overdue: boolean;
 }): boolean {
-  return (
-    r.status === "awaiting_approval" &&
-    r.autoApprove &&
-    r.autoApproveFallbackAt === null &&
-    !r.overdue
-  );
+  return r.status === "awaiting_approval" && isAutoApproveOpen(r) && !r.overdue;
 }
 
 /**

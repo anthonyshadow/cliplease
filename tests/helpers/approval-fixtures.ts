@@ -2,7 +2,9 @@
 // awaiting_approval request the fake driver resolves (`pi_fake_<its id>`), with a real sealed buyer key so its emails
 // compose. Built by the factories and one authorized transition, as markAuthorized commits it. P19 adds the clocks:
 // a request past its deadline (overdue) and a claim stuck since minutes ago (claimedMinutesAgo). P19c adds
-// auto-approve's: a request authorized minutes ago (authorizedMinutesAgo), as its retries and give-up read it.
+// auto-approve's: a request authorized minutes ago (authorizedMinutesAgo), as its retries and give-up read it, and the
+// auto_approve request its tests build (AUTO_REQUEST, autoWaitingRequest) on a creator's video
+// (approvingCreatorWithVideo).
 import { randomUUID } from "node:crypto";
 import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { db } from "../../src/db/client";
@@ -55,6 +57,14 @@ export async function approvingCreator(
 export const approvableVideo = async (creatorId: string): Promise<Video> =>
   publishVideo(await readyUpload(creatorId));
 
+/** approvingCreator (`overrides` go into the profile) and their approvableVideo (P19c). */
+export async function approvingCreatorWithVideo(
+  overrides: Partial<NewCreatorProfile> = {},
+): Promise<{ creator: CreatorProfile; actor: Actor; live: Video }> {
+  const approver = await approvingCreator(overrides);
+  return { ...approver, live: await approvableVideo(approver.creator.id) };
+}
+
 /** The J4.7 quote (01 J4.7): Paid social ads · 1 year · Worldwide at CA$150, CA$1,575.00 + CA$157.50 = CA$1,732.50. */
 export const PAID_SOCIAL_YEAR_WORLDWIDE = {
   useKey: "paid_social",
@@ -69,6 +79,12 @@ export const PAID_SOCIAL_YEAR_WORLDWIDE = {
   platformFeeCents: 15750,
   amountTotalCents: 173250,
 } as const satisfies Partial<NewLicenseRequest>;
+
+/** An auto_approve request at the J4.7 quote (P19c): CA$1,575.00 + CA$157.50 = CA$1,732.50. */
+export const AUTO_REQUEST = {
+  autoApprove: true,
+  ...PAID_SOCIAL_YEAR_WORLDWIDE,
+} satisfies Partial<NewLicenseRequest>;
 
 /** A checkout_pending request on `target` with the buyer's key sealed for real and its fake session. */
 export async function pendingCheckoutRequest(
@@ -178,4 +194,18 @@ export async function authorizedMinutesAgo(
   if (moved.length === 0) {
     throw new Error("authorizedMinutesAgo: unknown request");
   }
+}
+
+/**
+ * An AUTO_REQUEST waiting on `target` (waitingRequest), its authorization backdated `minutesAgo` when given
+ * (authorizedMinutesAgo; `row` is as T2 left it). T2 is applied directly, so nothing is scheduled: only the run or the
+ * retry under test reaches it (P19c).
+ */
+export async function autoWaitingRequest(
+  target: Pick<Video, "id" | "creatorId">,
+  minutesAgo?: number,
+): Promise<{ row: LicenseRequest; token: string }> {
+  const { row, token } = await waitingRequest(target, AUTO_REQUEST);
+  if (minutesAgo !== undefined) await authorizedMinutesAgo(row.id, minutesAgo);
+  return { row, token };
 }

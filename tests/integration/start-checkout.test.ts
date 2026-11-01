@@ -38,7 +38,6 @@ import {
   insertLicenseRequest,
   insertRateCard,
   publishVideo,
-  randomHex,
 } from "../helpers/factories";
 import { captureLogEvents } from "../helpers/logs";
 import {
@@ -46,6 +45,7 @@ import {
   readyLibraryVideo,
   readyUpload,
 } from "../helpers/ready-videos";
+import { storedPayouts } from "../helpers/transfer-fixtures";
 
 // startCheckout's domain half (P16a; 02 §5.7; 03 T1; 07 D24, D31, D74, D79, D81, D82, D84, D94, D95; owner answers
 // Q-119 a, Q-120 a) on the fake driver and the test database: the server prices every request itself, one row per
@@ -458,17 +458,11 @@ describe("createLicenseRequest: snapshots (07 D81, D84)", () => {
 
   it("snapshots the creator's approval window and auto-approve; a later change leaves the request as it was", async () => {
     const { creator, live } = await liveVideo();
-    // Auto-approve snapshots on only while the stored payouts status is active (owner answer Q-155), which needs an
-    // account (creator_profile_payouts_needs_account).
-    await db
-      .update(creatorProfile)
-      .set({
-        approvalWindowHours: 48,
-        autoApprove: true,
-        stripeAccountId: `acct_fake_${randomHex(6)}`,
-        payoutsStatus: "active",
-      })
-      .where(eq(creatorProfile.id, creator.id));
+    // Auto-approve snapshots on only while the stored payouts status is active (owner answer Q-155).
+    await storedPayouts(creator.id, "active", 0, {
+      approvalWindowHours: 48,
+      autoApprove: true,
+    });
     okUrl(await createLicenseRequest(input(live.id), CTX));
     await db
       .update(creatorProfile)
@@ -482,14 +476,7 @@ describe("createLicenseRequest: snapshots (07 D81, D84)", () => {
 
   it("snapshots auto-approve off while the creator's payouts aren't active, though the setting is on (owner answer Q-155)", async () => {
     const { creator, live } = await liveVideo();
-    await db
-      .update(creatorProfile)
-      .set({
-        autoApprove: true,
-        stripeAccountId: `acct_fake_${randomHex(6)}`,
-        payoutsStatus: "restricted",
-      })
-      .where(eq(creatorProfile.id, creator.id));
+    await storedPayouts(creator.id, "restricted", 0, { autoApprove: true });
     okUrl(await createLicenseRequest(input(live.id), CTX));
     expect(await onlyRequest(live.id)).toMatchObject({ autoApprove: false });
   });

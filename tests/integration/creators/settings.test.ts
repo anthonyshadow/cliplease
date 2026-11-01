@@ -8,10 +8,8 @@ import {
 } from "../../../src/app/(dashboard)/dashboard/settings/actions";
 import { db } from "../../../src/db/client";
 import { auditEvent, creatorProfile, user } from "../../../src/db/schema";
-import type { PayoutsStatus } from "../../../src/lib/domain/values";
 import { REQUESTS_SETTINGS_COPY } from "../../../src/lib/payouts";
 import { GENERIC_ERROR_MESSAGE } from "../../../src/lib/result";
-import { MINUTE_MS } from "../../../src/lib/time";
 import { DISPLAY_NAME_COPY } from "../../../src/lib/validation/display-name";
 import { requireUser } from "../../../src/server/auth/session";
 import {
@@ -27,8 +25,9 @@ import {
   newCreatorEmail,
   signInWithOtp,
 } from "../../helpers/auth";
-import { randomHex, uniqueTestHandle } from "../../helpers/factories";
+import { uniqueTestHandle } from "../../helpers/factories";
 import { captureLogEvents } from "../../helpers/logs";
+import { storedPayouts } from "../../helpers/transfer-fixtures";
 
 // Settings (05 §6.11, 07 D20, D84): the display-name and time-zone actions and updateTimeZone. Outside a request
 // revalidatePath has no store to clear, so it is a spy here. P19c: Requests → Save and updateCreatorSettings, the
@@ -72,29 +71,6 @@ async function updates(creatorId: string) {
     .where(eq(auditEvent.entityId, creatorId))
     .orderBy(asc(auditEvent.createdAt));
   return rows.map((row) => row.data).filter((data) => "fields" in data);
-}
-
-/**
- * The creator's stored auto-approve, and a connected account whose payouts read `payoutsStatus` `age` minutes ago (0 is
- * fresh: no new reading; over 10 is due one).
- */
-async function storedSettings(
-  creatorId: string,
-  {
-    payoutsStatus,
-    age = 0,
-    autoApprove = false,
-  }: { payoutsStatus: PayoutsStatus; age?: number; autoApprove?: boolean },
-) {
-  await db
-    .update(creatorProfile)
-    .set({
-      stripeAccountId: `acct_fake_${randomHex(6)}`,
-      payoutsStatus,
-      payoutsStatusSyncedAt: new Date(Date.now() - age * MINUTE_MS),
-      autoApprove,
-    })
-    .where(eq(creatorProfile.id, creatorId));
 }
 
 /** What Requests → Save posts: the chosen tile's hours and the Switch's hidden input. */
@@ -232,7 +208,7 @@ describe("Settings actions", () => {
 describe("Requests → Save (07 D81; owner answer Q-153)", () => {
   it("saves the window and auto-approve with payouts active, in one audit, and refreshes Settings", async () => {
     const { creatorId } = await signedInCreator();
-    await storedSettings(creatorId, { payoutsStatus: "active" });
+    await storedPayouts(creatorId, "active");
 
     expect(await updateCreatorSettings(null, requestsForm("48", "on"))).toEqual(
       SAVED,
@@ -291,7 +267,7 @@ describe("Requests → Save (07 D81; owner answer Q-153)", () => {
     "refuses turning auto-approve on while payouts are %s, writing nothing",
     async (payoutsStatus) => {
       const { creatorId } = await signedInCreator();
-      await storedSettings(creatorId, { payoutsStatus });
+      await storedPayouts(creatorId, payoutsStatus);
       const before = await profile(creatorId);
 
       expect(
@@ -314,10 +290,7 @@ describe("Requests → Save (07 D81; owner answer Q-153)", () => {
 
   it("keeps auto-approve on, or turns it off, whatever the payouts status: only turning it on needs payouts active", async () => {
     const { creatorId } = await signedInCreator();
-    await storedSettings(creatorId, {
-      payoutsStatus: "pending",
-      autoApprove: true,
-    });
+    await storedPayouts(creatorId, "pending", 0, { autoApprove: true });
 
     expect(await updateCreatorSettings(null, requestsForm("24", "on"))).toEqual(
       SAVED,
@@ -335,7 +308,7 @@ describe("Requests → Save (07 D81; owner answer Q-153)", () => {
   it("refuses turning auto-approve on when the payouts reading fails, with the generic message and one warn line", async () => {
     const { creatorId } = await signedInCreator();
     // A stale 'active' is never trusted: turning auto-approve on reads it again.
-    await storedSettings(creatorId, { payoutsStatus: "active", age: 11 });
+    await storedPayouts(creatorId, "active", 11);
     const before = await profile(creatorId);
     const fetchStatus = vi
       .spyOn(paymentsDriver("cad"), "fetchPayoutsStatus")
@@ -365,11 +338,7 @@ describe("Requests → Save (07 D81; owner answer Q-153)", () => {
 
   it("never asks Stripe for a save that keeps auto-approve on, turns it off or changes only the window", async () => {
     const { creatorId } = await signedInCreator();
-    await storedSettings(creatorId, {
-      payoutsStatus: "active",
-      age: 11,
-      autoApprove: true,
-    });
+    await storedPayouts(creatorId, "active", 11, { autoApprove: true });
     const fetchStatus = vi.spyOn(paymentsDriver("cad"), "fetchPayoutsStatus");
 
     for (const form of [

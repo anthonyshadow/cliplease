@@ -122,6 +122,23 @@ function requestIn(
   return insertLicenseRequest(live, { status, ...held, ...overrides });
 }
 
+/** requestIn's request with a real buyer key, for /r's read: its row and the key's token. */
+async function withKey(
+  live: Video,
+  status: LicenseRequest["status"],
+  overrides: Partial<NewLicenseRequest> = {},
+) {
+  const id = randomUUID();
+  const key = generateBuyerToken(id);
+  const row = await requestIn(live, status, {
+    id,
+    buyerTokenHash: key.hash,
+    buyerTokenEnc: key.enc,
+    ...overrides,
+  });
+  return { row, token: key.token };
+}
+
 const inHours = (h: number) => new Date(Date.now() + h * HOUR_MS);
 
 describe("listInbox (03 §7.1)", () => {
@@ -394,17 +411,6 @@ describe("waitingSummary (05 §6.3)", () => {
 });
 
 describe("getBuyerStatus (03 §7.6)", () => {
-  async function withKey(live: Video, status: LicenseRequest["status"]) {
-    const id = randomUUID();
-    const key = generateBuyerToken(id);
-    const row = await requestIn(live, status, {
-      id,
-      buyerTokenHash: key.hash,
-      buyerTokenEnc: key.enc,
-    });
-    return { row, token: key.token };
-  }
-
   it("reads the request a key opens, and nothing for a wrong key", async () => {
     const { creator, live } = await creatorWithVideo();
     const { row, token } = await withKey(live, "awaiting_approval");
@@ -439,18 +445,13 @@ describe("getBuyerStatus (03 §7.6)", () => {
     expect(
       (await getBuyerStatus(approved.row.id, approved.token))?.licenseCode,
     ).toBe(issued.code);
-    const id = randomUUID();
-    const key = generateBuyerToken(id);
-    await requestIn(live, "awaiting_approval", {
-      id,
-      buyerTokenHash: key.hash,
-      buyerTokenEnc: key.enc,
+    const claimed = await withKey(live, "awaiting_approval", {
       paymentAction: "decline",
       paymentActionAt: new Date(),
     });
-    expect((await getBuyerStatus(id, key.token))?.displayStatus).toBe(
-      "processing",
-    );
+    expect(
+      (await getBuyerStatus(claimed.row.id, claimed.token))?.displayStatus,
+    ).toBe("processing");
   });
 
   it("never carries the creator transfer: the payout line is the creator's alone (P19b)", async () => {
@@ -474,13 +475,8 @@ describe("getBuyerStatus (03 §7.6)", () => {
 describe("an overdue request (owner answer Q-142 a; 07 D25, D26; 02 §4.4 rule 3)", () => {
   it("reads as Expired while it waits unclaimed past its deadline on the database's clock, stored waiting: the reads expire nothing", async () => {
     const { creator, live } = await creatorWithVideo();
-    const id = randomUUID();
-    const key = generateBuyerToken(id);
-    await requestIn(live, "awaiting_approval", {
-      id,
-      buyerTokenHash: key.hash,
-      buyerTokenEnc: key.enc,
-    });
+    const { row, token } = await withKey(live, "awaiting_approval");
+    const { id } = row;
     await overdue(id);
     const readsExpired = {
       status: "awaiting_approval",
@@ -493,7 +489,7 @@ describe("an overdue request (owner answer Q-142 a; 07 D25, D26; 02 §4.4 rule 3
     expect(await getRequestForCreator(creator.id, id)).toMatchObject(
       readsExpired,
     );
-    expect(await getBuyerStatus(id, key.token)).toMatchObject(readsExpired);
+    expect(await getBuyerStatus(id, token)).toMatchObject(readsExpired);
     // Pure reads: only the lazy layers and the cron end it, once Stripe has released the hold.
     expect(await requestRow(id)).toMatchObject({
       status: "awaiting_approval",
@@ -537,23 +533,12 @@ describe("an overdue request (owner answer Q-142 a; 07 D25, D26; 02 §4.4 rule 3
 });
 
 describe("an auto-approve request (P19c; 07 D81; owner answer Q-155)", () => {
-  /** An auto-approve request on `live` in `status` (requestIn's), with a real buyer key for /r's read. */
-  async function autoRequest(
+  /** An auto-approve request on `live` in `status`, with a real buyer key for /r's read (withKey's). */
+  const autoRequest = (
     live: Video,
     status: LicenseRequest["status"],
     overrides: Partial<NewLicenseRequest> = {},
-  ) {
-    const id = randomUUID();
-    const key = generateBuyerToken(id);
-    const row = await requestIn(live, status, {
-      id,
-      buyerTokenHash: key.hash,
-      buyerTokenEnc: key.enc,
-      autoApprove: true,
-      ...overrides,
-    });
-    return { row, token: key.token };
-  }
+  ) => withKey(live, status, { autoApprove: true, ...overrides });
 
   it("reads Processing… for the creator and the buyer while its automatic approval may still run, unclaimed: no buttons, no deadline", async () => {
     const { creator, live } = await creatorWithVideo();

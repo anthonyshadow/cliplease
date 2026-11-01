@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode, useId } from "react";
+import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { TERTIARY } from "@/components/ui/primary-width";
 import { Switch } from "@/components/ui/switch";
@@ -46,23 +46,18 @@ export function ShowLinkSwitch({
   name: string;
   value?: boolean;
 }) {
-  const noteId = useId();
+  // One element for the parent's layout: the Switch with its note, and the hidden field.
   return (
-    <div className="flex flex-col gap-1">
+    <div>
       <Switch
         label={POSTINGS_COPY.showLink}
         checked={checked}
         onCheckedChange={onCheckedChange}
-        aria-describedby={unlisted ? noteId : undefined}
+        helper={unlisted ? POSTINGS_COPY.unlistedNote : undefined}
       />
       {value === undefined ? null : (
         <input type="hidden" name={name} value={switchFieldValue(value)} />
       )}
-      {unlisted ? (
-        <p id={noteId} className="text-footnote text-ink-2">
-          {POSTINGS_COPY.unlistedNote}
-        </p>
-      ) : null}
     </div>
   );
 }

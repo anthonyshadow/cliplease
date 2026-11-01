@@ -79,13 +79,8 @@ export function RequestsSettingsForm({
         label={COPY.autoApprove}
         checked={on}
         onCheckedChange={(next) => {
-          if (locked) return;
           setOn(next);
           setRefusal(undefined);
-        }}
-        // Radix ignores aria-disabled: the press is stopped here and above.
-        onClick={(event) => {
-          if (locked) event.preventDefault();
         }}
         aria-disabled={locked || undefined}
         helper={locked ? COPY.autoApproveLocked : COPY.autoApproveHelper}

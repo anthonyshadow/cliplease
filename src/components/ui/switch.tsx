@@ -18,15 +18,23 @@ export type SwitchProps = Omit<
 
 /**
  * 04 §9.7's toggle alone: 51 × 31 track; off = fill with a hairline border, on = action. For a layout that places its
- * own `<label htmlFor>` (RateRow); everywhere else use Switch.
+ * own `<label htmlFor>` (RateRow); everywhere else use Switch. `aria-disabled` locks it while it stays focusable and
+ * described: Radix would still toggle it, so its presses stop here.
  */
-export function SwitchControl(
-  props: Omit<ComponentProps<typeof SwitchPrimitive.Root>, "children">,
-) {
+export function SwitchControl({
+  onClick,
+  ...props
+}: Omit<ComponentProps<typeof SwitchPrimitive.Root>, "children">) {
+  const locked =
+    props["aria-disabled"] === true || props["aria-disabled"] === "true";
   return (
     <SwitchPrimitive.Root
       className="hit-44 inline-flex h-[31px] w-[51px] shrink-0 items-center rounded-full border border-hairline-strong bg-fill p-0.5 transition-colors duration-200 ease-out data-[state=checked]:border-transparent data-[state=checked]:bg-action disabled:cursor-not-allowed disabled:border-hairline aria-disabled:cursor-not-allowed aria-disabled:border-hairline"
       {...props}
+      onClick={(event) => {
+        if (locked) event.preventDefault();
+        else onClick?.(event);
+      }}
     >
       {/* The thumb keeps a transparent border so it stays visible in forced-colors mode (04 §7). */}
       <SwitchPrimitive.Thumb className="block size-[25px] rounded-full border border-transparent bg-surface transition-transform duration-200 ease-out data-[state=checked]:translate-x-5 data-[state=checked]:bg-action-ink" />

@@ -96,10 +96,10 @@ export default async function RequestStatusPage(
       total={formatMoney(request.amountTotalCents, request.currency)}
       expiresAt={request.expiresAt}
     >
-      {autoApproving ? <AutoRefresh burst /> : null}
+      {/* One refresher: a burst while auto-approve runs, the 30 s pace while waiting; a flip between them restarts it. */}
+      {waiting || autoApproving ? <AutoRefresh burst={autoApproving} /> : null}
       {waiting ? (
         <>
-          <AutoRefresh />
           {request.displayStatus === "processing" ? (
             <StatusPill>{COPY.processing}</StatusPill>
           ) : request.expiresAt ? (

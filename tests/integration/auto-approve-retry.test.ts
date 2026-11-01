@@ -2,8 +2,7 @@ import { eq, sql } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fakeCheckoutPay } from "../../src/app/dev/fake-checkout/[requestId]/actions";
 import { db } from "../../src/db/client";
-import { emailLog, licenseRequest } from "../../src/db/schema";
-import type { NewCreatorProfile, Video } from "../../src/db/schema/types";
+import { licenseRequest } from "../../src/db/schema";
 import {
   autoApproveRequest,
   retryAutoApprovals,
@@ -23,9 +22,10 @@ import {
   runQueuedAfter,
 } from "../helpers/after";
 import {
-  approvableVideo,
-  approvingCreator,
+  AUTO_REQUEST,
+  approvingCreatorWithVideo,
   authorizedMinutesAgo,
+  autoWaitingRequest,
   claimedMinutesAgo,
   overdue,
   PAID_SOCIAL_YEAR_WORLDWIDE,
@@ -36,7 +36,9 @@ import { auditsOf } from "../helpers/connect-flow";
 import { insertLicense, requestRow } from "../helpers/factories";
 import { AFTER_FAILED, recordStderr } from "../helpers/logs";
 import {
+  emailTemplatesOf,
   endingsOf,
+  fallbacksOf,
   licensesOf,
   movementsOf,
   onlyLicense,
@@ -94,37 +96,12 @@ beforeEach(() => {
 });
 afterEach(finishScriptedTest);
 
-/** A creator who can approve (`overrides` go into the profile) and their published video. */
-async function autoCreator(overrides: Partial<NewCreatorProfile> = {}) {
-  const { creator } = await approvingCreator(overrides);
-  return { creator, live: await approvableVideo(creator.id) };
-}
-
-/**
- * An auto_approve request waiting on `live` at J4.7's quote, authorized `minutes` ago on the database's clock. T2 is
- * applied directly, so nothing is scheduled: only the retry under test reaches it.
- */
-async function autoRequest(live: Video, minutes: number) {
-  const { row, token } = await waitingRequest(live, {
-    autoApprove: true,
-    ...PAID_SOCIAL_YEAR_WORLDWIDE,
-  });
-  await authorizedMinutesAgo(row.id, minutes);
-  return { id: row.id, token };
-}
-
 /** Request `id` handed to its creator, as a fallback leaves the row (its email and audit aside). */
-async function fellBack(id: string): Promise<void> {
+async function markFellBack(id: string): Promise<void> {
   await db
     .update(licenseRequest)
     .set({ autoApproveFallbackAt: sql`now()` })
     .where(eq(licenseRequest.id, id));
-}
-
-/** A mark in the double's log: the returned function gives the methods called since, in order. */
-function callsFromNow(): () => string[] {
-  const from = scripted.log.length;
-  return () => scripted.log.slice(from).map(({ method }) => method);
 }
 
 /** What a guard or Approve asks Stripe: the payouts reading, the hold, the capture. */
@@ -134,27 +111,14 @@ const GUARD_CALLS: readonly string[] = [
   "capture",
 ];
 
-const fallbacksOf = (id: string) =>
-  auditsOf(id, "license_request.auto_approve_fallback");
-
 /** A retry's fallback 10 minutes after authorization, as audited (AD-16). */
-const GAVE_UP = {
+const GAVE_UP_AUDIT = {
   data: { reason: "gave_up", source: "auto_approve" },
   actorType: "system",
 };
 
-/** The request's email templates, in order: request-new and request-received included (outcomeEmails drops them). */
-async function emailTemplatesOf(requestId: string): Promise<string[]> {
-  const rows = await db
-    .select({ template: emailLog.template })
-    .from(emailLog)
-    .where(eq(emailLog.entityId, requestId))
-    .orderBy(emailLog.template);
-  return rows.map((r) => r.template);
-}
-
 /** The ending an automatic approval writes: T5 as the auto-approve system (03 T4). */
-const AUTO_APPROVED = {
+const AUTO_APPROVED_AUDIT = {
   data: {
     from: "awaiting_approval",
     to: "approved",
@@ -166,27 +130,27 @@ const AUTO_APPROVED = {
 
 describe("retryAutoApprovals' candidates (03 §7.10; AD-17)", () => {
   it("takes only waiting auto requests authorized 2 minutes ago or more, with no fallback, no claim and time left, oldest first", async () => {
-    const { creator, live } = await autoCreator();
-    const e1 = await autoRequest(live, 5);
-    const e2 = await autoRequest(live, 3);
+    const { creator, live } = await approvingCreatorWithVideo();
+    const { row: e1 } = await autoWaitingRequest(live, 5);
+    const { row: e2 } = await autoWaitingRequest(live, 3);
     const { row: manual } = await waitingRequest(
       live,
       PAID_SOCIAL_YEAR_WORLDWIDE,
     );
     await authorizedMinutesAgo(manual.id, 5);
-    const fallen = await autoRequest(live, 5);
-    await fellBack(fallen.id);
-    const claimed = await autoRequest(live, 5);
+    const { row: fallen } = await autoWaitingRequest(live, 5);
+    await markFellBack(fallen.id);
+    const { row: claimed } = await autoWaitingRequest(live, 5);
     expect(
       await claimPaymentAction(claimed.id, "capture", {
         autoApproveOnly: true,
       }),
     ).not.toBeNull();
-    const late = await autoRequest(live, 5);
+    const { row: late } = await autoWaitingRequest(live, 5);
     await overdue(late.id);
-    const recent = await autoRequest(live, 1);
-    const other = await autoCreator();
-    const theirs = await autoRequest(other.live, 3);
+    const { row: recent } = await autoWaitingRequest(live, 1);
+    const other = await approvingCreatorWithVideo();
+    const { row: theirs } = await autoWaitingRequest(other.live, 3);
     const others = [
       manual.id,
       fallen.id,
@@ -209,7 +173,7 @@ describe("retryAutoApprovals' candidates (03 §7.10; AD-17)", () => {
         status: "approved",
         autoApproveFallbackAt: null,
       });
-      expect(await endingsOf(id)).toEqual([AUTO_APPROVED]);
+      expect(await endingsOf(id)).toEqual([AUTO_APPROVED_AUDIT]);
     }
     expect(await Promise.all(others.map((id) => requestRow(id)))).toEqual(
       before,
@@ -222,9 +186,9 @@ describe("retryAutoApprovals' candidates (03 §7.10; AD-17)", () => {
   });
 
   it("takes no more than `limit`: the oldest authorization", async () => {
-    const { creator, live } = await autoCreator();
-    const older = await autoRequest(live, 4);
-    const newer = await autoRequest(live, 3);
+    const { creator, live } = await approvingCreatorWithVideo();
+    const { row: older } = await autoWaitingRequest(live, 4);
+    const { row: newer } = await autoWaitingRequest(live, 3);
     const untouched = await requestRow(newer.id);
     expect(await retryAutoApprovals({ limit: 1, creatorId: creator.id })).toBe(
       1,
@@ -235,10 +199,10 @@ describe("retryAutoApprovals' candidates (03 §7.10; AD-17)", () => {
   });
 
   it("starts no request at or after stopAt", async () => {
-    const { creator, live } = await autoCreator();
-    const { id } = await autoRequest(live, 3);
+    const { creator, live } = await approvingCreatorWithVideo();
+    const { id } = (await autoWaitingRequest(live, 3)).row;
     const untouched = await requestRow(id);
-    const calls = callsFromNow();
+    const calls = scripted.callsFromNow();
     expect(
       await retryAutoApprovals({
         limit: 50,
@@ -251,9 +215,9 @@ describe("retryAutoApprovals' candidates (03 §7.10; AD-17)", () => {
   });
 
   it("with requestId, takes only that request, however old the others (/r's retry)", async () => {
-    const { live } = await autoCreator();
-    const older = await autoRequest(live, 5);
-    const target = await autoRequest(live, 3);
+    const { live } = await approvingCreatorWithVideo();
+    const { row: older } = await autoWaitingRequest(live, 5);
+    const { row: target } = await autoWaitingRequest(live, 3);
     const untouched = await requestRow(older.id);
     expect(await retryAutoApprovals({ requestId: target.id, limit: 1 })).toBe(
       1,
@@ -267,11 +231,11 @@ describe("retryAutoApprovals' candidates (03 §7.10; AD-17)", () => {
 describe("the give-up read first (owner answer Q-154; CC-01)", () => {
   it("falls back a request first reached 10 minutes or more after authorization with gave_up: no guard, no Stripe call", async () => {
     // A stale payouts reading: a guard would have asked Stripe for a new one.
-    const { creator, live } = await autoCreator({
+    const { creator, live } = await approvingCreatorWithVideo({
       payoutsStatusSyncedAt: minutesAgo(11),
     });
-    const { id } = await autoRequest(live, 11);
-    const calls = callsFromNow();
+    const { id } = (await autoWaitingRequest(live, 11)).row;
+    const calls = scripted.callsFromNow();
     expect(await retryAutoApprovals({ limit: 50, creatorId: creator.id })).toBe(
       1,
     );
@@ -281,7 +245,7 @@ describe("the give-up read first (owner answer Q-154; CC-01)", () => {
       stripeAttempt: 0,
       autoApproveFallbackAt: expect.any(Date),
     });
-    expect(await fallbacksOf(id)).toEqual([GAVE_UP]);
+    expect(await fallbacksOf(id)).toEqual([GAVE_UP_AUDIT]);
     expect(await emailTemplatesOf(id)).toEqual([
       "request-new",
       "request-received",
@@ -295,11 +259,11 @@ describe("the give-up read first (owner answer Q-154; CC-01)", () => {
   });
 
   it("attempts one reached at 9 minutes: the guards, then Approve as the system", async () => {
-    const { creator, live } = await autoCreator({
+    const { creator, live } = await approvingCreatorWithVideo({
       payoutsStatusSyncedAt: minutesAgo(11),
     });
-    const { id } = await autoRequest(live, 9);
-    const calls = callsFromNow();
+    const { id } = (await autoWaitingRequest(live, 9)).row;
+    const calls = scripted.callsFromNow();
     expect(await retryAutoApprovals({ limit: 50, creatorId: creator.id })).toBe(
       1,
     );
@@ -307,7 +271,7 @@ describe("the give-up read first (owner answer Q-154; CC-01)", () => {
       status: "approved",
       autoApproveFallbackAt: null,
     });
-    expect(await endingsOf(id)).toEqual([AUTO_APPROVED]);
+    expect(await endingsOf(id)).toEqual([AUTO_APPROVED_AUDIT]);
     expect(await fallbacksOf(id)).toEqual([]);
     await flushAfter();
     expect(calls().filter((method) => GUARD_CALLS.includes(method))).toEqual([
@@ -325,9 +289,9 @@ describe("the give-up read first (owner answer Q-154; CC-01)", () => {
 
 describe("what a retry doesn't count", () => {
   it("counts neither a transient capture ('retry') nor a hold Stripe already released ('skipped', AA-12)", async () => {
-    const { creator, live } = await autoCreator();
-    const transient = await autoRequest(live, 4);
-    const released = await autoRequest(live, 3);
+    const { creator, live } = await approvingCreatorWithVideo();
+    const { row: transient } = await autoWaitingRequest(live, 4);
+    const { row: released } = await autoWaitingRequest(live, 3);
     scripted.next("capture", "transient");
     await scripted.movePi(`pi_fake_${released.id}`, "canceled");
     expect(await retryAutoApprovals({ limit: 50, creatorId: creator.id })).toBe(
@@ -367,10 +331,10 @@ describe("what a retry doesn't count", () => {
 
 describe("the creator's lazy retry (owner answer Q-156; AD-19)", () => {
   it("the Inbox retries its creator's auto requests after the response, and nobody else's", async () => {
-    const x = await autoCreator();
-    const y = await autoCreator();
-    const mine = await autoRequest(x.live, 3);
-    const theirs = await autoRequest(y.live, 3);
+    const x = await approvingCreatorWithVideo();
+    const y = await approvingCreatorWithVideo();
+    const { row: mine } = await autoWaitingRequest(x.live, 3);
+    const { row: theirs } = await autoWaitingRequest(y.live, 3);
     const untouched = await requestRow(theirs.id);
     queueAfter();
     await settleCreatorRequests({ creatorId: x.creator.id });
@@ -387,11 +351,11 @@ describe("the creator's lazy retry (owner answer Q-156; AD-19)", () => {
   });
 
   it("the request page retries only its request, and only the creator's own", async () => {
-    const x = await autoCreator();
-    const y = await autoCreator();
-    const page = await autoRequest(x.live, 3);
-    const sibling = await autoRequest(x.live, 3);
-    const theirs = await autoRequest(y.live, 3);
+    const x = await approvingCreatorWithVideo();
+    const y = await approvingCreatorWithVideo();
+    const { row: page } = await autoWaitingRequest(x.live, 3);
+    const { row: sibling } = await autoWaitingRequest(x.live, 3);
+    const { row: theirs } = await autoWaitingRequest(y.live, 3);
     const rest = [sibling.id, theirs.id];
     const untouched = await Promise.all(rest.map((id) => requestRow(id)));
     queueAfter();
@@ -415,20 +379,21 @@ describe("the creator's lazy retry (owner answer Q-156; AD-19)", () => {
 
 describe("the buyer's lazy retry on /r (owner answer Q-156; AD-19)", () => {
   it("falls back a request reached 10 minutes after authorization: one request-new, then /r shows it waiting", async () => {
-    const { live } = await autoCreator({
+    const { live } = await approvingCreatorWithVideo({
       payoutsStatusSyncedAt: minutesAgo(11),
     });
-    const { id, token } = await autoRequest(live, 11);
+    const { row, token } = await autoWaitingRequest(live, 11);
+    const { id } = row;
     queueAfter();
     expect(await getBuyerRequest(id, token)).toMatchObject({
       status: "awaiting_approval",
       displayStatus: "processing",
       autoApproving: true,
     });
-    const calls = callsFromNow();
+    const calls = scripted.callsFromNow();
     await runQueuedAfter();
     expect(calls()).toEqual([]);
-    expect(await fallbacksOf(id)).toEqual([GAVE_UP]);
+    expect(await fallbacksOf(id)).toEqual([GAVE_UP_AUDIT]);
     expect(await emailTemplatesOf(id)).toEqual([
       "request-new",
       "request-received",
@@ -443,8 +408,9 @@ describe("the buyer's lazy retry on /r (owner answer Q-156; AD-19)", () => {
   });
 
   it("approves one reached 3 minutes after authorization", async () => {
-    const { live } = await autoCreator();
-    const { id, token } = await autoRequest(live, 3);
+    const { live } = await approvingCreatorWithVideo();
+    const { row, token } = await autoWaitingRequest(live, 3);
+    const { id } = row;
     queueAfter();
     expect(await getBuyerRequest(id, token)).toMatchObject({
       displayStatus: "processing",
@@ -466,15 +432,16 @@ describe("the buyer's lazy retry on /r (owner answer Q-156; AD-19)", () => {
   });
 
   it("leaves one authorized a minute ago to the run after T2: the 2-minute floor", async () => {
-    const { live } = await autoCreator();
-    const { id, token } = await autoRequest(live, 1);
+    const { live } = await approvingCreatorWithVideo();
+    const { row, token } = await autoWaitingRequest(live, 1);
+    const { id } = row;
     const untouched = await requestRow(id);
     queueAfter();
     expect(await getBuyerRequest(id, token)).toMatchObject({
       displayStatus: "processing",
       autoApproving: true,
     });
-    const calls = callsFromNow();
+    const calls = scripted.callsFromNow();
     await runQueuedAfter();
     expect(await requestRow(id)).toEqual(untouched);
     expect(calls()).toEqual([]);
@@ -483,13 +450,13 @@ describe("the buyer's lazy retry on /r (owner answer Q-156; AD-19)", () => {
 
 describe("auto claims and captures that don't finish (07 D26, D34; AD-33)", () => {
   it("a stuck auto claim is the stuck-claim reconcile's: no retry while it holds, then a capture under a new key", async () => {
-    const { creator, live } = await autoCreator();
-    const { id } = await autoRequest(live, 3);
+    const { creator, live } = await approvingCreatorWithVideo();
+    const { id } = (await autoWaitingRequest(live, 3)).row;
     expect(
       await claimPaymentAction(id, "capture", { autoApproveOnly: true }),
     ).not.toBeNull();
     await claimedMinutesAgo(id, 3);
-    const calls = callsFromNow();
+    const calls = scripted.callsFromNow();
     expect(await retryAutoApprovals({ limit: 50, creatorId: creator.id })).toBe(
       0,
     );
@@ -519,8 +486,8 @@ describe("auto claims and captures that don't finish (07 D26, D34; AD-33)", () =
   });
 
   it("a capture Stripe refuses for good ends capture_failed under T7: skipped, no fallback, nobody emailed", async () => {
-    const { creator, live } = await autoCreator();
-    const { id } = await autoRequest(live, 3);
+    const { creator, live } = await approvingCreatorWithVideo();
+    const { id } = (await autoWaitingRequest(live, 3)).row;
     scripted.next("capture", { kind: "permanent", code: "card_declined" });
     expect(await autoApproveRequest(id)).toBe("skipped");
     expect(await requestRow(id)).toMatchObject({
@@ -557,9 +524,9 @@ describe("auto claims and captures that don't finish (07 D26, D34; AD-33)", () =
   });
 
   it("a capture whose license can't be written keeps its claim; the stuck-claim reconcile finishes it as lazy, still Auto-approved", async () => {
-    const { creator, live } = await autoCreator();
+    const { creator, live } = await approvingCreatorWithVideo();
     const taken = (await insertLicense((await waitingRequest(live)).row)).code;
-    const { id } = await autoRequest(live, 3);
+    const { id } = (await autoWaitingRequest(live, 3)).row;
     codes.next = [taken, taken, taken, taken, taken];
     expect(await autoApproveRequest(id)).toBe("skipped");
     expect(await requestRow(id)).toMatchObject({
@@ -604,11 +571,8 @@ describe("auto claims and captures that don't finish (07 D26, D34; AD-33)", () =
 
 describe("Pay's schedule (AD-13; T3-08)", () => {
   it("an auto request abandoned at authorization schedules no automatic approval and emails nobody", async () => {
-    const { live } = await autoCreator();
-    const { row, token } = await pendingCheckoutRequest(live, {
-      autoApprove: true,
-      ...PAID_SOCIAL_YEAR_WORLDWIDE,
-    });
+    const { live } = await approvingCreatorWithVideo();
+    const { row, token } = await pendingCheckoutRequest(live, AUTO_REQUEST);
     scripted.script({ getAuthorization: { amountCents: 1 } });
     queueAfter();
     await expect(fakeCheckoutPay(row.id)).rejects.toMatchObject(
@@ -618,7 +582,7 @@ describe("Pay's schedule (AD-13; T3-08)", () => {
       status: "abandoned",
       statusReason: "amount_mismatch",
     });
-    const calls = callsFromNow();
+    const calls = scripted.callsFromNow();
     await runQueuedAfter();
     expect(autoApproveRequest).not.toHaveBeenCalled();
     // Without the spy: no guard read, no capture, no fallback after the response.
@@ -628,11 +592,8 @@ describe("Pay's schedule (AD-13; T3-08)", () => {
   });
 
   it("while Pay on a matching hold schedules it once, after the response: the spy sees requests.ts's call", async () => {
-    const { live } = await autoCreator();
-    const { row, token } = await pendingCheckoutRequest(live, {
-      autoApprove: true,
-      ...PAID_SOCIAL_YEAR_WORLDWIDE,
-    });
+    const { live } = await approvingCreatorWithVideo();
+    const { row, token } = await pendingCheckoutRequest(live, AUTO_REQUEST);
     queueAfter();
     await expect(fakeCheckoutPay(row.id)).rejects.toMatchObject(
       redirectTo(`/r/${row.id}?t=${token}&session_id=cs_fake_${row.id}`),

@@ -15,7 +15,11 @@ import type {
   InboxView,
 } from "@/lib/licensing/request-dto";
 import { scopeLabel } from "@/lib/licensing/selection";
-import { displayStatus, isAutoApproving } from "@/lib/licensing/transitions";
+import {
+  displayStatus,
+  isAutoApproveOpen,
+  isAutoApproving,
+} from "@/lib/licensing/transitions";
 import { isUuid } from "@/lib/validation/uuid";
 import { enabledPlatforms } from "../social/registry";
 import { findRequestForBuyer } from "../tokens/buyer-token";
@@ -147,10 +151,7 @@ function creatorRequestOf(r: CreatorRow): CreatorRequest {
     transferAmountCents: r.transferAmountCents,
     transferCurrency: r.transferCurrency,
     autoApproveFallbackAt: r.autoApproveFallbackAt?.toISOString() ?? null,
-    autoApproved:
-      r.status === "approved" &&
-      r.autoApprove &&
-      r.autoApproveFallbackAt === null,
+    autoApproved: r.status === "approved" && isAutoApproveOpen(r),
   };
 }
 

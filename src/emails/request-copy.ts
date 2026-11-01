@@ -17,8 +17,7 @@ export const REQUEST_EMAIL_COPY = {
   newBody: (scope: string, price: string, deadline: string) =>
     `${scope}. You get ${price}. Answer by ${deadline}. If you don't answer, the hold is released.`,
   /** 04 §11.5: the Inbox row's line, word for word (07 D49). */
-  autoApproveFellBack: (deadline: string) =>
-    INBOX_COPY.autoApproveFellBack(deadline),
+  autoApproveFellBack: INBOX_COPY.autoApproveFellBack,
   /** request-new while the creator's payouts aren't active (07 D74, D77). */
   setUpPayouts: (deadline: string) =>
     `Set up payouts to approve before ${deadline}.`,

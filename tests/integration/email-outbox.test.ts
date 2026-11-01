@@ -35,6 +35,7 @@ import {
   recordStderr,
 } from "../helpers/logs";
 import { readLatestEmail } from "../helpers/read-latest-email";
+import { emailTemplatesOf } from "../helpers/request-outcomes";
 
 // The email outbox (P17; 02 §5.10; 03 §3.8, I21; 07 D34, D47, D84): the authorized transition queues request-new and
 // request-received in its own transaction, they are sent after the response (after() runs at once here), and the
@@ -536,9 +537,6 @@ describe("request-declined (P19; 05 §8; 07 D25, D28, D34; 01 J8.4)", () => {
       ),
     );
 
-  const templatesOf = async (requestId: string) =>
-    (await rowsOf(requestId)).map((r) => r.template);
-
   it("the declined transition queues request-declined to the buyer in its transaction, and nothing for the creator", async () => {
     const { row } = await waitingRequest();
     const result = await decline(row.id);
@@ -558,7 +556,7 @@ describe("request-declined (P19; 05 §8; 07 D25, D28, D34; 01 J8.4)", () => {
       sentAt: null,
       error: null,
     });
-    expect(await templatesOf(row.id)).toEqual([
+    expect(await emailTemplatesOf(row.id)).toEqual([
       "request-declined",
       "request-new",
       "request-received",
@@ -632,7 +630,7 @@ describe("request-declined (P19; 05 §8; 07 D25, D28, D34; 01 J8.4)", () => {
         ),
       );
       expect(result).toMatchObject({ changed: true, to: event, effects: [] });
-      expect(await templatesOf(row.id)).toEqual([
+      expect(await emailTemplatesOf(row.id)).toEqual([
         "request-new",
         "request-received",
       ]);
@@ -653,7 +651,7 @@ describe("request-declined (P19; 05 §8; 07 D25, D28, D34; 01 J8.4)", () => {
         throw new Error("rolled back");
       }),
     ).rejects.toThrow("rolled back");
-    expect(await templatesOf(row.id)).toEqual([
+    expect(await emailTemplatesOf(row.id)).toEqual([
       "request-new",
       "request-received",
     ]);
@@ -666,7 +664,7 @@ describe("request-declined (P19; 05 §8; 07 D25, D28, D34; 01 J8.4)", () => {
       changed: false,
       effects: [],
     });
-    expect(await templatesOf(row.id)).toEqual([
+    expect(await emailTemplatesOf(row.id)).toEqual([
       "request-declined",
       "request-new",
       "request-received",

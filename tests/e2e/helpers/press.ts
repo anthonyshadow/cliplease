@@ -47,27 +47,25 @@ export function requestEnded(
 }
 
 /**
- * pressButton, then waits until its server action's request has closed. The action's value comes first and the
+ * Presses the button named `name` inside `scope` (the page, or a part of it: Settings has a Save in Profile and one in
+ * Requests), then waits until its server action's request has closed. The action's value comes first and the
  * re-rendered page streams after it, so a toast can show while the response is still open, and a navigation then
  * cancels it (WebKit logs "TypeError: Load failed"). Chromium sometimes closes the stream itself once the page has
  * what it needs, which Playwright reports as a failed request, so either end counts.
  */
-export async function pressAndSettle(page: Page, name: string) {
-  const closed = requestEnded(page, isServerAction);
-  await pressButton(page, name);
-  await closed;
-}
-
-/** pressAndSettle for the button named `name` inside `scope`: Settings has a Save in Profile and one in Requests. */
 export async function pressAndSettleIn(
   page: Page,
-  scope: Locator,
+  scope: Page | Locator,
   name: string,
 ) {
   const closed = requestEnded(page, isServerAction);
   await pressLocator(scope.getByRole("button", { name, exact: true }));
   await closed;
 }
+
+/** pressAndSettleIn on the whole page: pressButton, then the wait for its server action. */
+export const pressAndSettle = (page: Page, name: string) =>
+  pressAndSettleIn(page, page, name);
 
 /** A bounded wait inside the page, for "nothing more happens" checks. */
 export const waitInPage = (page: Page, ms: number) =>

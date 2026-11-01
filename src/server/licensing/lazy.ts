@@ -40,10 +40,17 @@ export async function settleCreatorRequests({
     stopAt: Date.now() + SETTLE_BUDGET_MS,
   });
   afterResponse(() => expireDueRequests({ creatorId, requestId }));
+  retryAutoApprovalsLater({ creatorId, requestId, limit: 10 });
+}
+
+/** The auto-approvals that didn't finish (07 D81), retried after the response; the budget counts from now. */
+function retryAutoApprovalsLater(scope: {
+  creatorId?: string;
+  requestId?: string;
+  limit: number;
+}): void {
   const stopAt = Date.now() + AFTER_BUDGET_MS;
-  afterResponse(() =>
-    retryAutoApprovals({ creatorId, requestId, limit: 10, stopAt }),
-  );
+  afterResponse(() => retryAutoApprovals({ ...scope, stopAt }));
 }
 
 /**
@@ -68,10 +75,7 @@ export async function settleBuyerRequest(
     return false;
   }
   if (request.autoApproving) {
-    const stopAt = Date.now() + AFTER_BUDGET_MS;
-    afterResponse(() =>
-      retryAutoApprovals({ requestId: request.id, limit: 1, stopAt }),
-    );
+    retryAutoApprovalsLater({ requestId: request.id, limit: 1 });
   }
   try {
     if (request.displayStatus === "processing") {

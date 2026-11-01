@@ -900,6 +900,11 @@ export function createScriptedPayments() {
     driverFor,
     log,
     callsOf,
+    /** A mark in the log: the returned function gives the methods called since, in order (P19b; P19c reuses it). */
+    callsFromNow(): () => PaymentsMethod[] {
+      const from = log.length;
+      return () => log.slice(from).map(({ method }) => method);
+    },
     /** The idempotency keys of one money method's or the transfer's calls, in order. */
     keys: (method: HookedMethod) => callsOf(method).map((call) => call.key),
     /** The cancels, in order, as [idempotency key, Stripe's reason]. */

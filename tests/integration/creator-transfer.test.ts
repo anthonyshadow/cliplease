@@ -119,12 +119,6 @@ function onTheFake(): void {
   afterEach(() => finishRecordedTest());
 }
 
-/** A mark in the double's log: the returned function gives the methods called since, in order. */
-function callsFromNow(): () => string[] {
-  const from = scripted.log.length;
-  return () => scripted.log.slice(from).map(({ method }) => method);
-}
-
 /** The creator sweep Settings and the payouts return run (03 §7.8). */
 const creatorSweep = (creatorId: string) =>
   sweepMoneyMovements({ creatorId, limit: 50 });
@@ -346,7 +340,7 @@ describe("Stripe's answers to a transfer (07 D75, D76; 03 §5.5)", () => {
     });
     await updateTransfer(s.id, { attempt: 1, claimedAt: new Date() });
 
-    const calls = callsFromNow();
+    const calls = scripted.callsFromNow();
     expect(await sendCreatorTransfer(s.id)).toBe("skipped");
     expect(calls()).toEqual([]);
     expect(await transferOf(s.id)).toMatchObject({
@@ -386,7 +380,7 @@ describe("Stripe's answers to a transfer (07 D75, D76; 03 §5.5)", () => {
     expect(await transferOf(s.id)).toMatchObject({ ...PENDING, attempt: 1 });
 
     // Tried just now: the creator's sweep doesn't call Stripe again yet (CC-04).
-    const calls = callsFromNow();
+    const calls = scripted.callsFromNow();
     expect(await creatorSweep(s.creator.id)).toBe(0);
     expect(calls()).toEqual([]);
 
@@ -439,7 +433,7 @@ describe("Stripe's answers to a transfer (07 D75, D76; 03 §5.5)", () => {
 
     // Not a code the creator can fix (none until P24): the cron leaves it to Settings and the admin (Q-148).
     await touchedMinutesAgo(s.id, 11);
-    const calls = callsFromNow();
+    const calls = scripted.callsFromNow();
     expect(await cronSweep()).toBe(0);
     expect(calls()).toEqual([]);
     expect(await transferOf(s.id)).toMatchObject({
@@ -512,7 +506,7 @@ describe("what a transfer waits for (07 D75, D77; owner answer OQ-05)", () => {
     const unchanged = await approveHeld(s);
     await storedPayouts(s.creator.id, "restricted");
 
-    const calls = callsFromNow();
+    const calls = scripted.callsFromNow();
     await runQueuedAfter();
     expect(await sendCreatorTransfer(s.id)).toBe("skipped");
     expect(await transferOf(s.id)).toMatchObject(PENDING);
@@ -612,7 +606,7 @@ describe("one payment only (07 D75; 03 §5.5)", () => {
       attempt: 1,
       claimedAt: expect.any(Date),
     });
-    const calls = callsFromNow();
+    const calls = scripted.callsFromNow();
     expect(await sendCreatorTransfer(s.id)).toBe("skipped");
     expect(calls()).toEqual([]);
 
@@ -641,7 +635,7 @@ describe("the sweeps (02 §8.4; 03 §7.8, §7.10)", () => {
     const unchanged = await approveCrashed(s);
     await touchedMinutesAgo(s.id, 11);
 
-    const calls = callsFromNow();
+    const calls = scripted.callsFromNow();
     expect(await cronSweep(2)).toBe(1);
     expect(calls()).toEqual(["findTransfers", "createTransfer"]);
     await expectPaidOnce(s.id, { by: "cron", scripted });
@@ -761,7 +755,7 @@ describe("settleCreatorMoney: Settings and the payouts return (07 D75; 03 §7.8)
     const s = await transferSubject();
     const unchanged = await approveCrashed(s);
 
-    const calls = callsFromNow();
+    const calls = scripted.callsFromNow();
     for (const wait of [true, false]) {
       await settleCreatorMoney({
         creatorId: s.creator.id,

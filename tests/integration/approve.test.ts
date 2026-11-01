@@ -71,6 +71,7 @@ import { piEvent } from "../helpers/pi-events";
 import { readLatestEmail } from "../helpers/read-latest-email";
 import { readyLibraryVideo } from "../helpers/ready-videos";
 import {
+  emailTemplatesOf,
   endingsOf,
   licensesOf,
   movementsOf,
@@ -172,16 +173,6 @@ const auditsFor = (entityId: string) =>
 
 /** The capture calls' keys, in order. */
 const captureKeys = () => captures.mock.calls.map((call) => call[1]);
-
-/** The request's email templates, in order. */
-async function emailTemplatesOf(requestId: string): Promise<string[]> {
-  const rows = await db
-    .select({ template: emailLog.template })
-    .from(emailLog)
-    .where(eq(emailLog.entityId, requestId))
-    .orderBy(emailLog.template);
-  return rows.map((r) => r.template);
-}
 
 /** A claim taken now for `action`, as the claim's holder fences with it. */
 async function claimed(requestId: string, action: "capture" | "decline") {

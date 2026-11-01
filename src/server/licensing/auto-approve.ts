@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { db } from "@/db/client";
 import { licenseRequest, video } from "@/db/schema";
 import { writeAudit } from "../audit";
@@ -9,7 +9,11 @@ import { errorName, logEvent } from "../log";
 import { getAuthorization } from "../payments";
 import { approveLicenseRequest } from "./approve";
 import { runEffects } from "./effects";
-import { queueRequestEmails, reconcileFromStripe } from "./state-machine";
+import {
+  awaitingAutoApproval,
+  queueRequestEmails,
+  reconcileFromStripe,
+} from "./state-machine";
 
 // Auto-approve (07 D81; 03 T4, §7.10; research/stripe-owner-answers.md §5 option A): every Checkout still holds the card,
 // and once an auto_approve request is authorized its approval runs after the response, as the system actor through
@@ -51,11 +55,11 @@ export async function autoApproveRequest(
 
 /**
  * Retries the auto-approvals that didn't finish (03 §7.10; 07 D81; owner answers Q-154, Q-156), oldest authorization
- * first: one request (/r), one creator's (the Inbox, the request page) or up to `limit` (the cron). Only waiting auto
- * requests with no fallback, no claim, authorized at least 2 minutes ago and before their deadline (the expiry handles
- * an overdue one, so they can't fill the batch). A request reached 10 minutes or more after authorization falls back with
- * gave_up, with no guard and no Stripe call. No request starts at or after `stopAt` (epoch ms). Returns how many were
- * approved or fell back: a retry doesn't count, so the cron doesn't spin on it.
+ * first: one request (/r), one creator's (the Inbox, the request page) or up to `limit` (the cron). Only requests still
+ * awaiting their automatic approval (an overdue one is the expiry's, so it can't fill the batch) and authorized at least
+ * 2 minutes ago; settle gives up first on one reached 10 minutes or more after authorization. No request starts at or
+ * after `stopAt` (epoch ms). Returns how many were approved or fell back: a retry doesn't count, so the cron doesn't
+ * spin on it.
  */
 export async function retryAutoApprovals({
   limit,
@@ -75,12 +79,8 @@ export async function retryAutoApprovals({
       and(
         requestId ? eq(licenseRequest.id, requestId) : undefined,
         creatorId ? eq(licenseRequest.creatorId, creatorId) : undefined,
-        eq(licenseRequest.status, "awaiting_approval"),
-        eq(licenseRequest.autoApprove, true),
-        isNull(licenseRequest.autoApproveFallbackAt),
-        isNull(licenseRequest.paymentAction),
+        awaitingAutoApproval,
         sql`${licenseRequest.authorizedAt} < now() - make_interval(mins => ${RETRY_AFTER_MINUTES}::int)`,
-        sql`now() < ${licenseRequest.expiresAt}`,
       ),
     )
     .orderBy(asc(licenseRequest.authorizedAt), asc(licenseRequest.id))
@@ -131,7 +131,7 @@ async function autoState(requestId: string) {
       currency: licenseRequest.currency,
       paymentIntentId: licenseRequest.stripePaymentIntentId,
       originalStatus: video.originalStatus,
-      eligible: sql<boolean>`coalesce(${licenseRequest.status} = 'awaiting_approval' and ${licenseRequest.autoApprove} and ${licenseRequest.autoApproveFallbackAt} is null and ${licenseRequest.paymentAction} is null and now() < ${licenseRequest.expiresAt}, false)`,
+      eligible: sql<boolean>`coalesce(${awaitingAutoApproval}, false)`,
       pastGiveUp,
     })
     .from(licenseRequest)
@@ -202,7 +202,7 @@ async function attempt(
 /**
  * Hands the request to the creator (07 D81), in one short transaction: auto_approve_fallback_at, request-new with the
  * fallback line, and the audit with its reason. Not a transition: the status stays awaiting_approval, and the state
- * machine still owns it. Only a waiting auto request with no fallback, no claim and time left: else 'skipped'.
+ * machine still owns it. Only a request still awaiting its automatic approval: else 'skipped'.
  */
 async function fallBack(
   requestId: string,
@@ -212,16 +212,7 @@ async function fallBack(
     const [row] = await tx
       .update(licenseRequest)
       .set({ autoApproveFallbackAt: sql`now()` })
-      .where(
-        and(
-          eq(licenseRequest.id, requestId),
-          eq(licenseRequest.status, "awaiting_approval"),
-          eq(licenseRequest.autoApprove, true),
-          isNull(licenseRequest.autoApproveFallbackAt),
-          isNull(licenseRequest.paymentAction),
-          sql`now() < ${licenseRequest.expiresAt}`,
-        ),
-      )
+      .where(and(eq(licenseRequest.id, requestId), awaitingAutoApproval))
       .returning({ id: licenseRequest.id });
     if (!row) return null;
     const queued = await queueRequestEmails(tx, requestId, ["request-new"]);

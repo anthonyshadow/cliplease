@@ -11,6 +11,7 @@ import { overdueColumn } from "./deadline";
 import { afterResponse } from "./effects";
 import { expireLicenseRequest } from "./requests";
 import {
+  autoApproveOpen,
   type ClaimedRequest,
   claimPaymentAction,
   finishCapture,
@@ -24,10 +25,25 @@ import {
 // Auto-approve (P19c; 07 D81) approves as the system actor through the same path. The video lock and availability check
 // (07 D110) arrive with P19f and P19g (owner answer Q-122 a).
 
-/** Approve's view of a request, scoped to the creator: null when it isn't theirs. */
-async function approveState(requestId: string, creatorId: string) {
+/**
+ * Whose requests `actor` may approve (02 §8.2; 03 T4): a creator their own; the auto-approve system actor only an
+ * auto_approve request that hasn't fallen back (07 D81), which its claim checks again. Null for anyone else: nothing
+ * about the request is told.
+ */
+type ApproveScope = { creatorId: string } | { autoApproveOpen: true };
+
+function approveScope(actor: Actor): ApproveScope | null {
+  if (actor.kind === "creator") return { creatorId: actor.creatorId };
+  return actor.kind === "system" && actor.source === "auto_approve"
+    ? { autoApproveOpen: true }
+    : null;
+}
+
+/** Approve's view of a request in `scope`: null when it is out of it. */
+async function approveState(requestId: string, scope: ApproveScope) {
   const [row] = await db
     .select({
+      creatorId: licenseRequest.creatorId,
       status: licenseRequest.status,
       paymentAction: licenseRequest.paymentAction,
       paymentActionAt: licenseRequest.paymentActionAt,
@@ -41,39 +57,15 @@ async function approveState(requestId: string, creatorId: string) {
     .where(
       and(
         eq(licenseRequest.id, requestId),
-        eq(licenseRequest.creatorId, creatorId),
+        "creatorId" in scope
+          ? eq(licenseRequest.creatorId, scope.creatorId)
+          : autoApproveOpen,
       ),
     );
   return row ?? null;
 }
 
 type ApproveState = NonNullable<Awaited<ReturnType<typeof approveState>>>;
-
-/**
- * Whose request `actor` may approve (02 §8.2; 03 T4): a creator their own; the auto-approve system actor only an
- * auto_approve request that hasn't fallen back (07 D81), and its claim checks that again. Null for anyone else: nothing
- * about the request is told.
- */
-async function approveScope(
-  requestId: string,
-  actor: Actor,
-): Promise<{ creatorId: string; autoApproveOnly: boolean } | null> {
-  if (actor.kind === "creator") {
-    return { creatorId: actor.creatorId, autoApproveOnly: false };
-  }
-  if (actor.kind !== "system" || actor.source !== "auto_approve") return null;
-  const [row] = await db
-    .select({
-      creatorId: licenseRequest.creatorId,
-      autoApprove: licenseRequest.autoApprove,
-      autoApproveFallbackAt: licenseRequest.autoApproveFallbackAt,
-    })
-    .from(licenseRequest)
-    .where(eq(licenseRequest.id, requestId));
-  return row?.autoApprove && row.autoApproveFallbackAt === null
-    ? { creatorId: row.creatorId, autoApproveOnly: true }
-    : null;
-}
 
 /**
  * A request this tap can't act on: decided or claimed by another tab or actor (not_actionable with its status, J8.8;
@@ -114,11 +106,13 @@ async function approve(
   actor: Actor,
   { payoutsRow }: { payoutsRow?: PayoutsRow },
 ): Promise<ApproveResult> {
-  const scope = await approveScope(requestId, actor);
-  if (!scope) return { ok: false, reason: "not_actionable", status: null };
-  const { creatorId } = scope;
-  let before = await approveState(requestId, creatorId);
-  if (!before) return { ok: false, reason: "not_actionable", status: null };
+  const scope = approveScope(actor);
+  let before = scope && (await approveState(requestId, scope));
+  if (!scope || !before) {
+    return { ok: false, reason: "not_actionable", status: null };
+  }
+  // Later reads follow the request's creator: a fallback committed meanwhile still reports the request as it is.
+  const { creatorId } = before;
   if (await reconcileIfStuck(requestId, before, actor)) {
     before = await stateOf(requestId, creatorId);
   }
@@ -150,7 +144,7 @@ async function approve(
     };
   }
   const claimed = await claimPaymentAction(requestId, "capture", {
-    autoApproveOnly: scope.autoApproveOnly,
+    autoApproveOnly: "autoApproveOpen" in scope,
   });
   if (!claimed) {
     const now = await stateOf(requestId, creatorId);
@@ -170,7 +164,7 @@ async function stateOf(
   requestId: string,
   creatorId: string,
 ): Promise<ApproveState> {
-  const state = await approveState(requestId, creatorId);
+  const state = await approveState(requestId, { creatorId });
   if (!state) throw new Error("approveLicenseRequest: the request is gone");
   return state;
 }

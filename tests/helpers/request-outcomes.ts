@@ -1,5 +1,6 @@
 // What a waiting request's ending left, for [int] tests (P19; P19b, P19c and P19g reuse them): its licenses, the
-// transitions that ended it, its outcome emails, its Stripe events and (P19b) its money movements.
+// transitions that ended it, its outcome emails, its Stripe events and (P19b) its money movements. P19c adds its
+// auto-approve fallbacks and every email it has (templates or keys, the authorization's two included).
 import { and, asc, eq } from "drizzle-orm";
 import { expect } from "vitest";
 import { db } from "../../src/db/client";
@@ -29,6 +30,28 @@ export async function onlyLicense(requestId: string): Promise<License> {
 export async function endingsOf(requestId: string) {
   const transitions = await auditsOf(requestId, "license_request.transition");
   return transitions.filter(({ data }) => data.from === "awaiting_approval");
+}
+
+/** The request's auto-approve fallback audits (P19c; 07 D81). */
+export const fallbacksOf = (requestId: string) =>
+  auditsOf(requestId, "license_request.auto_approve_fallback");
+
+/** The request's email_log rows, every template, by template. */
+const emailRowsOf = (requestId: string) =>
+  db
+    .select({ template: emailLog.template, key: emailLog.idempotencyKey })
+    .from(emailLog)
+    .where(eq(emailLog.entityId, requestId))
+    .orderBy(asc(emailLog.template));
+
+/** The request's email templates, in order: request-new and request-received too, which outcomeEmails drops. */
+export async function emailTemplatesOf(requestId: string): Promise<string[]> {
+  return (await emailRowsOf(requestId)).map(({ template }) => template);
+}
+
+/** The request's email_log keys (`<template>/<id>`), sorted: request-new and request-received too (P19c). */
+export async function emailKeysOf(requestId: string): Promise<string[]> {
+  return (await emailRowsOf(requestId)).map(({ key }) => key).sort();
 }
 
 /** The request's email_log without the two its authorization queued (07 D34): each outcome email, as sent. */

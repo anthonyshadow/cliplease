@@ -291,6 +291,16 @@ const claimedBefore = (olderThanMinutes: number) =>
 export const isStuckClaim = (claimedAt: Date | null) =>
   claimedAt !== null && claimedAt < claimedBefore(STUCK_CLAIM_MINUTES);
 
+/** isAutoApproveOpen in SQL (07 D81): an auto_approve request that hasn't fallen back to its creator. */
+export const autoApproveOpen = sql`(${licenseRequest.autoApprove} and ${licenseRequest.autoApproveFallbackAt} is null)`;
+
+/**
+ * Still waiting for its automatic approval (07 D81): waiting, unclaimed, auto-approve open, before its deadline on the
+ * database's clock. The fallback's fence and the retry's candidates; the system's capture claim adds autoApproveOpen to
+ * its own guards, so the two never both apply.
+ */
+export const awaitingAutoApproval = sql`(${licenseRequest.status} = 'awaiting_approval' and ${licenseRequest.paymentAction} is null and ${autoApproveOpen} and now() < ${licenseRequest.expiresAt})`;
+
 /** A waiting request held by `claim`, or by no claim at all. Finished rows keep their claim, so the status is checked too. */
 function heldBy(claim: PaymentClaim | null) {
   return and(
@@ -361,12 +371,7 @@ async function takeClaim(
           : action === "expire"
             ? sql`now() >= ${licenseRequest.expiresAt}`
             : undefined,
-        autoApproveOnly
-          ? and(
-              eq(licenseRequest.autoApprove, true),
-              isNull(licenseRequest.autoApproveFallbackAt),
-            )
-          : undefined,
+        autoApproveOnly ? autoApproveOpen : undefined,
       ),
     )
     .returning();

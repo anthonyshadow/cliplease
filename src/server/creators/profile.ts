@@ -398,16 +398,15 @@ export async function updateCreatorSettings(
       .where(eq(creatorProfile.id, creatorId))
       .limit(1);
     if (!stored?.autoApprove) {
-      let status: PayoutsStatus;
-      try {
-        status = await refreshPayoutsStatus(creatorId, { debitsActor: actor });
-      } catch (error) {
+      const status = await refreshPayoutsStatus(creatorId, {
+        debitsActor: actor,
+      }).catch((error: unknown) => {
         logEvent("warn", "creator_settings.payouts_read_failed", {
           creatorId,
           error: errorName(error),
         });
         throw new CreatorSettingsError("payouts_read_failed");
-      }
+      });
       if (status !== "active") {
         throw new CreatorSettingsError("payouts_not_active");
       }

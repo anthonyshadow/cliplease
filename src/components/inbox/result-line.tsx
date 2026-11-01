@@ -8,7 +8,8 @@ import type { CreatorRequest } from "@/lib/licensing/request-dto";
 import { cn } from "@/lib/utils";
 import { PayoutsWaiting } from "./payouts-waiting";
 
-const LINE = "text-footnote wrap-anywhere";
+/** A request's footnote line in a row's text column or the request page's status block (04 §9.11). */
+export const LINE = "text-footnote wrap-anywhere";
 
 /** "License {code} issued" (04 §11.5): a held row's line and the approved request page's. P20 adds " · View license". */
 export function LicenseIssuedLine({
@@ -27,7 +28,8 @@ export function LicenseIssuedLine({
   );
 }
 
-const PAYOUT_TONE = {
+/** 04 §9.11's tones for those lines: the payout line's, and auto-approve's. */
+export const LINE_TONE = {
   cleared: "text-cleared-text",
   neutral: "text-ink-2",
   awaiting: "text-awaiting-text",
@@ -57,7 +59,7 @@ export function PayoutLineView({
       : null,
   );
   if (!line) return null;
-  return <p className={cn(LINE, PAYOUT_TONE[line.tone])}>{line.text}</p>;
+  return <p className={cn(LINE, LINE_TONE[line.tone])}>{line.text}</p>;
 }
 
 /** An action's result in words (04 §11.5), under a row's "You get" line or above the request page's actions. */

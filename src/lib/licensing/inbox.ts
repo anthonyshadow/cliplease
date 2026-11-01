@@ -147,7 +147,7 @@ export function outcomeLine(
 export function autoApproveLine(
   r: Pick<
     CreatorRequest,
-    "displayStatus" | "status" | "autoApproveFallbackAt" | "autoApproved"
+    "displayStatus" | "autoApproveFallbackAt" | "autoApproved"
   >,
   deadline: string | null,
 ): { text: string; tone: "awaiting" | "neutral" } | null {

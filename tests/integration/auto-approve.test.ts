@@ -3,12 +3,11 @@ import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fakeCheckoutPay } from "../../src/app/dev/fake-checkout/[requestId]/actions";
 import { db } from "../../src/db/client";
-import { emailLog, licenseRequest, user, video } from "../../src/db/schema";
+import { licenseRequest, user, video } from "../../src/db/schema";
 import type {
   CreatorProfile,
   LicenseRequest,
   NewCreatorProfile,
-  NewLicenseRequest,
 } from "../../src/db/schema/types";
 import { REQUEST_EMAIL_COPY } from "../../src/emails/request-copy";
 import { formatEmailDateTime, formatMoney } from "../../src/lib/format";
@@ -30,21 +29,26 @@ import type { RequestContext } from "../../src/server/request-context";
 import { redirectTo } from "../helpers/actions";
 import { flushAfter, queueAfter, runQueuedAfter } from "../helpers/after";
 import {
-  approvableVideo,
-  approvingCreator,
+  AUTO_REQUEST,
+  approvingCreatorWithVideo,
   authorizedMinutesAgo,
+  autoWaitingRequest,
   PAID_SOCIAL_YEAR_WORLDWIDE,
   pendingCheckoutRequest,
   waitingRequest,
 } from "../helpers/approval-fixtures";
 import { DEMO_REQUEST } from "../helpers/checkout-fixtures";
-import { auditsOf } from "../helpers/connect-flow";
 import { countsOf, cron } from "../helpers/cron";
 import { resetDb } from "../helpers/db";
 import { requestRow } from "../helpers/factories";
 import { AFTER_FAILED, captureLogEvents, recordStderr } from "../helpers/logs";
 import { readLatestEmail } from "../helpers/read-latest-email";
-import { endingsOf, onlyLicense } from "../helpers/request-outcomes";
+import {
+  emailKeysOf,
+  endingsOf,
+  fallbacksOf,
+  onlyLicense,
+} from "../helpers/request-outcomes";
 import type { ScriptedPayments } from "../helpers/scripted-payments";
 import {
   finishScriptedTest,
@@ -92,21 +96,14 @@ const CTX: RequestContext = {
   userAgent: "Mozilla/5.0 (test)",
 };
 
-/** An auto_approve request at the J4.7 quote: CA$1,575.00 + CA$157.50 = CA$1,732.50. */
-const AUTO_REQUEST = {
-  autoApprove: true,
-  ...PAID_SOCIAL_YEAR_WORLDWIDE,
-} satisfies Partial<NewLicenseRequest>;
-
 /**
  * A creator who can approve (`creator` overrides the profile), their published video and one auto_approve request on
  * it, authorized just now. T2 is applied directly, so nothing is scheduled: the test runs the auto-approval itself.
  */
 async function autoRequest(creator: Partial<NewCreatorProfile> = {}) {
-  const approver = await approvingCreator(creator);
-  const live = await approvableVideo(approver.creator.id);
-  const { row, token } = await waitingRequest(live, AUTO_REQUEST);
-  return { ...approver, live, row, token };
+  const approver = await approvingCreatorWithVideo(creator);
+  const { row, token } = await autoWaitingRequest(approver.live);
+  return { ...approver, row, token };
 }
 
 /** The fake checkout's Pay: T2 through the completed event, then Stripe's success URL. */
@@ -132,36 +129,17 @@ async function addressOf(creator: Pick<CreatorProfile, "userId">) {
   return owner.email;
 }
 
-/** The request's email_log keys (`<template>/<id>`), sorted: request-new counted here, since outcomeEmails skips it. */
-async function emailKeysOf(requestId: string): Promise<string[]> {
-  const rows = await db
-    .select({ key: emailLog.idempotencyKey })
-    .from(emailLog)
-    .where(eq(emailLog.entityId, requestId));
-  return rows.map(({ key }) => key).sort();
-}
-
 /** The keys a fallback leaves: its request-new beside the authorization's request-received. */
-const fellBackEmails = (id: string) => [
+const fallbackEmails = (id: string) => [
   `request-new/${id}`,
   `request-received/${id}`,
 ];
 
-/** The request's fallback audits (07 D81). */
-const fallbacksOf = (requestId: string) =>
-  auditsOf(requestId, "license_request.auto_approve_fallback");
-
 /** A fallback audit as written: its reason, by the auto-approve system actor (07 D47). */
-const fellBack = (reason: string) => ({
+const fallbackAudit = (reason: string) => ({
   data: { reason, source: "auto_approve" },
   actorType: "system",
 });
-
-/** The capture calls' keys, in order. */
-const captureKeys = () => scripted.keys("capture");
-
-/** The payments methods this test called, in order. */
-const methods = () => scripted.log.map(({ method }) => method);
 
 /** The getAuthorization calls on the request's PaymentIntent. */
 const authorizationsOf = (requestId: string) =>
@@ -171,8 +149,7 @@ const authorizationsOf = (requestId: string) =>
 
 describe("on authorization (07 D81; 03 T2, T4; owner answer Q-152)", () => {
   it("Pay authorizes it and schedules one run after the response, which approves it as the system: captured once, licensed, the buyer emailed and the creator paid once", async () => {
-    const { creator } = await approvingCreator();
-    const live = await approvableVideo(creator.id);
+    const { creator, live } = await approvingCreatorWithVideo();
     const { row, token } = await pendingCheckoutRequest(live, AUTO_REQUEST);
     queueAfter();
     const since = Date.now();
@@ -200,7 +177,7 @@ describe("on authorization (07 D81; 03 T2, T4; owner answer Q-152)", () => {
     );
     // The guard's one read: one run, whatever the spy sees.
     expect(scripted.callsOf("getAuthorization")).toHaveLength(reads + 1);
-    expect(captureKeys()).toEqual([`pi-capture:${row.id}:1`]);
+    expect(scripted.keys("capture")).toEqual([`pi-capture:${row.id}:1`]);
     const after = await requestRow(row.id);
     expect(after).toMatchObject({
       status: "approved",
@@ -268,8 +245,10 @@ describe("the guards: a request that can't approve itself goes to the creator (0
       stripeAttempt: 0,
       autoApproveFallbackAt: expect.any(Date),
     });
-    expect(await fallbacksOf(row.id)).toEqual([fellBack("payouts_not_active")]);
-    expect(await emailKeysOf(row.id)).toEqual(fellBackEmails(row.id));
+    expect(await fallbacksOf(row.id)).toEqual([
+      fallbackAudit("payouts_not_active"),
+    ]);
+    expect(await emailKeysOf(row.id)).toEqual(fallbackEmails(row.id));
 
     await flushAfter();
     const sent = await readLatestEmail({
@@ -313,8 +292,10 @@ describe("the guards: a request that can't approve itself goes to the creator (0
       const { row } = await autoRequest();
       scripted.authorizations({ riskLevel });
       expect(await autoApproveRequest(row.id)).toBe("fallback");
-      expect(await fallbacksOf(row.id)).toEqual([fellBack("risk_not_normal")]);
-      expect(captureKeys()).toEqual([]);
+      expect(await fallbacksOf(row.id)).toEqual([
+        fallbackAudit("risk_not_normal"),
+      ]);
+      expect(scripted.keys("capture")).toEqual([]);
       expect(await requestRow(row.id)).toMatchObject({
         status: "awaiting_approval",
         paymentAction: null,
@@ -327,7 +308,7 @@ describe("the guards: a request that can't approve itself goes to the creator (0
     const { row } = await autoRequest();
     scripted.authorizations({ riskLevel: "normal" });
     expect(await autoApproveRequest(row.id)).toBe("approved");
-    expect(captureKeys()).toEqual([`pi-capture:${row.id}:1`]);
+    expect(scripted.keys("capture")).toEqual([`pi-capture:${row.id}:1`]);
     expect(await fallbacksOf(row.id)).toEqual([]);
   });
 
@@ -338,9 +319,11 @@ describe("the guards: a request that can't approve itself goes to the creator (0
       .set({ status: "unpublished", originalStatus: "failed" })
       .where(eq(video.id, live.id));
     expect(await autoApproveRequest(row.id)).toBe("fallback");
-    expect(await fallbacksOf(row.id)).toEqual([fellBack("original_missing")]);
+    expect(await fallbacksOf(row.id)).toEqual([
+      fallbackAudit("original_missing"),
+    ]);
     expect(scripted.log).toEqual([]);
-    expect(await emailKeysOf(row.id)).toEqual(fellBackEmails(row.id));
+    expect(await emailKeysOf(row.id)).toEqual(fallbackEmails(row.id));
   });
 });
 
@@ -362,13 +345,14 @@ describe("retries, and giving up 10 minutes after authorization (03 §7.10; owne
       1,
     );
     expect((await requestRow(row.id)).status).toBe("approved");
-    expect(captureKeys()).toEqual([
+    expect(scripted.keys("capture")).toEqual([
       `pi-capture:${row.id}:1`,
       `pi-capture:${row.id}:2`,
     ]);
   });
 
   it("a payouts read that fails is a retry with nothing claimed, logged by the error's name", async () => {
+    const calls = scripted.callsFromNow();
     const { creator, row } = await autoRequest();
     await storedPayouts(creator.id, "active", 11);
     scripted.script({ fetchPayoutsStatus: new Error("x") });
@@ -377,7 +361,7 @@ describe("retries, and giving up 10 minutes after authorization (03 §7.10; owne
     expect(logged().events).toEqual([
       expect.objectContaining({ requestId: row.id, error: "Error" }),
     ]);
-    expect(methods()).toEqual(["fetchPayoutsStatus"]);
+    expect(calls()).toEqual(["fetchPayoutsStatus"]);
     expect(await requestRow(row.id)).toMatchObject({
       paymentAction: null,
       stripeAttempt: 0,
@@ -393,7 +377,7 @@ describe("retries, and giving up 10 minutes after authorization (03 §7.10; owne
     const { row } = await autoRequest();
     scripted.authorizations(new Error("x"));
     expect(await autoApproveRequest(row.id)).toBe("retry");
-    expect(captureKeys()).toEqual([]);
+    expect(scripted.keys("capture")).toEqual([]);
     expect(await requestRow(row.id)).toMatchObject({
       paymentAction: null,
       stripeAttempt: 0,
@@ -407,44 +391,46 @@ describe("retries, and giving up 10 minutes after authorization (03 §7.10; owne
     await authorizedMinutesAgo(row.id, 11);
     scripted.next("capture", "transient");
     expect(await autoApproveRequest(row.id)).toBe("fallback");
-    expect(await fallbacksOf(row.id)).toEqual([fellBack("gave_up")]);
-    expect(captureKeys()).toEqual([`pi-capture:${row.id}:1`]);
+    expect(await fallbacksOf(row.id)).toEqual([fallbackAudit("gave_up")]);
+    expect(scripted.keys("capture")).toEqual([`pi-capture:${row.id}:1`]);
     expect(scripted.piStatus(`pi_fake_${row.id}`)).toBe("requires_capture");
     expect(await requestRow(row.id)).toMatchObject({
       status: "awaiting_approval",
       paymentAction: null,
     });
-    expect(await emailKeysOf(row.id)).toEqual(fellBackEmails(row.id));
+    expect(await emailKeysOf(row.id)).toEqual(fallbackEmails(row.id));
 
     // Manual from now on: no retry takes it, and the creator's Approve does.
     expect(await retryAutoApprovals({ limit: 50, creatorId: creator.id })).toBe(
       0,
     );
     expect((await approveLicenseRequest(row.id, actor)).ok).toBe(true);
-    expect(captureKeys()).toEqual([
+    expect(scripted.keys("capture")).toEqual([
       `pi-capture:${row.id}:1`,
       `pi-capture:${row.id}:2`,
     ]);
   });
 
   it("a payouts read that fails 11 minutes after authorization falls back as gave_up, with no capture", async () => {
+    const calls = scripted.callsFromNow();
     const { creator, row } = await autoRequest();
     await authorizedMinutesAgo(row.id, 11);
     await storedPayouts(creator.id, "active", 11);
     scripted.script({ fetchPayoutsStatus: new Error("x") });
     // The run after T2 still tries once, whatever the request's age.
     expect(await autoApproveRequest(row.id)).toBe("fallback");
-    expect(await fallbacksOf(row.id)).toEqual([fellBack("gave_up")]);
-    expect(methods()).toEqual(["fetchPayoutsStatus"]);
+    expect(await fallbacksOf(row.id)).toEqual([fallbackAudit("gave_up")]);
+    expect(calls()).toEqual(["fetchPayoutsStatus"]);
   });
 
   it("a hold that can't be read 11 minutes after authorization falls back as gave_up, with no capture", async () => {
+    const calls = scripted.callsFromNow();
     const { row } = await autoRequest();
     await authorizedMinutesAgo(row.id, 11);
     scripted.authorizations(new Error("x"));
     expect(await autoApproveRequest(row.id)).toBe("fallback");
-    expect(await fallbacksOf(row.id)).toEqual([fellBack("gave_up")]);
-    expect(methods()).toEqual(["getAuthorization"]);
+    expect(await fallbacksOf(row.id)).toEqual([fallbackAudit("gave_up")]);
+    expect(calls()).toEqual(["getAuthorization"]);
   });
 
   it("a transient capture 9 minutes after authorization is still a retry", async () => {
@@ -472,22 +458,21 @@ describe("retries, and giving up 10 minutes after authorization (03 §7.10; owne
       });
     expect(await autoApproveRequest(row.id)).toBe("fallback");
     expect(read).toHaveBeenCalledTimes(1);
-    expect(await fallbacksOf(row.id)).toEqual([fellBack("gave_up")]);
+    expect(await fallbacksOf(row.id)).toEqual([fallbackAudit("gave_up")]);
     expect(authorizationsOf(row.id)).toEqual([]);
-    expect(captureKeys()).toEqual([]);
-    expect(await emailKeysOf(row.id)).toEqual(fellBackEmails(row.id));
+    expect(scripted.keys("capture")).toEqual([]);
+    expect(await emailKeysOf(row.id)).toEqual(fallbackEmails(row.id));
   });
 });
 
 describe("Approve as the auto-approve system actor (02 §8.2; 03 T4; 07 D81)", () => {
   it("tells nothing about a manual request, one that fell back or an unknown id, and claims nothing", async () => {
-    const { creator } = await approvingCreator();
-    const live = await approvableVideo(creator.id);
+    const { live } = await approvingCreatorWithVideo();
     const { row: manual } = await waitingRequest(
       live,
       PAID_SOCIAL_YEAR_WORLDWIDE,
     );
-    const { row: handedOver } = await waitingRequest(live, AUTO_REQUEST);
+    const { row: handedOver } = await autoWaitingRequest(live);
     scripted.authorizations({ riskLevel: "elevated" });
     expect(await autoApproveRequest(handedOver.id)).toBe("fallback");
     for (const id of [manual.id, handedOver.id, randomUUID()]) {
@@ -504,7 +489,7 @@ describe("Approve as the auto-approve system actor (02 §8.2; 03 T4; 07 D81)", (
         stripeAttempt: 0,
       });
     }
-    expect(captureKeys()).toEqual([]);
+    expect(scripted.keys("capture")).toEqual([]);
   });
 
   it("a fallback committed after its read still wins: the capture claim refuses it", async () => {
@@ -526,7 +511,7 @@ describe("Approve as the auto-approve system actor (02 §8.2; 03 T4; 07 D81)", (
       reason: "not_actionable",
       status: "awaiting_approval",
     });
-    expect(captureKeys()).toEqual([]);
+    expect(scripted.keys("capture")).toEqual([]);
     expect(await requestRow(row.id)).toMatchObject({
       status: "awaiting_approval",
       paymentAction: null,
@@ -545,7 +530,7 @@ describe("two runs at once (07 D24; 03 §5.1)", () => {
     expect(await autoApproveRequest(row.id)).toBe("skipped");
     held.release();
     expect(await first).toBe("approved");
-    expect(captureKeys()).toEqual([`pi-capture:${row.id}:1`]);
+    expect(scripted.keys("capture")).toEqual([`pi-capture:${row.id}:1`]);
     await onlyLicense(row.id);
     await flushAfter();
     await expectPaidOnce(row.id, {
@@ -570,8 +555,10 @@ describe("two runs at once (07 D24; 03 §5.1)", () => {
       autoApproveRequest(row.id),
     ]);
     expect(outcomes.sort()).toEqual(["fallback", "skipped"]);
-    expect(await emailKeysOf(row.id)).toEqual(fellBackEmails(row.id));
-    expect(await fallbacksOf(row.id)).toEqual([fellBack("payouts_not_active")]);
+    expect(await emailKeysOf(row.id)).toEqual(fallbackEmails(row.id));
+    expect(await fallbacksOf(row.id)).toEqual([
+      fallbackAudit("payouts_not_active"),
+    ]);
   });
 });
 
@@ -579,8 +566,7 @@ describe("approval windows (07 D81, §2.3; 01 J8.11)", () => {
   it.each([24, 120] as const)(
     "a %i h window: the deadline is exactly that long after authorization",
     async (hours) => {
-      const { creator } = await approvingCreator();
-      const live = await approvableVideo(creator.id);
+      const { live } = await approvingCreatorWithVideo();
       const { row, token } = await pendingCheckoutRequest(live, {
         approvalWindowHours: hours,
       });
@@ -592,8 +578,7 @@ describe("approval windows (07 D81, §2.3; 01 J8.11)", () => {
   );
 
   it("a hold that ends sooner cuts a 120 h window to 6 h before capture_before", async () => {
-    const { creator } = await approvingCreator();
-    const live = await approvableVideo(creator.id);
+    const { live } = await approvingCreatorWithVideo();
     const { row, token } = await pendingCheckoutRequest(live, {
       approvalWindowHours: 120,
     });
@@ -610,8 +595,7 @@ describe("approval windows (07 D81, §2.3; 01 J8.11)", () => {
   });
 
   it("saving Settings changes no waiting request; the next request snapshots the new window and auto-approve (01 J8.11; 07 D77)", async () => {
-    const { creator, actor } = await approvingCreator();
-    const live = await approvableVideo(creator.id);
+    const { creator, actor, live } = await approvingCreatorWithVideo();
     const { row } = await waitingRequest(live, PAID_SOCIAL_YEAR_WORLDWIDE);
     // Old enough for a retry to take it, if it were an auto request.
     await authorizedMinutesAgo(row.id, 3);
@@ -661,7 +645,7 @@ describe("approval windows (07 D81, §2.3; 01 J8.11)", () => {
       0,
     );
     expect(await autoApproveRequest(row.id)).toBe("skipped");
-    expect(captureKeys()).toEqual([]);
+    expect(scripted.keys("capture")).toEqual([]);
     expect(await requestRow(row.id)).toMatchObject({
       status: "awaiting_approval",
       autoApprove: true,
@@ -674,16 +658,10 @@ describe("approval windows (07 D81, §2.3; 01 J8.11)", () => {
 describe("the cron (02 §8.4; 07 D57, D81)", () => {
   it("retries as the system: approves one 3 minutes old, gives up on one 11 minutes old, leaves one 1 minute old to its run; a second run finds nothing", async () => {
     await resetDb();
-    const { creator } = await approvingCreator();
-    const live = await approvableVideo(creator.id);
-    const authorizedAgo = async (minutes: number) => {
-      const { row } = await waitingRequest(live, AUTO_REQUEST);
-      await authorizedMinutesAgo(row.id, minutes);
-      return row.id;
-    };
-    const retried = await authorizedAgo(3);
-    const givenUp = await authorizedAgo(11);
-    const fresh = await authorizedAgo(1);
+    const { live } = await approvingCreatorWithVideo();
+    const retried = (await autoWaitingRequest(live, 3)).row.id;
+    const givenUp = (await autoWaitingRequest(live, 11)).row.id;
+    const fresh = (await autoWaitingRequest(live, 1)).row.id;
     const untouched = await requestRow(fresh);
 
     const counts = await countsOf(await cron());
@@ -720,9 +698,9 @@ describe("the cron (02 §8.4; 07 D57, D81)", () => {
       scripted,
     });
     // Past 10 minutes: handed to the creator with no guard and no Stripe call.
-    expect(await fallbacksOf(givenUp)).toEqual([fellBack("gave_up")]);
+    expect(await fallbacksOf(givenUp)).toEqual([fallbackAudit("gave_up")]);
     expect(authorizationsOf(givenUp)).toEqual([]);
-    expect(captureKeys()).toEqual([`pi-capture:${retried}:1`]);
+    expect(scripted.keys("capture")).toEqual([`pi-capture:${retried}:1`]);
     // Inside the T2 run's 2-minute head start.
     expect(await requestRow(fresh)).toEqual(untouched);
 

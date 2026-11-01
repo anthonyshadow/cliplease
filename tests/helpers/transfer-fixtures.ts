@@ -3,7 +3,8 @@
 // left before anything sends it; the transfer row; the cron's sweep and the clocks the sweeps read (updated_at on the
 // database's clock, a claim on its own JS clock, the payouts reading's age); the check that no transfer step touches
 // the request's claim or its license; the transfer audits as written; and the check that the creator was paid once.
-// P19c: a system send's audits name what scheduled it (`source`: 'lazy' by default, auto-approve's 'auto_approve').
+// P19c: a system send's audits name what scheduled it (`source`: 'lazy' by default, auto-approve's 'auto_approve'), and
+// the stored payouts reading brings an account where its status needs one, with any other profile field a test sets.
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type { PgUpdateSetSource } from "drizzle-orm/pg-core";
 import { expect } from "vitest";
@@ -36,7 +37,7 @@ import {
   PAID_SOCIAL_YEAR_WORLDWIDE,
   waitingRequest,
 } from "./approval-fixtures";
-import { requestRow } from "./factories";
+import { randomHex, requestRow } from "./factories";
 import { licensesOf, movementsOf } from "./request-outcomes";
 import type { ScriptedPayments } from "./scripted-payments";
 
@@ -177,15 +178,32 @@ export const touchedMinutesAgo = (requestId: string, minutes: number) =>
 export const minutesAgo = (minutes: number) =>
   new Date(Date.now() - minutes * MINUTE_MS);
 
-/** Stores the creator's payouts `status`, read `age` minutes ago: 0 is fresh, over 10 is due a new reading. */
+/**
+ * Stores the creator's payouts `status`, read `age` minutes ago (0 is fresh, over 10 is due a new reading), and
+ * `profile`'s fields. A status past not_started keeps the creator's account, or gets a fake one where there is none
+ * (creator_profile_payouts_needs_account).
+ */
 export async function storedPayouts(
   creatorId: string,
   status: PayoutsStatus,
   age = 0,
+  profile: Partial<NewCreatorProfile> = {},
 ): Promise<void> {
+  const fakeAccount = `acct_fake_${randomHex(6)}`;
+  const account =
+    status === "not_started"
+      ? {}
+      : {
+          stripeAccountId: sql`coalesce(${creatorProfile.stripeAccountId}, ${fakeAccount})`,
+        };
   await db
     .update(creatorProfile)
-    .set({ payoutsStatus: status, payoutsStatusSyncedAt: minutesAgo(age) })
+    .set({
+      ...account,
+      payoutsStatus: status,
+      payoutsStatusSyncedAt: minutesAgo(age),
+      ...profile,
+    })
     .where(eq(creatorProfile.id, creatorId));
 }
 
