@@ -57,6 +57,24 @@ describe("quoteFor (07 D79, D82, D97)", () => {
     });
   });
 
+  it("prices it from a video's own CA$300 base (07 D82): 315000 / 31500 / 346500", () => {
+    expect(
+      quoteFor(
+        options(card(), { basePriceOverrideCents: 30000 }),
+        PAID_YEAR_WORLD,
+        FEES,
+      ),
+    ).toEqual({
+      ok: true,
+      quote: {
+        currency: "cad",
+        licensePriceCents: 315000,
+        platformFeeCents: 31500,
+        totalCents: 346500,
+      },
+    });
+  });
+
   it("takes the CA$2.00 fee floor: base CA$10 · Organic · 30 days · One country", () => {
     const quote = quoteFor(
       options(card(), { basePriceOverrideCents: 1000 }),
@@ -182,6 +200,24 @@ describe("offeredOptions (07 D22, D82)", () => {
       },
     ]);
     expect(tiles.territory.map((t) => t.key)).toEqual(["country", "worldwide"]);
+  });
+
+  it("offers a re-enabled Paid social ads as an ordinary tile while TV / broadcast stays music-disabled (01 J7.4, J5.14)", () => {
+    const tiles = offeredOptions(
+      options(card(), { disabledUses: ["broadcast"] }),
+      PAID_YEAR_WORLD,
+      FEE,
+    );
+    expect(tiles.use).toEqual([
+      { key: "organic_social", label: "Organic social repost", enabled: true },
+      { key: "paid_social", label: "Paid social ads", enabled: true },
+      {
+        key: "broadcast",
+        label: "TV / broadcast",
+        enabled: false,
+        disabledReason: "music",
+      },
+    ]);
   });
 
   it("hides a tile that would put the total over the cap: base CA$10,000 with ×10.00 Paid ads hides ×10.00 Perpetual", () => {

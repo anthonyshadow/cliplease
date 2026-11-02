@@ -1,5 +1,5 @@
 import { expect, type Locator, type Page, test } from "@playwright/test";
-import { RIGHTS_COPY } from "../../src/lib/videos/rights";
+import { MUSIC_DISABLED_USES, RIGHTS_COPY } from "../../src/lib/videos/rights";
 import { sourcePageHref } from "../../src/lib/videos/steps";
 import { collectConsoleErrors } from "./helpers/console";
 import { signUpCreator } from "./helpers/creator";
@@ -15,6 +15,11 @@ import {
   TIERS,
 } from "./helpers/layout";
 import { libraryPostId, POST_01, tiles } from "./helpers/library";
+import {
+  basePriceTile,
+  musicSwitch,
+  musicSwitchControls,
+} from "./helpers/video-price";
 import {
   answerRights,
   attachSample,
@@ -44,8 +49,9 @@ import {
 // Its Where posted step (after the upload, so the locked source row, the same-video block and its picture row show) is
 // one centered max-w-reading column below lg (the video summary absent below md, above the step on md) and two columns
 // from lg; the chips wrap and never scroll, and the cover and the post's picture sit on one line from md. Rights and
-// Review (P13) take the same layout: the Yes / No tiles side by side on one line, the Review's rows, read-only prices,
-// payouts Notice and Publish inside the step column; every control a 44 px target.
+// Review (P13) take the same layout: the Yes / No tiles side by side on one line and music Yes's two Switches (P19d),
+// the Review's rows, its price editor (P19d), read-only prices, payouts Notice and Publish inside the step column; every
+// control a 44 px target, the base-price choices and the music Switches among them.
 test.use({ reducedMotion: "reduce" });
 test.afterEach(cleanCreatedVideos);
 
@@ -174,14 +180,16 @@ test("G.6: a Library draft's File step (before and after the upload), Where post
     }
   });
 
-  // Rights (P13): the attestations and the Yes / No tiles fill the step column.
+  // Rights (P13): the attestations, the Yes / No tiles and, with music Yes, its two Switches (P19d) fill the step column.
   const tick = sameVideoTick(page);
   await tick.focus();
   await tick.press("Space");
   await continueToRights(page, videoId);
+  await answerRights(page, { music: "Yes" });
   const rightsStep = stepColumn(page, "rights");
   const tilesOf = (question: string) =>
     rightsQuestion(page, question).locator("label");
+  const rightsSwitches = musicSwitchControls(rightsStep);
   await atEveryWidth(page, testInfo, async ({ width }) => {
     await expectCreatorFrame(page, width);
     await expectVideoStepper(page, width, { step: 3, label: "Rights" });
@@ -202,14 +210,19 @@ test("G.6: a Library draft's File step (before and after the upload), Where post
         .getByLabel(RIGHTS_COPY.ownsRights)
         .locator("xpath=ancestor::label[1]"),
     );
+    await expect(rightsSwitches).toHaveCount(2);
+    for (const control of await rightsSwitches.all()) {
+      await expectInside(control, rightsStep);
+      await expectTouchTarget(control);
+    }
   });
 
-  // Review (P13): its rows, the read-only prices and the payouts Notice fill the step column.
-  await answerRights(page);
+  // Review (P13): its rows, the price editor (P19d), the read-only prices and the payouts Notice fill the step column.
   await continueToReview(page, videoId);
   const reviewStep = stepColumn(page, "review");
   const rowParts = [
     reviewStep.locator("dl"),
+    reviewStep.locator("[data-video-price-editor]"),
     reviewStep.locator("[data-price-preview]"),
     page.locator("[data-payouts-notice]"),
   ];
@@ -228,6 +241,9 @@ test("G.6: a Library draft's File step (before and after the upload), Where post
     for (const control of [
       reviewStep.getByRole("button", { name: "Edit title", exact: true }),
       reviewStep.getByRole("link", { name: "Set up payouts", exact: true }),
+      basePriceTile(page, "rate_card"),
+      basePriceTile(page, "video"),
+      ...MUSIC_DISABLED_USES.map((key) => musicSwitch(reviewStep, key)),
       publish,
     ]) {
       await expectTouchTarget(control);

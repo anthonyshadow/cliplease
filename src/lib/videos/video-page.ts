@@ -7,7 +7,7 @@ import { RIGHTS_COPY } from "./rights";
 
 /**
  * 05 §6.7's labels. Proposed copy (owner answer Q-101 a): the Requests line, the Off banner, the Replace lock line,
- * "From {price} (your rate card)" (until P19d's VideoPriceEditor) and the two loading labels.
+ * "From {price}" and the two loading labels.
  */
 export const VIDEO_PAGE_COPY = {
   requests: "Requests",
@@ -16,7 +16,6 @@ export const VIDEO_PAGE_COPY = {
   original: "Original file",
   rights: "Rights",
   prices: "Prices for this video",
-  editRateCard: "Edit your rate card",
   turnOff: "Turn off",
   turningOff: "Turning off…",
   turnOn: "Turn on",
@@ -71,13 +70,12 @@ export function rightsSummary(
   return `Music: ${answer(containsMusic)} · People: ${answer(identifiablePeople)}`;
 }
 
-/** "From CA$150.00 (your rate card)", or "From CA$200.00" when the video has its own base price (P19d). */
+/** 05 §6.7 callout 8: "From CA$300.00 · Organic social repost · Paid social ads", the From price then the uses on. */
 export const fromPriceLine = (
   cents: number,
   currency: Currency,
-  basePriceSource: "rate_card" | "video",
-) =>
-  `${fromPriceText(cents, currency)}${basePriceSource === "rate_card" ? " (your rate card)" : ""}`;
+  useLabels: readonly string[],
+) => [fromPriceText(cents, currency), ...useLabels].join(" · ");
 
 /** A video's link is offered while it is Live or Off (05 §6.7, §6.8): never for a draft or a disabled video. */
 export const offersShareLink = (status: VideoStatus) =>

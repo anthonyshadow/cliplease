@@ -40,11 +40,23 @@ describe("the video page's lines (05 §6.7; owner answers Q-101, Q-102)", () => 
     expect(rightsSummary(null, false)).toBeNull();
   });
 
-  it("says where a From price comes from only when it is the rate card's", () => {
-    expect(fromPriceLine(15_000, "cad", "rate_card")).toBe(
-      "From CA$150.00 (your rate card)",
+  it("follows the From price with the uses that are on (05 §6.7 callout 8)", () => {
+    expect(
+      fromPriceLine(15_000, "cad", [
+        "Organic social repost",
+        "Paid social ads",
+        "TV / broadcast",
+      ]),
+    ).toBe(
+      "From CA$150.00 · Organic social repost · Paid social ads · TV / broadcast",
     );
-    expect(fromPriceLine(20_000, "cad", "video")).toBe("From CA$200.00");
+    expect(
+      fromPriceLine(20_000, "cad", [
+        "Organic social repost",
+        "Paid social ads",
+      ]),
+    ).toBe("From CA$200.00 · Organic social repost · Paid social ads");
+    expect(fromPriceLine(30_000, "cad", [])).toBe("From CA$300.00");
   });
 
   it("says the video stays live only while it is live", () => {

@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { formatBytes } from "@/lib/format";
 import type { PublishBlocker } from "@/lib/videos/review";
 import { MUSIC_DISABLED_USES } from "@/lib/videos/rights";
+import { VIDEO_PRICE_COPY } from "@/lib/videos/video-price";
 import { effectiveOptions } from "@/server/pricing/rate-card";
 import { creatorVideoFixture } from "../../../tests/helpers/creator-video-fixture";
 import { savedPosting } from "../../../tests/helpers/postings-fixtures";
@@ -43,7 +44,8 @@ const LIVE = creatorVideoFixture({
   postingsConfirmedAt: "2026-10-22T10:00:00.000Z",
 });
 const SOURCE = savedPosting({ isSource: true, position: 0 });
-const OPTIONS = effectiveOptions(rateCardFixture(), {
+const RATE_CARD = rateCardFixture();
+const OPTIONS = effectiveOptions(RATE_CARD, {
   disabledUses: [],
   basePriceOverrideCents: null,
 });
@@ -64,6 +66,7 @@ function page(
           ? ["mock"]
           : [],
         options: OPTIONS,
+        rateCard: RATE_CARD,
         disabledReason: null,
       }}
       counts={{ pendingCount: 1, licenseCount: 2 }}
@@ -139,22 +142,58 @@ describe("VideoPageView (S19; 05 §6.7)", () => {
 
     const prices = section("Prices for this video");
     expect(
-      within(prices).getByText("From CA$150.00 (your rate card)"),
-    ).toBeTruthy();
+      within(prices).getByRole<HTMLInputElement>("radio", {
+        name: "Use my rate card (CA$150)",
+      }).checked,
+    ).toBe(true);
     expect(
-      within(prices).getByText(
-        "Organic social repost · Paid social ads · TV / broadcast",
-      ),
-    ).toBeTruthy();
+      within(prices).getByRole<HTMLInputElement>("radio", {
+        name: VIDEO_PRICE_COPY.setOwn,
+      }).checked,
+    ).toBe(false);
+    expect(within(prices).queryByRole("switch")).toBeNull();
+    expect(prices.querySelectorAll("[data-price-preview]")).toHaveLength(1);
+    expect(prices.querySelector("[data-from-line]")?.textContent).toBe(
+      "From CA$150.00 · Organic social repost · Paid social ads · TV / broadcast",
+    );
+    // The preview's link is the section's only one (owner answer Q-162).
     expect(
       within(prices)
-        .getByRole("link", { name: "Edit your rate card" })
-        .getAttribute("href"),
-    ).toBe("/dashboard/pricing");
+        .getAllByRole("link", { name: "Edit your rate card" })
+        .map((link) => link.getAttribute("href")),
+    ).toEqual(["/dashboard/pricing"]);
 
     expect(screen.getByRole("button", { name: "Turn off" })).toBeTruthy();
     expect(screen.queryByText("Buyers can't see this video right now.")).toBe(
       null,
+    );
+  });
+
+  it("a music video: its two Switches as stored, the helper once, and the From line's uses (07 D82)", () => {
+    page({
+      video: { ...LIVE, containsMusic: true },
+      publish: {
+        blockers: [],
+        reconnectPlatforms: [],
+        options: effectiveOptions(RATE_CARD, {
+          disabledUses: ["broadcast"],
+          basePriceOverrideCents: null,
+        }),
+        rateCard: RATE_CARD,
+        disabledReason: null,
+      },
+    });
+    const prices = section("Prices for this video");
+    expect(within(prices).getAllByRole("switch")).toHaveLength(2);
+    const checked = (name: string) =>
+      within(prices).getByRole("switch", { name }).getAttribute("aria-checked");
+    expect(checked(VIDEO_PRICE_COPY.allowAnyway("paid_social"))).toBe("true");
+    expect(checked(VIDEO_PRICE_COPY.allowAnyway("broadcast"))).toBe("false");
+    expect(
+      within(prices).getAllByText(VIDEO_PRICE_COPY.musicHelper),
+    ).toHaveLength(1);
+    expect(prices.querySelector("[data-from-line]")?.textContent).toBe(
+      "From CA$150.00 · Organic social repost · Paid social ads",
     );
   });
 
@@ -202,6 +241,7 @@ describe("VideoPageView (S19; 05 §6.7)", () => {
         blockers: ["disabled_by_admin"],
         reconnectPlatforms: [],
         options: OPTIONS,
+        rateCard: RATE_CARD,
         disabledReason: "rights_claim",
       },
     });
@@ -269,6 +309,7 @@ describe("VideoPageView (S19; 05 §6.7)", () => {
         blockers: [],
         reconnectPlatforms: [],
         options: noUse,
+        rateCard: RATE_CARD,
         disabledReason: null,
       },
     });

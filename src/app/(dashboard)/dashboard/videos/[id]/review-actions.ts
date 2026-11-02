@@ -13,7 +13,12 @@ import {
 } from "@/lib/result";
 import { isUuid } from "@/lib/validation/uuid";
 import { SLUG_COPY, videoDetailsSchema } from "@/lib/validation/video";
-import { RIGHTS_COPY, RIGHTS_LOCK_COPY } from "@/lib/videos/rights";
+import {
+  MUSIC_DISABLED_USES,
+  MUSIC_USE_FIELD,
+  RIGHTS_COPY,
+  RIGHTS_LOCK_COPY,
+} from "@/lib/videos/rights";
 import { videoHref, videoStepHref } from "@/lib/videos/steps";
 import { titleMessage } from "@/lib/videos/title";
 import { requireCreator, toActor } from "@/server/auth/session";
@@ -46,7 +51,9 @@ const rightsInput = z.object({
 
 /**
  * Rights → Continue (01 J5.13, J5.14): the answers stored, then Review for a draft and the video's page for a video past
- * its draft (P14b's Rights _Edit_). Locked answers say why (owner answer Q-96 a).
+ * its draft (P14b's Rights _Edit_). Locked answers say why (owner answer Q-96 a). The music Switches (allowPaidSocial,
+ * allowBroadcast; 07 D82) are read outside the four answers: an off one posts "off" or nothing, and owner answer Q-158
+ * renders none for a use off on the rate card. They apply in attestRights' own transaction.
  */
 export async function attestRights(
   _previous: ActionResult | null,
@@ -64,6 +71,9 @@ export async function attestRights(
     if (!parsed.success) {
       return formError("invalid_input", RIGHTS_COPY.answerAll);
     }
+    const allowMusicUses = MUSIC_DISABLED_USES.filter(
+      (key) => formText(formData, MUSIC_USE_FIELD[key]) === "on",
+    );
     const ctx = await requireCreator(videoStepHref(videoId, "rights"));
     let status: VideoStatus;
     try {
@@ -72,6 +82,7 @@ export async function attestRights(
         ownsRights: true,
         containsMusic: parsed.data.containsMusic === "yes",
         identifiablePeople: parsed.data.identifiablePeople === "yes",
+        allowMusicUses,
       });
     } catch (error) {
       if (error instanceof RightsLockedError) {

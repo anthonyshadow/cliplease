@@ -36,8 +36,13 @@ import {
   GENERIC_ERROR_MESSAGE,
 } from "@/lib/result";
 import { DROPZONE_COPY } from "@/lib/upload/messages";
+import {
+  VideoUseToggleInputSchema,
+  videoBasePriceInputSchema,
+} from "@/lib/validation/pricing";
 import { isUuid } from "@/lib/validation/uuid";
 import { REVIEW_COPY } from "@/lib/videos/review";
+import type { MusicUseKey } from "@/lib/videos/rights";
 import { videoHref, videoStepFacts, videoStepHref } from "@/lib/videos/steps";
 import type { Actor } from "@/server/auth/actor";
 import { requireCreator, toActor } from "@/server/auth/session";
@@ -59,11 +64,14 @@ import {
   saveVideoPostings as saveVideoPostingsFor,
   saveVideoPostingsInput,
 } from "@/server/postings/save";
+import * as overrides from "@/server/pricing/video-overrides";
 import { redactErrors } from "@/server/rethrow-redacted";
 import { mockEnabled } from "@/server/social/registry";
 import { confirmSameVideo, withdrawSameVideo } from "@/server/videos/edit";
 import {
   confirmSameVideoErrorCode,
+  NoMusicError,
+  VideoDisabledError,
   VideoNotDraftError,
   VideoNotFoundError,
 } from "@/server/videos/errors";
@@ -81,7 +89,9 @@ import {
 } from "@/server/videos/queries";
 import { shareUrl } from "@/server/videos/visibility";
 
-// The Where posted step's Server Actions, Review's Publish and the video's Turn off and Delete draft (02 §6.1; 07 D69): Continue (saveVideoPostings, which also stores the same-video
+// The Where posted step's Server Actions, Review's Publish and the video's Turn off and Delete draft (02 §6.1; 07 D69),
+// and the Prices section's base price and music Switches (setVideoBasePrice, setVideoUseEnabled; 07 D82, below). Where
+// posted: Continue (saveVideoPostings, which also stores the same-video
 // tick or takes it back: no separate confirmSameVideo action, P11c Task 3; owner answer Q-83 a) and Check again
 // (recheckPosting). Thin: the form read (postingsFromFormData), the session gate, 02 §6.1's Zod (saveVideoPostingsInput),
 // the domain, and its refusals in 04 §11.10's words. Error shapes the step reads:
@@ -546,5 +556,80 @@ export async function deleteDraftVideo(input: {
       return formError("video_not_draft");
     }
     redirect(CREATOR_NAV.videos.href, RedirectType.replace);
+  });
+}
+
+/**
+ * **Save** in the Prices section's base price (02 §6.1; 07 D82, D97; owner answer Q-161), on Review and the video page:
+ * the video's own base, or null for the rate card, then refresh(). A bound refused names the field ("Minimum is
+ * CA$10."); a disabled video is the generic error and refresh()es (owner answer Q-159); not the creator's video → 404.
+ */
+export async function setVideoBasePrice(input: {
+  videoId: string;
+  basePriceCents: number | null;
+}): Promise<ActionResult> {
+  return redactErrors("video.price_set_failed", async () => {
+    const id = videoInput.safeParse(input);
+    if (!id.success) notFound();
+    // The creator first: the bounds are in their payout currency.
+    const ctx = await requireCreator(videoHref(id.data.videoId));
+    const parsed = videoBasePriceInputSchema(
+      ctx.creator.payoutCurrency,
+    ).safeParse(input);
+    if (!parsed.success) {
+      const issue = parsed.error.issues.find(
+        (i) => i.path[0] === "basePriceCents",
+      );
+      return issue
+        ? fieldError("invalid_input", "basePriceCents", issue.message)
+        : formError("invalid_input");
+    }
+    try {
+      await overrides.setVideoBasePrice(toActor(ctx), parsed.data);
+    } catch (error) {
+      if (error instanceof VideoDisabledError) {
+        refresh();
+        return formError("video_disabled");
+      }
+      if (!(error instanceof VideoNotFoundError)) throw error;
+      notFound();
+    }
+    refresh();
+    return { ok: true, data: undefined };
+  });
+}
+
+/**
+ * A music Switch on Review or the video page, saved on toggle (02 §6.1; 05 §6.7 Interaction; 07 D82): one music use on
+ * or off, then refresh(). A video without music, or a disabled one, is the generic error and refresh()es (owner answer
+ * Q-159); not the creator's video → 404.
+ */
+export async function setVideoUseEnabled(input: {
+  videoId: string;
+  useKey: MusicUseKey;
+  enabled: boolean;
+}): Promise<ActionResult> {
+  return redactErrors("video.use_toggle_failed", async () => {
+    const id = videoInput.safeParse(input);
+    if (!id.success) notFound();
+    const ctx = await requireCreator(videoHref(id.data.videoId));
+    const parsed = VideoUseToggleInputSchema.safeParse(input);
+    if (!parsed.success) return formError("invalid_input");
+    try {
+      await overrides.setVideoUseEnabled(toActor(ctx), parsed.data);
+    } catch (error) {
+      if (error instanceof VideoDisabledError) {
+        refresh();
+        return formError("video_disabled");
+      }
+      if (error instanceof NoMusicError) {
+        refresh();
+        return formError("no_music");
+      }
+      if (!(error instanceof VideoNotFoundError)) throw error;
+      notFound();
+    }
+    refresh();
+    return { ok: true, data: undefined };
   });
 }

@@ -6,10 +6,15 @@ import type { VideoStatus } from "../../lib/domain/values";
 import { POSTINGS_EDITABLE } from "../../lib/postings/form";
 import { isUuid } from "../../lib/validation/uuid";
 import { videoDetailsSchema } from "../../lib/validation/video";
-import { MUSIC_DISABLED_USES, rightsLockOf } from "../../lib/videos/rights";
+import {
+  MUSIC_DISABLED_USES,
+  type MusicUseKey,
+  rightsLockOf,
+} from "../../lib/videos/rights";
 import { type Actor, requireCreatorActor } from "../auth/actor";
 import { uniqueViolationConstraint } from "../db-errors";
 import { PostingsLockedError } from "../postings/errors";
+import { auditMusicUseChanges } from "../pricing/video-overrides";
 import { lockFlags } from "../storage/uploads";
 import {
   NoVerifiedPostingError,
@@ -25,7 +30,9 @@ import { ownedVideo } from "./scope";
 // A video's edits that aren't uploads or postings (02 §5.6), each under the video row lock: "These posts show this same
 // video" on the Where posted step (07 D69; P11c moved it there from P11's File step), stored and taken back only while
 // the postings can change (POSTINGS_EDITABLE: `draft` or `unpublished`, as for saveVideoPostings); the Rights step's
-// answers (attestRights); and the Review's title and link (updateVideoDetails).
+// answers (attestRights); and the Review's title and link (updateVideoDetails). video-overrides.ts (P19d) takes the same
+// lock (lockEditableVideo) and this file audits its music Switches through it: the two import each other's functions, a
+// cycle that is safe because neither uses an imported binding while it loads.
 
 /**
  * Locks the creator's video row (FOR UPDATE) and reads what the tick's writes check. Refusals: VideoNotFoundError (not
@@ -99,12 +106,13 @@ export async function withdrawSameVideo(
 }
 
 /**
- * Locks the creator's video row (FOR UPDATE) for the Rights and Review edits. Refusals, in this order:
- * VideoNotFoundError (not the creator's, or missing), VideoDisabledError. What lives in other tables (lockFlags) is read
- * after this, in a statement of its own: one that waited for the lock still sees them as they were when it began (READ
- * COMMITTED), before the transaction it waited for committed its rows.
+ * Locks the creator's video row (FOR UPDATE) for the Rights and Review edits and the Prices section's (video-overrides.ts,
+ * P19d). Refusals, in this order: VideoNotFoundError (not the creator's, or missing), VideoDisabledError. What lives in
+ * other tables (lockFlags, the creator's profile) is read after this, in a statement of its own: one that waited for the
+ * lock still sees them as they were when it began (READ COMMITTED), before the transaction it waited for committed its
+ * rows.
  */
-async function lockEditableVideo(
+export async function lockEditableVideo(
   tx: Pick<typeof db, "select">,
   creatorId: string,
   videoId: string,
@@ -114,6 +122,9 @@ async function lockEditableVideo(
       status: video.status,
       slug: video.slug,
       publishedAt: video.publishedAt,
+      containsMusic: video.containsMusic,
+      disabledUses: video.disabledUses,
+      basePriceOverrideCents: video.basePriceOverrideCents,
     })
     .from(video)
     .where(ownedVideo(creatorId, videoId))
@@ -125,12 +136,14 @@ async function lockEditableVideo(
 
 /**
  * The Rights step's answers (02 §5.6, 07 D39, D82; research/license.md §7): `contains_music`, `identifiable_people`,
- * `rights_attested_at = now()`, `attestation_version = 'v1'`, and `disabled_uses` = paid_social and broadcast when music
- * is Yes, else none (P19d lets the creator turn either back on). Re-attesting overwrites all of it. Under the video row
- * lock, so it serializes with approve's lockVideoForLicensing (07 D110). Refusals, in this order: VideoNotFoundError,
- * VideoDisabledError, RightsLockedError('license') once a license exists, RightsLockedError('request') while a request is
- * checkout_pending or awaiting_approval (owner answer Q-96 a). Returns the video's status: a draft goes on to Review, a
- * video past its draft back to its page (P14b).
+ * `rights_attested_at = now()`, `attestation_version = 'v1'`, and `disabled_uses` = the music uses not in
+ * `allowMusicUses` (the step's Switches) when music is Yes, else none. Re-attesting overwrites all of it. On a video
+ * already stored music Yes, each music use whose state changes (a Switch, or the uses coming back with a No) is audited
+ * `video.use_toggled`, in the same transaction. Under the video row lock, so it serializes with approve's
+ * lockVideoForLicensing (07 D110). Refusals, in this order: VideoNotFoundError, VideoDisabledError,
+ * RightsLockedError('license') once a license exists, RightsLockedError('request') while a request is checkout_pending
+ * or awaiting_approval (owner answer Q-96 a). Returns the video's status: a draft goes on to Review, a video past its
+ * draft back to its page (P14b).
  */
 export async function attestRights(
   a: Actor,
@@ -139,18 +152,23 @@ export async function attestRights(
     ownsRights: true;
     containsMusic: boolean;
     identifiablePeople: boolean;
+    allowMusicUses?: readonly MusicUseKey[];
   },
 ): Promise<VideoStatus> {
   const { creatorId } = requireCreatorActor(a);
   if (!isUuid(i.videoId)) throw new VideoNotFoundError();
   return db.transaction(async (tx) => {
-    const { status } = await lockEditableVideo(tx, creatorId, i.videoId);
+    const row = await lockEditableVideo(tx, creatorId, i.videoId);
     const [flags] = await tx
       .select(lockFlags(tx))
       .from(video)
       .where(eq(video.id, i.videoId));
     const lock = flags ? rightsLockOf(flags) : null;
     if (lock) throw new RightsLockedError(lock);
+    const allow = i.allowMusicUses ?? [];
+    const disabledUses = i.containsMusic
+      ? MUSIC_DISABLED_USES.filter((key) => !allow.includes(key))
+      : [];
     await tx
       .update(video)
       .set({
@@ -158,10 +176,19 @@ export async function attestRights(
         identifiablePeople: i.identifiablePeople,
         rightsAttestedAt: new Date(),
         attestationVersion: "v1",
-        disabledUses: i.containsMusic ? [...MUSIC_DISABLED_USES] : [],
+        disabledUses,
       })
       .where(eq(video.id, i.videoId));
-    return status;
+    if (row.containsMusic === true) {
+      await auditMusicUseChanges(
+        tx,
+        a,
+        i.videoId,
+        row.disabledUses,
+        disabledUses,
+      );
+    }
+    return row.status;
   });
 }
 

@@ -6,6 +6,8 @@ import {
   MultiplierBpsSchema,
   rateCardFieldErrors,
   rateCardInputSchema,
+  VideoUseToggleInputSchema,
+  videoBasePriceInputSchema,
 } from "./pricing";
 
 const firstMessage = (result: {
@@ -143,5 +145,71 @@ describe("rateCardInputSchema", () => {
         options: GENERIC_ERROR_MESSAGE,
       });
     }
+  });
+});
+
+describe("videoBasePriceInputSchema (07 D82, D97)", () => {
+  const schema = videoBasePriceInputSchema("cad");
+  const VIDEO_ID = "6f1c9a1e-2b3d-4c5e-8f70-112233445566";
+  const issueOf = (basePriceCents: unknown) => {
+    const result = schema.safeParse({ videoId: VIDEO_ID, basePriceCents });
+    return result.success
+      ? null
+      : {
+          path: result.error.issues[0]?.path,
+          message: result.error.issues[0]?.message,
+        };
+  };
+
+  it.each([null, 1000, 30000, 1_000_000])("accepts %s", (basePriceCents) => {
+    expect(
+      schema.safeParse({ videoId: VIDEO_ID, basePriceCents }).success,
+    ).toBe(true);
+  });
+
+  it.each([
+    [999, "Minimum is CA$10."],
+    [1_000_100, "Maximum is CA$10,000."],
+    [15050, "Use whole dollars."],
+    [Number.NaN, "Use whole dollars."],
+  ])("refuses %s on basePriceCents with %s", (cents, message) => {
+    expect(issueOf(cents)).toEqual({ path: ["basePriceCents"], message });
+  });
+
+  it("refuses a video id that isn't a uuid", () => {
+    const result = schema.safeParse({ videoId: "abc", basePriceCents: null });
+    expect(result.success ? null : result.error.issues[0]?.path).toEqual([
+      "videoId",
+    ]);
+  });
+});
+
+describe("VideoUseToggleInputSchema (07 D82)", () => {
+  const VIDEO_ID = "6f1c9a1e-2b3d-4c5e-8f70-112233445566";
+
+  it.each([
+    ["paid_social", true],
+    ["paid_social", false],
+    ["broadcast", true],
+    ["broadcast", false],
+  ])("accepts %s %s", (useKey, enabled) => {
+    expect(
+      VideoUseToggleInputSchema.safeParse({
+        videoId: VIDEO_ID,
+        useKey,
+        enabled,
+      }).success,
+    ).toBe(true);
+  });
+
+  it.each([
+    [{ useKey: "organic_social", enabled: true }],
+    [{ useKey: "x", enabled: true }],
+    [{ useKey: "paid_social", enabled: "on" }],
+  ])("refuses %o", (input) => {
+    expect(
+      VideoUseToggleInputSchema.safeParse({ videoId: VIDEO_ID, ...input })
+        .success,
+    ).toBe(false);
   });
 });

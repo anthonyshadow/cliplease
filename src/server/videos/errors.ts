@@ -76,6 +76,14 @@ export class VideoDisabledError extends Error {
   }
 }
 
+/** setVideoUseEnabled on a video whose music answer isn't Yes (07 D82). */
+export class NoMusicError extends Error {
+  constructor() {
+    super("no_music");
+    this.name = "NoMusicError";
+  }
+}
+
 /** attestRights after a license was sold, or while a request waits (02 §6.1; owner answer Q-96 a). */
 export class RightsLockedError extends Error {
   constructor(readonly lock: RightsLock) {

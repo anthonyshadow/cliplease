@@ -43,6 +43,7 @@ describe.each(["Pacific/Auckland", "America/Los_Angeles"])(
         [173250, "cad", undefined, "CA$1,732.50"],
         [200, "cad", undefined, "CA$2.00"],
         [15000, "cad", { wholeDollars: true }, "CA$150"],
+        [1_000_000, "cad", { wholeDollars: true }, "CA$10,000"],
         [173250, "usd", undefined, "US$1,732.50"],
         [15000, "cad", undefined, "CA$150.00"],
         [99_999_999, "cad", undefined, "CA$999,999.99"],

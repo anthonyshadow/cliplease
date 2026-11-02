@@ -58,14 +58,17 @@ export async function expectDbError(
   expect(error.cause).toMatchObject(want);
 }
 
-/** Waits until a statement whose text is LIKE `queryLike` waits for a lock: the moment a race test acts on. */
-export async function waitForLockWaiter(queryLike: string): Promise<void> {
+/** Waits until at least `count` statements LIKE `queryLike` wait for a lock: the moment a race test acts on. */
+export async function waitForLockWaiter(
+  queryLike: string,
+  count = 1,
+): Promise<void> {
   await vi.waitFor(
     async () => {
       const { rows } = await db.execute<{ n: number }>(
         sql`select count(*)::int as n from pg_stat_activity where wait_event_type = 'Lock' and query like ${queryLike}`,
       );
-      expect(rows[0]?.n).toBeGreaterThan(0);
+      expect(rows[0]?.n).toBeGreaterThanOrEqual(count);
     },
     { timeout: 10_000, interval: 20 },
   );

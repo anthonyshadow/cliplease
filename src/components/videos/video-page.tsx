@@ -50,11 +50,13 @@ import { uploadVideo } from "./file-step";
 import { FileStepUpload } from "./file-step-upload";
 import { PosterPicker } from "./poster-picker";
 import { PostingsReadOnly } from "./postings-read-only";
+import { DraftPricePreview, PriceDraftProvider } from "./price-draft";
 import { RefreshOnCoverDone } from "./refresh-on-cover";
 import { ReviewBlockers } from "./review-blockers";
 import { ReviewDetails } from "./review-details";
 import { TurnButton } from "./turn-button";
 import { UnlicensableNotice } from "./unlicensable-notice";
+import { VideoPriceEditor } from "./video-price-editor";
 import { VideoStatusPill } from "./video-status-pill";
 import { EditLink, PostingSummary } from "./where-posted-summary";
 
@@ -101,7 +103,8 @@ export async function VideoPage({
  * The page itself. From lg two columns in max-w-app (poster and share left, sections right); below lg one centered
  * max-w-reading column in the Mobile order (07 D146; 05 §1.6 S19). The poster is the small frame beside the title on a
  * phone (05's frame) and the large one, at most 60svh, from md. Sections: Requests, Details, Where it was posted,
- * Original file, Rights, Prices, then Turn off / Turn on. Off: its Banner, Where posted and the original editable.
+ * Original file, Rights, Prices (the per-video editor and preview, 07 D82, then "From {price} · {uses}"), then Turn
+ * off / Turn on. Off: its Banner, Where posted and the original editable.
  * Disabled: the admin's reason only (never the note, 07 D45), nothing editable, no link and no prices.
  */
 export function VideoPageView({
@@ -136,10 +139,9 @@ export function VideoPageView({
     width: video.width,
     height: video.height,
   };
-  const uses = publish.options.use
+  const enabledUseLabels = publish.options.use
     .filter((use) => use.enabled)
-    .map((use) => use.label)
-    .join(" · ");
+    .map((use) => use.label);
   const rights = rightsSummary(video.containsMusic, video.identifiablePeople);
   // 01 J3.9: a verified posting's post the platform removed.
   const removed = postings.flatMap(
@@ -308,21 +310,30 @@ export function VideoPageView({
         </VideoSection>
         {disabled ? null : (
           <VideoSection id="prices" title={VIDEO_PAGE_COPY.prices}>
+            <PriceDraftProvider>
+              <div className="flex min-w-0 flex-col gap-4">
+                <VideoPriceEditor
+                  videoId={video.id}
+                  legend={VIDEO_PAGE_COPY.prices}
+                  options={publish.options}
+                  rateCard={publish.rateCard}
+                  containsMusic={video.containsMusic}
+                />
+                <DraftPricePreview
+                  options={publish.options}
+                  platformFeeBps={platformFeeBps}
+                />
+              </div>
+            </PriceDraftProvider>
             {from === null ? null : (
-              <p className="text-body text-ink tabular-nums">
+              <p data-from-line className="text-body text-ink tabular-nums">
                 {fromPriceLine(
                   from,
                   publish.options.currency,
-                  publish.options.basePriceSource,
+                  enabledUseLabels,
                 )}
               </p>
             )}
-            {uses ? <p className="text-callout text-ink-2">{uses}</p> : null}
-            <Button asChild variant="link" className="self-start">
-              <Link href={CREATOR_NAV.pricing.href}>
-                {VIDEO_PAGE_COPY.editRateCard}
-              </Link>
-            </Button>
           </VideoSection>
         )}
         {live || off ? (

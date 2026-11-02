@@ -110,8 +110,9 @@ function publishFactsOf(
 }
 
 /**
- * The creator's video's PublishFacts, with its disabled reason, or null (not the creator's, missing, not a uuid). The
- * video, its postings with their accounts, and the rate card are read together, with no lock (the Review's read).
+ * The creator's video's PublishFacts, with its disabled reason and the rate card itself, or null (not the creator's,
+ * missing, not a uuid). The video, its postings with their accounts, and the rate card are read together, with no lock
+ * (the Review's read). The rate card is for the Prices section's "Use my rate card ({base})" (07 D82).
  */
 export async function getPublishFacts(
   creatorId: string,
@@ -119,6 +120,7 @@ export async function getPublishFacts(
 ): Promise<{
   facts: PublishFacts;
   disabledReason: VideoDisabledReason | null;
+  rateCard: RateCardDTO;
 } | null> {
   if (!isUuid(videoId)) return null;
   const [[row], postings, rateCard] = await Promise.all([
@@ -131,6 +133,7 @@ export async function getPublishFacts(
   return {
     facts: publishFactsOf(row, postings, rateCard, creatorId),
     disabledReason: row.disabledReason,
+    rateCard,
   };
 }
 
@@ -197,8 +200,8 @@ export async function publishVideo(
 
 /**
  * The creator's video's blockers, with the platforms whose accounts need a reconnect (one Review row each, 07 D66), the
- * effective options (the Review's prices) and the admin's reason when it is disabled. VideoNotFoundError when the video
- * isn't the creator's.
+ * effective options (the Review's prices), the rate card itself (the price editor's "Use my rate card ({base})", 07 D82;
+ * creator pages only) and the admin's reason when it is disabled. VideoNotFoundError when the video isn't the creator's.
  */
 export async function getPublishBlockers(
   a: Actor,
@@ -207,12 +210,13 @@ export async function getPublishBlockers(
   blockers: PublishBlocker[];
   reconnectPlatforms: PostingPlatform[];
   options: EffectiveOptions;
+  rateCard: RateCardDTO;
   disabledReason: VideoDisabledReason | null;
 }> {
   const { creatorId } = requireCreatorActor(a);
   const read = await getPublishFacts(creatorId, videoId);
   if (!read) throw new VideoNotFoundError();
-  const { facts, disabledReason } = read;
+  const { facts, disabledReason, rateCard } = read;
   return {
     blockers: computePublishBlockers(facts),
     reconnectPlatforms: [
@@ -223,6 +227,7 @@ export async function getPublishBlockers(
       ),
     ],
     options: facts.options,
+    rateCard,
     disabledReason,
   };
 }

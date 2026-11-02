@@ -10,6 +10,15 @@ export const MUSIC_DISABLED_USES = [
   "broadcast",
 ] as const satisfies readonly UseKey[];
 
+/** One of the uses music turns off (07 D82): the key of a music Switch. */
+export type MusicUseKey = (typeof MUSIC_DISABLED_USES)[number];
+
+/** Each music Switch's form field on the Rights step (P19d): the action reads `=== "on"`. */
+export const MUSIC_USE_FIELD = {
+  paid_social: "allowPaidSocial",
+  broadcast: "allowBroadcast",
+} as const satisfies Record<MusicUseKey, string>;
+
 /** 01 J5.13's attestation and questions, 05's footnotes; the rest proposed copy (owner answers Q-96, Q-98). */
 export const RIGHTS_COPY = {
   ownsRights:

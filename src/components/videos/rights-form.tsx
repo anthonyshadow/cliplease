@@ -11,10 +11,13 @@ import { Notice } from "@/components/ui/notice";
 import { PRIMARY_WIDTH } from "@/components/ui/primary-width";
 import { useFormAction } from "@/components/ui/use-form-action";
 import {
+  type MusicUseKey,
   RIGHTS_COPY,
   RIGHTS_LOCK_COPY,
   type RightsLock,
 } from "@/lib/videos/rights";
+import type { MusicSwitch } from "@/lib/videos/video-price";
+import { MusicUseSwitches } from "./video-price-editor";
 
 type Answer = "yes" | "no" | null;
 
@@ -60,19 +63,24 @@ function YesNo({
 /**
  * Step 3 · Rights (01 J5.13–J5.15; 05 §6.5 callouts 36–41): the two attestations, unchecked on every visit so each
  * Continue is a fresh one (owner answer Q-99 a), and the two questions with no default, prefilled from saved answers.
- * Music Yes adds 05's footnote; people Yes, what buyers will see. Continue stays disabled until all four are answered.
- * With a license sold or a request waiting (`lock`, owner answer Q-96 a) the answers show read-only with the lock line.
+ * Music Yes adds the music Switches (07 D82; owner answer Q-158: none for a use off on the rate card), prefilled from
+ * the stored uses and posted with Continue, and 05's footnote while none is on; people Yes, what buyers will see.
+ * Continue stays disabled until all four are answered. With a license sold or a request waiting (`lock`, owner answer
+ * Q-96 a) the answers show read-only with the lock line, and no Switches.
  */
 export function RightsForm({
   videoId,
   containsMusic,
   identifiablePeople,
   lock,
+  musicUses,
 }: {
   videoId: string;
   containsMusic: boolean | null;
   identifiablePeople: boolean | null;
   lock: RightsLock | null;
+  /** musicSwitches(options, containsMusic): the Switches music Yes shows, each as stored. */
+  musicUses: readonly MusicSwitch[];
 }) {
   const { state, pending, resultKey, formProps } = useFormAction(
     attestRights,
@@ -82,6 +90,13 @@ export function RightsForm({
   const [notReupload, setNotReupload] = useState(false);
   const [music, setMusic] = useState<Answer>(answerOf(containsMusic));
   const [people, setPeople] = useState<Answer>(answerOf(identifiablePeople));
+  const [allowed, setAllowed] = useState<Partial<Record<MusicUseKey, boolean>>>(
+    () => Object.fromEntries(musicUses.map((s) => [s.key, s.on])),
+  );
+  const switches = musicUses.map((s) => ({
+    key: s.key,
+    on: allowed[s.key] ?? false,
+  }));
   const locked = lock !== null;
   const complete =
     ownsRights && notReupload && music !== null && people !== null;
@@ -115,9 +130,22 @@ export function RightsForm({
           disabled={locked}
         />
         {music === "yes" ? (
-          <p className="text-footnote text-ink-2">
-            {RIGHTS_COPY.musicFootnote}
-          </p>
+          <>
+            {switches.some((s) => s.on) ? null : (
+              <p className="text-footnote text-ink-2">
+                {RIGHTS_COPY.musicFootnote}
+              </p>
+            )}
+            {locked ? null : (
+              <MusicUseSwitches
+                mode="form"
+                switches={switches}
+                onCheckedChange={(key, on) =>
+                  setAllowed((prev) => ({ ...prev, [key]: on }))
+                }
+              />
+            )}
+          </>
         ) : null}
       </div>
       <div className="flex flex-col gap-3">

@@ -89,7 +89,7 @@ export default async function VideoPage({
       />
     );
   }
-  if (view.kind === "rights") return <RightsStep video={video} />;
+  if (view.kind === "rights") return <RightsStep actor={actor} video={video} />;
   if (view.kind === "review") {
     return (
       <ReviewStep

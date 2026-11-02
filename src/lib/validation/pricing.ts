@@ -21,6 +21,7 @@ import {
   MULTIPLIER_STEP_BPS,
 } from "../pricing/presets";
 import { GENERIC_ERROR_MESSAGE } from "../result";
+import { MUSIC_DISABLED_USES } from "../videos/rights";
 
 const WHOLE_DOLLARS_MESSAGE = "Use whole dollars.";
 
@@ -59,6 +60,21 @@ export function basePriceCentsSchema(currency: Currency) {
     })
     .multipleOf(100, { error: WHOLE_DOLLARS_MESSAGE });
 }
+
+/** setVideoBasePrice's input (07 D82, D97): a whole-dollar base in the creator's `currency`, or null for the rate card. */
+export function videoBasePriceInputSchema(currency: Currency) {
+  return z.object({
+    videoId: z.uuid(),
+    basePriceCents: basePriceCentsSchema(currency).nullable(),
+  });
+}
+
+/** setVideoUseEnabled's input (07 D82): one music use, on or off. */
+export const VideoUseToggleInputSchema = z.object({
+  videoId: z.uuid(),
+  useKey: z.enum(MUSIC_DISABLED_USES),
+  enabled: z.boolean(),
+});
 
 /** ×1.00 to ×10.00 in steps of 0.05, as basis points. */
 export const MultiplierBpsSchema = z

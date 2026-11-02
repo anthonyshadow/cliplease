@@ -8,12 +8,14 @@ import { cn } from "@/lib/utils";
  * the music question's on its own line; `callout` ink-2, the group's description), then its OptionTiles. The tiles hold
  * native radios, so arrow keys, form posting and no-JS work for free; no Radix RadioGroup. The Rights step's two
  * questions are its first use (owner answer Q-97 a); the license page reuses it (P15). `error`: a line under the tiles,
- * as a field's (the license page's "That option isn't available anymore.", P16a).
+ * as a field's (the license page's "That option isn't available anymore.", P16a). `hideLegend`: a group named by the
+ * page's own label (VideoPriceEditor, P19d), its legend for screen readers only.
  */
 export function OptionGroup({
   legend,
   help,
   error,
+  hideLegend = false,
   className,
   children,
   "aria-describedby": describedBy,
@@ -22,6 +24,7 @@ export function OptionGroup({
   legend: ReactNode;
   help?: ReactNode;
   error?: ReactNode;
+  hideLegend?: boolean;
   children: ReactNode;
 }) {
   const helpId = useId();
@@ -40,7 +43,13 @@ export function OptionGroup({
       }
       className={cn("flex min-w-0 flex-col", className)}
     >
-      <legend className={cn("text-title-2 text-ink", help ? "mb-1" : "mb-3")}>
+      <legend
+        className={
+          hideLegend
+            ? "sr-only"
+            : cn("text-title-2 text-ink", help ? "mb-1" : "mb-3")
+        }
+      >
         {legend}
       </legend>
       {help ? (

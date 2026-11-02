@@ -31,6 +31,18 @@ describe("fromPriceCents (04 §9.27; 07 D82, D97)", () => {
     ).toBe(20000);
   });
 
+  it.each([30000, 1000])("is a %i per-video base itself (P19d)", (base) => {
+    expect(
+      fromPriceCents(
+        effectiveOptions(rateCardFixture(), {
+          disabledUses: [],
+          basePriceOverrideCents: base,
+        }),
+        FEE_BPS,
+      ),
+    ).toBe(base);
+  });
+
   it("takes each group's cheapest enabled option, not its first", () => {
     // Organic social (first) at ×3.00, paid social at ×1.50: CA$150 × 1.50.
     const card = rateCardFixture((o) =>

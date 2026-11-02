@@ -91,4 +91,52 @@ describe("effectiveOptions (02 §5.5, 07 D82)", () => {
       enabled: false,
     });
   });
+
+  it("re-enables a use music turned off: only broadcast stays off, Paid social is an ordinary option (P19d)", () => {
+    const options = effectiveOptions(rateCardFixture(), {
+      disabledUses: ["broadcast"],
+      basePriceOverrideCents: null,
+    });
+    expect(
+      options.use.map((o) => [o.key, o.enabled, o.disabledReason]),
+    ).toEqual([
+      ["organic_social", true, undefined],
+      ["paid_social", true, undefined],
+      ["broadcast", false, "music"],
+    ]);
+  });
+
+  it("changes neither terms nor territories, and never its inputs, whatever the video says", () => {
+    const card = rateCardFixture();
+    const plain = effectiveOptions(card, NO_VIDEO);
+    for (const video of [
+      {
+        disabledUses: ["paid_social", "broadcast"] as const,
+        basePriceOverrideCents: null,
+      },
+      { disabledUses: ["broadcast"] as const, basePriceOverrideCents: 30000 },
+      { disabledUses: [] as const, basePriceOverrideCents: 1000 },
+    ]) {
+      const before = structuredClone({ card, video });
+      const options = effectiveOptions(card, video);
+      expect([options.term, options.territory]).toEqual([
+        plain.term,
+        plain.territory,
+      ]);
+      expect({ card, video }).toEqual(before);
+    }
+  });
+
+  it("takes a 30000 override over the card's 15000, and the card's again without one", () => {
+    expect(
+      effectiveOptions(rateCardFixture(), {
+        disabledUses: [],
+        basePriceOverrideCents: 30000,
+      }),
+    ).toMatchObject({ basePriceCents: 30000, basePriceSource: "video" });
+    expect(effectiveOptions(rateCardFixture(), NO_VIDEO)).toMatchObject({
+      basePriceCents: 15000,
+      basePriceSource: "rate_card",
+    });
+  });
 });

@@ -14,6 +14,7 @@ import { signUpCreator } from "./helpers/creator";
 import { viewportWidth } from "./helpers/layout";
 import { libraryPostId, POST_01, tiles } from "./helpers/library";
 import { pressLink } from "./helpers/press";
+import { basePriceRadio, expectMusicSwitches } from "./helpers/video-price";
 import {
   answerRights,
   attachSample,
@@ -34,14 +35,15 @@ import {
   trackPosterStored,
 } from "./helpers/videos";
 
-// Rights and Review (P13; 01 J5.13–J5.17; 05 §6.5 callouts 36–52 and States; 07 D69, D70, D74, D82, D89; owner answers
-// Q-94–Q-99) on chromium-desktop and webkit-iphone. A plain upload with no postings: Continue on Rights waits for all
-// four answers and music Yes says what turns off; the Review shows its rows (the title and link edited in place by
-// keyboard, the cover, "Not posted anywhere yet", the video's prices without the music-disabled uses, the self-attested
-// badge) and the payouts Notice but no blockers, and "Set up payouts" comes back to the Review without the Notice.
-// Back on Rights the questions keep their answers and the boxes are unticked; an arrow key turns music to No and the
-// Review offers all three uses again. A Library draft shows the verified badge and its Demo row. No step shows a
-// platform-link Switch (07 D69).
+// Rights and Review (P13, P19d; 01 J5.13–J5.17; 05 §6.5 callouts 36–52 and States; 07 D69, D70, D74, D82, D89; owner
+// answers Q-94–Q-99, Q-158, Q-162) on chromium-desktop and webkit-iphone. A plain upload with no postings: Continue on
+// Rights waits for all four answers, and music Yes says what turns off and shows the two music Switches, both off; the
+// Review shows its rows (the title and link edited in place by keyboard, the cover, "Not posted anywhere yet", the
+// video's prices on the rate card with the same Switches, live, over one preview without the music-disabled uses, the
+// self-attested badge) and the payouts Notice but no blockers, and "Set up payouts" comes back to the Review without the
+// Notice. Back on Rights the questions and the Switches keep their answers and the boxes are unticked; an arrow key
+// turns music to No, the Switches go, and the Review offers all three uses again. A Library draft shows the verified
+// badge and its Demo row. No step shows a platform-link Switch (07 D69); music Yes shows the two music Switches (07 D82).
 test.use({ reducedMotion: "reduce" });
 test.afterEach(cleanCreatedVideos);
 
@@ -115,6 +117,8 @@ test("J5.13–J5.17: a plain upload's Rights waits for all four answers; its Rev
   await expect(
     page.getByText(RIGHTS_COPY.musicFootnote, { exact: true }),
   ).toBeVisible();
+  // A new music Yes: both music Switches, off (07 D82).
+  await expectMusicSwitches(page, { paid_social: false, broadcast: false });
   await expect(continueButton(page)).toBeEnabled();
   await continueToReview(page, videoId);
 
@@ -156,7 +160,10 @@ test("J5.13–J5.17: a plain upload's Rights waits for all four answers; its Rev
   await expect(
     step.getByRole("button", { name: "Publish", exact: true }),
   ).toBeEnabled();
-  await expect(page.getByRole("switch")).toHaveCount(0);
+  // The prices: the rate card chosen, the live music Switches as stored (both off) and one preview (owner answer Q-162).
+  await expect(basePriceRadio(page, "rate_card")).toBeChecked();
+  await expectMusicSwitches(page, { paid_social: false, broadcast: false });
+  await expect(page.locator("[data-price-preview]")).toHaveCount(1);
   await expect(
     prices.getByRole("link", { name: "Edit your rate card", exact: true }),
   ).toHaveAttribute("href", "/dashboard/pricing");
@@ -210,7 +217,8 @@ test("J5.13–J5.17: a plain upload's Rights waits for all four answers; its Rev
   await expect(page).toHaveURL(videoStepHref(videoId, "review"));
   await expect(ready(page)).toBeVisible();
 
-  // Back on Rights: the questions keep their answers, the boxes start unticked (owner answer Q-99 a).
+  // Back on Rights: the questions keep their answers and the Switches theirs (both off, as stored), the boxes start
+  // unticked (owner answer Q-99 a).
   await pressLink(page, "Back");
   await expectRightsStep(page, videoId);
   const musicYes = rightsAnswer(page, RIGHTS_COPY.musicQuestion, "Yes");
@@ -219,16 +227,18 @@ test("J5.13–J5.17: a plain upload's Rights waits for all four answers; its Rev
   await expect(
     rightsAnswer(page, RIGHTS_COPY.peopleQuestion, "No"),
   ).toBeChecked();
+  await expectMusicSwitches(page, { paid_social: false, broadcast: false });
   for (const box of [RIGHTS_COPY.ownsRights, RIGHTS_COPY.notReupload]) {
     await expect(page.getByLabel(box, { exact: true })).not.toBeChecked();
   }
   await expect(continueButton(page)).toBeDisabled();
 
-  // An arrow key moves the music answer to No; the Review offers all three uses again.
+  // An arrow key moves the music answer to No, and the Switches go; the Review offers all three uses again.
   await musicYes.focus();
   await musicYes.press("ArrowRight");
   await expect(musicNo).toBeChecked();
   await expect(musicNo).toBeFocused();
+  await expect(page.getByRole("switch")).toHaveCount(0);
   await answerRights(page);
   await continueToReview(page, videoId);
   await expect(useOptions(page)).toHaveText([
