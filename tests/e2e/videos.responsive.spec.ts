@@ -5,7 +5,6 @@ import {
   VIDEO_MENU_COPY,
   VIDEO_PAGE_COPY,
 } from "../../src/lib/videos/video-page";
-import { VIDEO_PRICE_COPY } from "../../src/lib/videos/video-price";
 import { choose } from "./helpers/buyer";
 import { collectConsoleErrors } from "./helpers/console";
 import {
@@ -34,9 +33,11 @@ import {
 import { POST_01 } from "./helpers/library";
 import { pressLocator } from "./helpers/press";
 import {
+  baseField,
   basePriceRadio,
   basePriceTile,
   musicSwitchControls,
+  pricesSection,
 } from "./helpers/video-price";
 import { cleanCreatedVideos, createDraft, DRAFT_TITLE } from "./helpers/videos";
 
@@ -137,14 +138,8 @@ test("G.6: the success view, the video's page, /dashboard/videos and the public 
   // "Set a base price for this video" chosen: its field, Save and Cancel stay inside the sections; Cancel leaves the
   // editor clean (no leave guard) for the navigations below.
   await choose(page, "basePrice", "video");
-  const prices = sections.getByRole("region", {
-    name: VIDEO_PAGE_COPY.prices,
-    exact: true,
-  });
-  const field = prices.getByRole("textbox", {
-    name: VIDEO_PRICE_COPY.field,
-    exact: true,
-  });
+  const prices = pricesSection(page);
+  const field = baseField(page);
   const save = prices.getByRole("button", {
     name: REVIEW_COPY.save,
     exact: true,

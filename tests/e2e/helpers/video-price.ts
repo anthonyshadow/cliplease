@@ -3,11 +3,23 @@ import {
   MUSIC_DISABLED_USES,
   type MusicUseKey,
 } from "../../../src/lib/videos/rights";
+import { VIDEO_PAGE_COPY } from "../../../src/lib/videos/video-page";
 import { VIDEO_PRICE_COPY } from "../../../src/lib/videos/video-price";
 import { radio } from "./buyer";
 
 // The Prices section's VideoPriceEditor and music Switches (P19d; 04 §9.29; 05 §6.5 callouts 38 and 47, §6.7 callouts 8
 // and 11; 07 D82) on the Review and the video page, and the music Switches of the Rights step.
+
+/** The video page's Prices section (05 §6.7 callout 8): its region is named by its heading. */
+export const pricesSection = (page: Page) =>
+  page.getByRole("region", { name: VIDEO_PAGE_COPY.prices, exact: true });
+
+/** The editor's field, shown while "Set a base price for this video" is chosen. */
+export const baseField = (page: Page) =>
+  pricesSection(page).getByRole("textbox", {
+    name: VIDEO_PRICE_COPY.field,
+    exact: true,
+  });
 
 /** "rate_card" ("Use my rate card (CA$150)") or "video" ("Set a base price for this video"). */
 export type BasePriceChoice = "rate_card" | "video";

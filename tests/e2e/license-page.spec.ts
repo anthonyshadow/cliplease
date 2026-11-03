@@ -1,4 +1,4 @@
-import { expect, type Page, test } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import { APP_NAME } from "../../src/lib/app-name";
 import { formatDeadline, formatDelta, formatMoney } from "../../src/lib/format";
 import { CHECKOUT_COPY } from "../../src/lib/licensing/checkout-copy";
@@ -15,6 +15,7 @@ import {
   holdServerActions,
   hydrated,
   openSuccessUrl,
+  optionTile,
   radio,
   requestButton,
   requestDemoLicense,
@@ -43,9 +44,6 @@ test.afterEach(cleanCreatedVideos);
 
 const cad = (cents: number) => formatMoney(cents, "cad");
 const REL = "nofollow ugc noopener noreferrer";
-
-const tile = (page: Page, group: string, key: string) =>
-  page.locator("[data-option-tile]").filter({ has: radio(page, group, key) });
 
 test("J6.4, J7.1–J7.6, J7.20, J7.21: a logged-out buyer sees the video, who owns it and where it was posted, and the live price", async ({
   page,
@@ -175,7 +173,7 @@ test("J6.4, J7.1–J7.6, J7.20, J7.21: a logged-out buyer sees the video, who ow
   await expect(button).toHaveAccessibleName(`Request license · ${cad(173250)}`);
   await expect(button).toBeEnabled();
   await expect(bar.getByRole("status")).toHaveText(`Total ${cad(173250)}`);
-  await expect(tile(buyer, "use", "organic_social")).toContainText(
+  await expect(optionTile(buyer, "use", "organic_social")).toContainText(
     formatDelta(-105000, "cad"),
   );
   await expect(buyer.locator('input[name="expectedTotalCents"]')).toHaveValue(
@@ -281,7 +279,7 @@ test("J7.4, J5.14: a music video's Paid social ads and TV / broadcast are off wi
   await expect(buyer.getByText(LICENSE_PAGE_COPY.music.body)).toBeVisible();
   for (const key of ["paid_social", "broadcast"]) {
     await expect(radio(buyer, "use", key)).toBeDisabled();
-    await expect(tile(buyer, "use", key)).toContainText(
+    await expect(optionTile(buyer, "use", key)).toContainText(
       LICENSE_PAGE_COPY.musicDisabled,
     );
   }
@@ -341,7 +339,7 @@ test("J7.4, J5.14: a music video's Paid social ads and TV / broadcast are off wi
 
   // A tap on One country does move focus into its select. The tile's label is stretched over the tile (so a tap
   // anywhere selects), so it is what the pointer hits.
-  await tile(buyer, "territory", "country").locator("label").click();
+  await optionTile(buyer, "territory", "country").locator("label").click();
   await expect(radio(buyer, "territory", "country")).toBeChecked();
   await expect(buyer.getByLabel("Country", { exact: true })).toBeFocused();
 

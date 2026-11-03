@@ -13,7 +13,7 @@ import {
   setVideoUseEnabled,
 } from "@/app/(dashboard)/dashboard/videos/[id]/actions";
 import { OptionGroup, OptionTile } from "@/components/license/option-group";
-import { Button } from "@/components/ui/button";
+import { RefusalAlert, useRefusal } from "@/components/ui/refusal-alert";
 import { Switch } from "@/components/ui/switch";
 import { TextField } from "@/components/ui/text-field";
 import { toast } from "@/components/ui/toast";
@@ -29,7 +29,6 @@ import {
 } from "@/lib/pricing/multiplier";
 import { GENERIC_ERROR_MESSAGE } from "@/lib/result";
 import { basePriceCentsSchema } from "@/lib/validation/pricing";
-import { REVIEW_COPY } from "@/lib/videos/review";
 import { MUSIC_USE_FIELD, type MusicUseKey } from "@/lib/videos/rights";
 import { VIDEO_PAGE_COPY } from "@/lib/videos/video-page";
 import {
@@ -39,6 +38,7 @@ import {
 } from "@/lib/videos/video-price";
 import type { EffectiveOptions, RateCardDTO } from "@/server/pricing/rate-card";
 import { usePriceDraft } from "./price-draft";
+import { SaveCancelButtons } from "./save-cancel-buttons";
 
 type Choice = "rate_card" | "video";
 
@@ -86,9 +86,7 @@ export function VideoPriceEditor({
   const [lastValid, setLastValid] = useState(options.basePriceCents);
   const [seen, setSeen] = useState(stored);
   // A refusal, numbered so each one is announced and takes the focus once it has rendered.
-  const [refusal, setRefusal] = useState<{ message: string; n: number } | null>(
-    null,
-  );
+  const [refusal, refuse, clearRefusal] = useRefusal();
   const [saving, run] = usePendingAction();
   const { setBaseCents } = usePriceDraft();
   const field = useRef<HTMLInputElement>(null);
@@ -135,17 +133,15 @@ export function VideoPriceEditor({
     basePriceCentsSchema(currency).safeParse(
       parseWholeDollars(value) ?? Number.NaN,
     );
-  const refuse = (message: string) =>
-    setRefusal((last) => ({ message, n: (last?.n ?? 0) + 1 }));
 
   function choose(next: Choice) {
     setChoice(next);
-    setRefusal(null);
+    clearRefusal();
   }
 
   function edit(value: string) {
     setText(value);
-    setRefusal(null);
+    clearRefusal();
     const parsed = parse(value);
     if (parsed.success) setLastValid(parsed.data);
   }
@@ -154,7 +150,7 @@ export function VideoPriceEditor({
     setChoice(stored.choice);
     setText(stored.text);
     setLastValid(options.basePriceCents);
-    setRefusal(null);
+    clearRefusal();
   }
 
   async function save(event: FormEvent<HTMLFormElement>) {
@@ -170,7 +166,7 @@ export function VideoPriceEditor({
       }
       basePriceCents = parsed.data;
     }
-    setRefusal(null);
+    clearRefusal();
     const result = await run(() =>
       setVideoBasePrice({ videoId, basePriceCents }),
     );
@@ -248,32 +244,9 @@ export function VideoPriceEditor({
             />
           ) : null}
           {dirty ? (
-            <div className="flex gap-4">
-              <Button
-                type="submit"
-                variant="tertiary"
-                size="sm"
-                loading={saving}
-                loadingLabel="Saving…"
-              >
-                {REVIEW_COPY.save}
-              </Button>
-              <Button
-                type="button"
-                variant="tertiary"
-                size="sm"
-                disabled={saving}
-                onClick={cancel}
-              >
-                {REVIEW_COPY.cancel}
-              </Button>
-            </div>
+            <SaveCancelButtons saving={saving} onCancel={cancel} />
           ) : null}
-          {refusal ? (
-            <p key={refusal.n} role="alert" className="sr-only">
-              {refusal.message}
-            </p>
-          ) : null}
+          <RefusalAlert refusal={refusal} />
         </form>
       ) : null}
       <MusicUseSwitches mode="live" videoId={videoId} switches={switches} />
@@ -352,9 +325,7 @@ function LiveMusicSwitch({
   const [on, setOn] = useState(stored);
   const [seen, setSeen] = useState(stored);
   // Numbered, so a second refusal is announced again.
-  const [refusal, setRefusal] = useState<{ message: string; n: number } | null>(
-    null,
-  );
+  const [refusal, refuse, clearRefusal] = useRefusal();
   const [pending, run] = usePendingAction();
   const ref = useRef<HTMLButtonElement>(null);
   // A refresh that lands mid-save applies once the save is over.
@@ -364,10 +335,9 @@ function LiveMusicSwitch({
   }
 
   async function toggle(next: boolean) {
-    if (pending) return;
     const was = on;
     setOn(next);
-    setRefusal(null);
+    clearRefusal();
     const result = await run(() =>
       setVideoUseEnabled({ videoId, useKey, enabled: next }),
     );
@@ -377,8 +347,7 @@ function LiveMusicSwitch({
       return;
     }
     setOn(was);
-    const { message } = result.error;
-    setRefusal((last) => ({ message, n: (last?.n ?? 0) + 1 }));
+    refuse(result.error.message);
     ref.current?.focus();
   }
 
@@ -393,11 +362,7 @@ function LiveMusicSwitch({
         aria-describedby={describedBy}
         error={refusal?.message}
       />
-      {refusal ? (
-        <p key={refusal.n} role="alert" className="sr-only">
-          {refusal.message}
-        </p>
-      ) : null}
+      <RefusalAlert refusal={refusal} />
     </>
   );
 }

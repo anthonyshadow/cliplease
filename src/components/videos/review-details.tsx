@@ -4,6 +4,7 @@ import { type FormEvent, useEffect, useRef, useState } from "react";
 import { updateVideoDetails } from "@/app/(dashboard)/dashboard/videos/[id]/review-actions";
 import { Button } from "@/components/ui/button";
 import { type Fact, FactList } from "@/components/ui/fact-list";
+import { RefusalAlert, useRefusal } from "@/components/ui/refusal-alert";
 import { TextField } from "@/components/ui/text-field";
 import { toast } from "@/components/ui/toast";
 import { usePendingAction } from "@/components/ui/use-pending-action";
@@ -12,6 +13,7 @@ import { videoUrl } from "@/lib/urls";
 import { editRowLabel, LINK_ROW_ID, REVIEW_COPY } from "@/lib/videos/review";
 import { TITLE_MAX } from "@/lib/videos/title";
 import { VIDEO_PAGE_COPY } from "@/lib/videos/video-page";
+import { SaveCancelButtons } from "./save-cancel-buttons";
 
 type Field = "title" | "slug";
 
@@ -48,9 +50,7 @@ export function ReviewDetails({
   const [editing, setEditing] = useState<Field | null>(null);
   const [draft, setDraft] = useState("");
   // A refusal, numbered so each one is announced and focuses the field once it has rendered.
-  const [refusal, setRefusal] = useState<{ message: string; n: number } | null>(
-    null,
-  );
+  const [refusal, refuse, clearRefusal] = useRefusal();
   const [saving, run] = usePendingAction();
   const field = useRef<HTMLInputElement>(null);
   // The last row opened: its _Edit_ takes back a focus the closing field drops.
@@ -70,7 +70,7 @@ export function ReviewDetails({
   function open(which: Field) {
     setLastOpened(which);
     setDraft(which === "title" ? title : slug);
-    setRefusal(null);
+    clearRefusal();
     setEditing(which);
   }
 
@@ -93,8 +93,7 @@ export function ReviewDetails({
       if (savedToast) toast(VIDEO_PAGE_COPY.saved);
       return;
     }
-    const message = result.error.fields?.[editing]?.[0] ?? result.error.message;
-    setRefusal((last) => ({ message, n: (last?.n ?? 0) + 1 }));
+    refuse(result.error.fields?.[editing]?.[0] ?? result.error.message);
   }
 
   const editButton = (which: Field) =>
@@ -127,38 +126,15 @@ export function ReviewDetails({
         value={draft}
         onChange={(event) => {
           setDraft(event.target.value);
-          setRefusal(null);
+          clearRefusal();
         }}
         maxLength={which === "title" ? TITLE_MAX : undefined}
         autoComplete="off"
         error={refusal?.message}
         helper={which === "slug" ? REVIEW_COPY.linkHelper : undefined}
       />
-      <div className="flex gap-4">
-        <Button
-          type="submit"
-          variant="tertiary"
-          size="sm"
-          loading={saving}
-          loadingLabel="Saving…"
-        >
-          {REVIEW_COPY.save}
-        </Button>
-        <Button
-          type="button"
-          variant="tertiary"
-          size="sm"
-          disabled={saving}
-          onClick={close}
-        >
-          {REVIEW_COPY.cancel}
-        </Button>
-      </div>
-      {refusal ? (
-        <p key={refusal.n} role="alert" className="sr-only">
-          {refusal.message}
-        </p>
-      ) : null}
+      <SaveCancelButtons saving={saving} onCancel={close} />
+      <RefusalAlert refusal={refusal} />
     </form>
   );
 

@@ -50,6 +50,18 @@ const OPTIONS = effectiveOptions(RATE_CARD, {
   basePriceOverrideCents: null,
 });
 
+type Publish = ComponentProps<typeof VideoPageView>["publish"];
+
+/** The publish facts of a video nothing blocks, `change` on top. */
+const publishOf = (change: Partial<Publish> = {}): Publish => ({
+  blockers: [],
+  reconnectPlatforms: [],
+  options: OPTIONS,
+  rateCard: RATE_CARD,
+  disabledReason: null,
+  ...change,
+});
+
 function page(
   change: Partial<ComponentProps<typeof VideoPageView>> = {},
   blockers: PublishBlocker[] = [],
@@ -60,15 +72,12 @@ function page(
       handle="maya"
       shareUrl={URL_}
       postings={[SOURCE]}
-      publish={{
+      publish={publishOf({
         blockers,
         reconnectPlatforms: blockers.includes("reconnect_account")
           ? ["mock"]
           : [],
-        options: OPTIONS,
-        rateCard: RATE_CARD,
-        disabledReason: null,
-      }}
+      })}
       counts={{ pendingCount: 1, licenseCount: 2 }}
       platformFeeBps={1000}
       progress={null}
@@ -172,16 +181,12 @@ describe("VideoPageView (S19; 05 §6.7)", () => {
   it("a music video: its two Switches as stored, the helper once, and the From line's uses (07 D82)", () => {
     page({
       video: { ...LIVE, containsMusic: true },
-      publish: {
-        blockers: [],
-        reconnectPlatforms: [],
+      publish: publishOf({
         options: effectiveOptions(RATE_CARD, {
           disabledUses: ["broadcast"],
           basePriceOverrideCents: null,
         }),
-        rateCard: RATE_CARD,
-        disabledReason: null,
-      },
+      }),
     });
     const prices = section("Prices for this video");
     expect(within(prices).getAllByRole("switch")).toHaveLength(2);
@@ -237,13 +242,10 @@ describe("VideoPageView (S19; 05 §6.7)", () => {
   it("a disabled video: the reason label only, nothing to edit, no link, no prices, no Turn on", () => {
     page({
       video: { ...LIVE, status: "disabled" },
-      publish: {
+      publish: publishOf({
         blockers: ["disabled_by_admin"],
-        reconnectPlatforms: [],
-        options: OPTIONS,
-        rateCard: RATE_CARD,
         disabledReason: "rights_claim",
-      },
+      }),
     });
     expect(screen.getAllByText("Disabled by ClipLease")).toHaveLength(1);
     expect(screen.getByRole("alert").textContent).toBe(
@@ -305,13 +307,7 @@ describe("VideoPageView (S19; 05 §6.7)", () => {
       },
     );
     page({
-      publish: {
-        blockers: [],
-        reconnectPlatforms: [],
-        options: noUse,
-        rateCard: RATE_CARD,
-        disabledReason: null,
-      },
+      publish: publishOf({ options: noUse }),
     });
     expect(
       screen.getByText("Buyers can't license this video right now."),

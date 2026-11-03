@@ -14,6 +14,10 @@ import {
 export const radio = (page: Page, group: string, key: string) =>
   page.locator(`input[name="${group}"][value="${key}"]`);
 
+/** An OptionTile (`[data-option-tile]`) by its radio. */
+export const optionTile = (page: Page, group: string, key: string) =>
+  page.locator("[data-option-tile]").filter({ has: radio(page, group, key) });
+
 /** Checks a radio from the keyboard: on the iPhone a click near the bottom can land on the fixed bar. */
 export async function choose(page: Page, group: string, key: string) {
   const input = radio(page, group, key);

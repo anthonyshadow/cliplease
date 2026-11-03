@@ -12,6 +12,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { Toaster } from "@/components/ui/toast";
 import { APPROVAL_WINDOW_LABEL, REQUESTS_SETTINGS_COPY } from "@/lib/payouts";
 import { formError } from "@/lib/result";
+import { description } from "../../../../../tests/helpers/a11y";
 import { updateCreatorSettings } from "./actions";
 import { RequestsSettingsForm } from "./requests-settings-form";
 
@@ -56,14 +57,6 @@ const checked = () => toggle().getAttribute("aria-checked");
 /** The value the hidden field posts for the Switch. */
 const posted = () =>
   document.querySelector<HTMLInputElement>('input[name="autoApprove"]')?.value;
-
-/** An element's accessible description: the text of its aria-describedby ids, in order. */
-const description = (el: HTMLElement) =>
-  (el.getAttribute("aria-describedby") ?? "")
-    .split(" ")
-    .filter(Boolean)
-    .map((id) => document.getElementById(id)?.textContent)
-    .join(" ");
 
 const pressSave = () =>
   fireEvent.click(screen.getByRole("button", { name: "Save" }));

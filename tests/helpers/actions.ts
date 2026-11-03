@@ -1,5 +1,6 @@
 // For calling Server Actions and the session gates outside a request (tests/helpers/next-headers.ts supplies the
-// cookies): the errors redirect() and notFound() throw, and the FormData a form would post.
+// cookies): the errors redirect() and notFound() throw, the FormData a form would post, and the Rights step's form as
+// posted.
 
 /** What redirect(url) throws outside a request. */
 export const redirectTo = (url: string) => ({
@@ -15,3 +16,17 @@ export function formOf(fields: Record<string, string>): FormData {
   for (const [key, value] of Object.entries(fields)) form.set(key, value);
   return form;
 }
+
+/** Rights' form as posted: both boxes ticked and both answers No, with `change` on top (the music Switches among them). */
+export const rightsForm = (
+  videoId: string,
+  change: Record<string, string> = {},
+) =>
+  formOf({
+    videoId,
+    ownsRights: "on",
+    notReupload: "on",
+    containsMusic: "no",
+    identifiablePeople: "no",
+    ...change,
+  });

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ZodError } from "zod";
 import { db } from "../../src/db/client";
@@ -56,6 +56,12 @@ import {
   finishScriptedTest,
   installScriptedPayments,
 } from "../helpers/scripted-suite";
+import {
+  auditsInOrder,
+  MUSIC_YES,
+  priceSet,
+  toggled,
+} from "../helpers/video-price-fixtures";
 
 // Per-video base price and music re-enable (P19d; 02 §5.5; 07 D82, D97; 01 J4.8, J5.14, J7.4; owner answers Q-158,
 // Q-161; AD-01, AD-02, AD-04, AD-05, AD-21, AD-22) against the test database: setVideoBasePrice and setVideoUseEnabled
@@ -92,12 +98,6 @@ const CTX: RequestContext = {
 
 /** The Rights answers besides music: the rights are the creator's, no identifiable people. */
 const NO_PEOPLE = { ownsRights: true, identifiablePeople: false } as const;
-
-/** Stored music Yes with both music uses off, as attestRights leaves it (the house pattern; the factory writes No). */
-const MUSIC_YES = {
-  containsMusic: true,
-  disabledUses: [...MUSIC_DISABLED_USES],
-} satisfies Partial<NewVideo>;
 
 /** The J4.7 quote at the rate card's CA$150: CA$1,575.00 + CA$157.50 = CA$1,732.50. */
 const RATE_CARD_AMOUNTS = {
@@ -191,35 +191,12 @@ const requestsOf = (videoId: string) =>
     .from(licenseRequest)
     .where(eq(licenseRequest.videoId, videoId));
 
-/** The video's `action` audits, oldest first (each save is its own transaction, so `created_at` orders them). */
-const auditsInOrder = (
-  videoId: string,
-  action: "video.price_set" | "video.use_toggled",
-) =>
-  db
-    .select({ data: auditEvent.data, actorType: auditEvent.actorType })
-    .from(auditEvent)
-    .where(and(eq(auditEvent.entityId, videoId), eq(auditEvent.action, action)))
-    .orderBy(asc(auditEvent.createdAt));
-
 /** Every audit row on the video, any action. */
 const anyAuditsOf = (videoId: string) =>
   db
     .select({ action: auditEvent.action })
     .from(auditEvent)
     .where(eq(auditEvent.entityId, videoId));
-
-/** One `video.price_set` row the creator wrote (CAD creators). */
-const priceSet = (fromCents: number | null, toCents: number | null) => ({
-  data: { fromCents, toCents, currency: "cad" },
-  actorType: "creator",
-});
-
-/** One `video.use_toggled` row the creator wrote. */
-const toggled = (useKey: MusicUseKey, enabled: boolean) => ({
-  data: { useKey, enabled },
-  actorType: "creator",
-});
 
 /** Each card's From price by video id. */
 const fromPrices = (

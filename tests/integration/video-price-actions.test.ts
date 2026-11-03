@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, eq } from "drizzle-orm";
 import { refresh } from "next/cache";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -7,17 +6,11 @@ import {
   setVideoUseEnabled as setVideoUseEnabledAction,
 } from "../../src/app/(dashboard)/dashboard/videos/[id]/actions";
 import { attestRights as attestRightsAction } from "../../src/app/(dashboard)/dashboard/videos/[id]/review-actions";
-import { db } from "../../src/db/client";
-import { auditEvent } from "../../src/db/schema";
-import type { NewVideo } from "../../src/db/schema/types";
 import { GENERIC_ERROR_MESSAGE } from "../../src/lib/result";
 import { signInPath } from "../../src/lib/sign-in";
-import {
-  MUSIC_DISABLED_USES,
-  RIGHTS_LOCK_COPY,
-} from "../../src/lib/videos/rights";
+import { RIGHTS_LOCK_COPY } from "../../src/lib/videos/rights";
 import { videoHref, videoStepHref } from "../../src/lib/videos/steps";
-import { formOf, NOT_FOUND, redirectTo } from "../helpers/actions";
+import { NOT_FOUND, redirectTo, rightsForm } from "../helpers/actions";
 import { mockNextHeaders, signedInCreator } from "../helpers/auth";
 import {
   insertCreator,
@@ -27,6 +20,12 @@ import {
   videoRow,
 } from "../helpers/factories";
 import { readyUpload } from "../helpers/ready-videos";
+import {
+  auditsInOrder,
+  MUSIC_YES,
+  priceSet,
+  toggled,
+} from "../helpers/video-price-fixtures";
 
 // The Prices section's Server Actions and the Rights step's music Switches (P19d; 02 §6.1; 07 D82, D97; owner answers
 // Q-158, Q-159, Q-161; AD-01, AD-06, AD-07) against the test database: setVideoBasePrice's bounds as the field's error,
@@ -41,37 +40,6 @@ beforeEach(() => {
   mockNextHeaders(null);
   vi.mocked(refresh).mockClear();
 });
-
-/** Rights' form as posted: both boxes ticked and both answers No, with `change` on top (the Switches among them). */
-const rightsForm = (videoId: string, change: Record<string, string> = {}) =>
-  formOf({
-    videoId,
-    ownsRights: "on",
-    notReupload: "on",
-    containsMusic: "no",
-    identifiablePeople: "no",
-    ...change,
-  });
-
-/** The video's `action` audits, oldest first (each save is its own transaction, so `created_at` orders them). */
-const auditsInOrder = (videoId: string, action: string) =>
-  db
-    .select({ data: auditEvent.data, actorType: auditEvent.actorType })
-    .from(auditEvent)
-    .where(and(eq(auditEvent.entityId, videoId), eq(auditEvent.action, action)))
-    .orderBy(asc(auditEvent.createdAt));
-
-/** One `video.use_toggled` row the creator wrote. */
-const toggled = (useKey: string, enabled: boolean) => ({
-  data: { useKey, enabled },
-  actorType: "creator",
-});
-
-/** Stored music Yes with both music uses off, as attestRights leaves it (the house pattern, not the factory's No). */
-const MUSIC_YES = {
-  containsMusic: true,
-  disabledUses: [...MUSIC_DISABLED_USES],
-} satisfies Partial<NewVideo>;
 
 const disabledVideo = (creatorId: string) =>
   insertUploadVideo(
@@ -138,14 +106,8 @@ describe("setVideoBasePrice (the action; 07 D82, D97; owner answer Q-161)", () =
 
     // The session's creator is the actor; the currency is their payout currency.
     expect(await auditsInOrder(draft.id, "video.price_set")).toEqual([
-      {
-        data: { fromCents: null, toCents: 30000, currency: "cad" },
-        actorType: "creator",
-      },
-      {
-        data: { fromCents: 30000, toCents: null, currency: "cad" },
-        actorType: "creator",
-      },
+      priceSet(null, 30000),
+      priceSet(30000, null),
     ]);
   });
 

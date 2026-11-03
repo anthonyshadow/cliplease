@@ -19,6 +19,7 @@ import {
   choose,
   chooseDemoSelection,
   hydrated,
+  optionTile,
   radio,
   requestButton,
 } from "./helpers/buyer";
@@ -27,17 +28,19 @@ import { buyLicense, publishDemoVideo } from "./helpers/flows";
 import { trackServerActions } from "./helpers/network";
 import {
   isServerAction,
+  pressAndSettle,
   pressAndSettleIn,
-  pressButton,
   pressLink,
   requestEnded,
   waitInPage,
 } from "./helpers/press";
 import { previewLine, quoteLine } from "./helpers/pricing";
 import {
+  baseField,
   basePriceRadio,
   expectMusicSwitches,
   musicSwitch,
+  pricesSection,
 } from "./helpers/video-price";
 import {
   answerRights,
@@ -81,26 +84,11 @@ const MUSIC_ROW = LICENSE_V1_SUMMARY.groups
   .flatMap((group) => group.rows)
   .find((row) => row.when === "contains_music");
 
-/** The video page's Prices section (05 §6.7 callout 8): its region is named by its heading. */
-const pricesSection = (page: Page) =>
-  page.getByRole("region", { name: VIDEO_PAGE_COPY.prices, exact: true });
-
 /** The Prices section's "From {price} · {uses}" line. */
 const fromLine = (page: Page) => page.locator("[data-from-line]");
 
-/** The editor's field, shown while "Set a base price for this video" is chosen. */
-const baseField = (page: Page) =>
-  pricesSection(page).getByRole("textbox", {
-    name: VIDEO_PRICE_COPY.field,
-    exact: true,
-  });
-
 const savedToast = (page: Page) =>
   page.getByText(VIDEO_PAGE_COPY.saved, { exact: true });
-
-/** A Use tile on the license page, by its radio. */
-const licenseUseTile = (page: Page, key: string) =>
-  page.locator("[data-option-tile]").filter({ has: radio(page, "use", key) });
 
 test("J4.8: a video's own base price is a draft until Save, then prices its From line, its /@handle card and the license page; Use my rate card and Save bring the card's price back", async ({
   page,
@@ -121,9 +109,7 @@ test("J4.8: a video's own base price is a draft until Save, then prices its From
 
   // The rate card's base, on the radio's tile with its currency; one preview, then the From line (owner answer Q-162).
   await expect(rateCard).toBeChecked();
-  await expect(
-    page.locator("[data-option-tile]").filter({ has: rateCard }),
-  ).toHaveText(
+  await expect(optionTile(page, "basePrice", "rate_card")).toHaveText(
     VIDEO_PRICE_COPY.useRateCard(
       formatMoney(15_000, "cad", { wholeDollars: true }),
     ),
@@ -247,7 +233,7 @@ test("J5.14, J7.4: on a music video, Allow Paid social ads anyway saves on toggl
   await hydrated(buyer);
   for (const key of MUSIC_DISABLED_USES) {
     await expect(radio(buyer, "use", key)).toBeDisabled();
-    await expect(licenseUseTile(buyer, key)).toContainText(
+    await expect(optionTile(buyer, "use", key)).toContainText(
       LICENSE_PAGE_COPY.musicDisabled,
     );
   }
@@ -291,11 +277,11 @@ test("J5.14, J7.4: on a music video, Allow Paid social ads anyway saves on toggl
   await buyer.reload();
   await hydrated(buyer);
   await expect(radio(buyer, "use", "paid_social")).toBeEnabled();
-  await expect(licenseUseTile(buyer, "paid_social")).not.toContainText(
+  await expect(optionTile(buyer, "use", "paid_social")).not.toContainText(
     LICENSE_PAGE_COPY.musicDisabled,
   );
   await expect(radio(buyer, "use", "broadcast")).toBeDisabled();
-  await expect(licenseUseTile(buyer, "broadcast")).toContainText(
+  await expect(optionTile(buyer, "use", "broadcast")).toContainText(
     LICENSE_PAGE_COPY.musicDisabled,
   );
   await expect(
@@ -347,9 +333,7 @@ test("J5.14: on a published music video's Rights step a Switch turns its use bac
   await expect(footnote).toHaveCount(0);
   await answerRights(page, { music: "Yes" });
   await expect(tv).toHaveAttribute("aria-checked", "true");
-  const sent = requestEnded(page, isServerAction);
-  await pressButton(page, "Continue");
-  await sent;
+  await pressAndSettle(page, "Continue");
   await page.waitForURL(videoHref(videoId));
 
   // Back on the video page: TV / broadcast on, Paid social ads off, and the From line says so.

@@ -28,7 +28,7 @@ import {
   getPublishBlockers,
   getPublishFacts,
 } from "../../src/server/videos/publish";
-import { formOf, redirectTo } from "../helpers/actions";
+import { redirectTo, rightsForm } from "../helpers/actions";
 import { bareCreator, mockNextHeaders, signedInCreator } from "../helpers/auth";
 import { waitForLockWaiter } from "../helpers/db";
 import {
@@ -66,17 +66,6 @@ const ANSWERS = {
   containsMusic: false,
   identifiablePeople: false,
 } as const;
-
-/** Rights' form as posted: both boxes ticked and both answers No, with `change` on top. */
-const rightsForm = (videoId: string, change: Record<string, string> = {}) =>
-  formOf({
-    videoId,
-    ownsRights: "on",
-    notReupload: "on",
-    containsMusic: "no",
-    identifiablePeople: "no",
-    ...change,
-  });
 
 const blockersOf = async (actor: Actor, videoId: string) =>
   (await getPublishBlockers(actor, videoId)).blockers;

@@ -97,13 +97,10 @@ export async function setVideoUseEnabled(
   await db.transaction(async (tx) => {
     const row = await lockEditableVideo(tx, creatorId, i.videoId);
     if (row.containsMusic !== true) throw new NoMusicError();
+    if (row.disabledUses.includes(useKey) === !enabled) return;
     const off = USE_KEYS.filter((key) =>
       key === useKey ? !enabled : row.disabledUses.includes(key),
     );
-    const same =
-      off.length === row.disabledUses.length &&
-      off.every((key) => row.disabledUses.includes(key));
-    if (same) return;
     await tx
       .update(video)
       .set({ disabledUses: off })

@@ -27,6 +27,7 @@ import type { MusicUseKey } from "@/lib/videos/rights";
 import { VIDEO_PAGE_COPY } from "@/lib/videos/video-page";
 import { VIDEO_PRICE_COPY } from "@/lib/videos/video-price";
 import { effectiveOptions, type RateCardDTO } from "@/server/pricing/rate-card";
+import { description } from "../../../tests/helpers/a11y";
 import { VIDEO_ID } from "../../../tests/helpers/postings-fixtures";
 import { rateCardFixture } from "../../../tests/helpers/rate-card-fixtures";
 import { DraftPricePreview, PriceDraftProvider } from "./price-draft";
@@ -100,14 +101,6 @@ const preview = () =>
   document.querySelector("[data-price-preview]")?.textContent ?? "";
 const switchOf = (name: string) => screen.getByRole("switch", { name });
 const checked = (name: string) => switchOf(name).getAttribute("aria-checked");
-
-/** An element's accessible description: the text of its aria-describedby ids, in order. */
-const description = (el: HTMLElement) =>
-  (el.getAttribute("aria-describedby") ?? "")
-    .split(" ")
-    .filter(Boolean)
-    .map((id) => document.getElementById(id)?.textContent)
-    .join(" ");
 
 /** The "Saved." toasts showing: the toast store outlives each test's render, so a test counts the new one. */
 const savedToasts = () => screen.queryAllByText(VIDEO_PAGE_COPY.saved).length;
