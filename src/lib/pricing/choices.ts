@@ -1,5 +1,6 @@
 // A card's options as the three groups a buyer picks from (02 §5.5's EffectiveOptions groups, the PricePreview's
-// pickers), and RateRow's example price (04 §9.29). Pure, for the server's effectiveOptions and the browser's editor.
+// pickers), and RateRow's and ExclusiveRow's example prices (04 §9.29). Pure, for the server's effectiveOptions and the
+// browser's editor.
 import {
   RATE_DIMENSIONS,
   type RateDimension,
@@ -13,6 +14,8 @@ import {
 } from "../domain/values";
 import { rateOptionLabel } from "../licensing/options";
 import { licensePriceCents } from "./compute-quote";
+import { isExclusiveTermKey } from "./exclusive";
+import { NON_EXCLUSIVE_BPS } from "./presets";
 
 /** One option as a buyer picks it. */
 export type RateChoice<K extends RateOptionKey = RateOptionKey> = {
@@ -54,12 +57,18 @@ export function rateChoices(options: readonly RateOptionValue[]): RateChoices {
   };
 }
 
+/** The keys of the options that are on, in their order. */
+export const enabledKeys = <K extends RateOptionKey>(
+  choices: readonly RateChoice<K>[],
+) => choices.filter((c) => c.enabled).map((c) => c.key);
+
 /** Base × this option × the first option on in each other group (04 §9.29); null when another group has none on. */
 export function examplePriceCents(
   basePriceCents: number,
   choices: RateChoices,
   dimension: RateDimension,
   bps: number,
+  exclusiveBps = NON_EXCLUSIVE_BPS,
 ): number | null {
   const [use, term, territory] = RATE_DIMENSIONS.map((d) =>
     d === dimension ? bps : choices[d].find((c) => c.enabled)?.bps,
@@ -67,5 +76,20 @@ export function examplePriceCents(
   if (use === undefined || term === undefined || territory === undefined) {
     return null;
   }
-  return licensePriceCents(basePriceCents, use, term, territory);
+  return licensePriceCents(basePriceCents, use, term, territory, exclusiveBps);
+}
+
+/**
+ * Base × the first enabled use × the first enabled 30-day, 6-month or 1-year term × the first enabled territory × the
+ * premium; null when one is missing.
+ */
+export function exclusiveExamplePriceCents(
+  basePriceCents: number,
+  choices: RateChoices,
+  premiumBps: number,
+): number | null {
+  const term = choices.term.find((c) => c.enabled && isExclusiveTermKey(c.key));
+  return term
+    ? examplePriceCents(basePriceCents, choices, "term", term.bps, premiumBps)
+    : null;
 }

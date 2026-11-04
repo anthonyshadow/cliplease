@@ -2,6 +2,7 @@
 
 import { type FormEvent, type MouseEvent, useRef, useState } from "react";
 import { TWO_COLUMN } from "@/components/layout/gutter";
+import { ExclusiveRow } from "@/components/pricing/exclusive-row";
 import {
   type PreviewOptions,
   PricePreview,
@@ -12,6 +13,8 @@ import { Banner } from "@/components/ui/banner";
 import { Button } from "@/components/ui/button";
 import { ConfirmSheet } from "@/components/ui/confirm-sheet";
 import { PRIMARY_WIDTH, TERTIARY } from "@/components/ui/primary-width";
+import { RefusalAlert, useRefusal } from "@/components/ui/refusal-alert";
+import { Switch } from "@/components/ui/switch";
 import { FieldMessages, fieldIds, TextField } from "@/components/ui/text-field";
 import { toast } from "@/components/ui/toast";
 import { usePendingAction } from "@/components/ui/use-pending-action";
@@ -25,7 +28,18 @@ import {
 import { formatMoney } from "@/lib/format";
 import { DIMENSION_LABELS, rateOptionLabel } from "@/lib/licensing/options";
 import { CURRENCY_DISPLAY, currencyLabel } from "@/lib/money/currency";
-import { examplePriceCents, rateChoices } from "@/lib/pricing/choices";
+import {
+  enabledKeys,
+  examplePriceCents,
+  exclusiveExamplePriceCents,
+  rateChoices,
+} from "@/lib/pricing/choices";
+import {
+  FOLLOWS_RATE_CARD,
+  hasExclusiveTerm,
+  resolveExclusiveOffer,
+} from "@/lib/pricing/exclusive";
+import { EXCLUSIVE_COPY } from "@/lib/pricing/exclusive-copy";
 import {
   multiplierFieldValue,
   parseMultiplierBps,
@@ -51,11 +65,13 @@ import type { RateCardDTO } from "@/server/pricing/rate-card";
 import { saveRateCard } from "./actions";
 
 const BASE = "basePriceCents";
+const EXCLUSIVE = "exclusiveMultiplierBps";
 const GROUP_ERROR_ID = (dimension: RateDimension) => `rate-card-${dimension}`;
 // The error fields in page order: where a failed Save moves the focus first.
 const FIELD_ORDER = [
   BASE,
   ...RATE_DIMENSIONS.flatMap((d) => [d, ...RATE_DIMENSION_KEYS[d]]),
+  EXCLUSIVE,
 ];
 
 /** One option as typed: its text, and the last value that passed the bounds, which the prices use meanwhile. */
@@ -67,7 +83,15 @@ type Row = {
   bps: number;
 };
 
-type Form = { baseText: string; baseCents: number; rows: Row[] };
+/** The premium as typed, and the last value that passed the bounds, which the prices use meanwhile. */
+type Form = {
+  baseText: string;
+  baseCents: number;
+  rows: Row[];
+  exclusiveEnabled: boolean;
+  exclusiveText: string;
+  exclusiveBps: number;
+};
 
 function formOf(card: RateCardInput): Form {
   return {
@@ -80,13 +104,23 @@ function formOf(card: RateCardInput): Form {
       text: multiplierFieldValue(o.multiplierBps),
       bps: o.multiplierBps,
     })),
+    exclusiveEnabled: card.exclusiveEnabled,
+    exclusiveText: multiplierFieldValue(card.exclusiveMultiplierBps),
+    exclusiveBps: card.exclusiveMultiplierBps,
   };
 }
 
-/** What Save sends: the typed text read again, NaN where it doesn't read as a number (the schema names it). */
-function inputOf(form: Form) {
+/**
+ * What Save sends: the typed text read again, NaN where it doesn't read as a number (the schema names it), and the stored
+ * premium while the Switch hides the row.
+ */
+function inputOf(form: Form, savedExclusiveBps: number) {
   return {
     basePriceCents: parseWholeDollars(form.baseText) ?? Number.NaN,
+    exclusiveEnabled: form.exclusiveEnabled,
+    exclusiveMultiplierBps: form.exclusiveEnabled
+      ? (parseMultiplierBps(form.exclusiveText) ?? Number.NaN)
+      : savedExclusiveBps,
     options: form.rows.map((r) => ({
       dimension: r.dimension,
       key: r.key,
@@ -96,14 +130,28 @@ function inputOf(form: Form) {
   };
 }
 
-/** The form as text, to tell unsaved edits from the saved card. */
+/** A multiplier's basis points, or null when the text doesn't read as one within the bounds. */
+function validBps(text: string) {
+  const bps = parseMultiplierBps(text);
+  return bps !== null && MultiplierBpsSchema.safeParse(bps).success
+    ? bps
+    : null;
+}
+
+/** The form as text, to tell unsaved edits from the saved card: a premium the Switch hides isn't one. */
 const textsOf = (form: Form) =>
-  JSON.stringify([form.baseText, form.rows.map((r) => [r.enabled, r.text])]);
+  JSON.stringify([
+    form.baseText,
+    form.rows.map((r) => [r.enabled, r.text]),
+    form.exclusiveEnabled,
+    form.exclusiveEnabled ? form.exclusiveText : null,
+  ]);
 
 /**
- * S21 (05 §6.9, J4): the base price and the 10 options, each with its example price, and the PricePreview, all from
- * computeQuote on every keystroke. Nothing saves before Save prices, except a confirmed Reset to defaults (owner answer
- * Q-92). Errors show on Save (04 §9.6), which moves the focus to the first one.
+ * S21 (05 §6.9, J4): the base price and the 10 options, each with its example price, the Exclusive licenses section
+ * (04 §9.29, 07 D109) and the PricePreview, all from computeQuote on every keystroke. Nothing saves before Save prices,
+ * except a confirmed Reset to defaults (owner answer Q-92). Errors show on Save (04 §9.6), which moves the focus to the
+ * first one.
  */
 export function RateCardEditor({
   card,
@@ -114,8 +162,10 @@ export function RateCardEditor({
 }) {
   const { currency } = card;
   const [form, setForm] = useState(() => formOf(card));
-  const [savedTexts, setSavedTexts] = useState(() => textsOf(formOf(card)));
+  const [saved, setSaved] = useState<RateCardInput>(card);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  // A refused Enter: the focus is already on the field, so the alert says it.
+  const [refusal, refuse, clearRefusal] = useRefusal();
   const [saving, runSave] = usePendingAction();
   const [saveFailed, setSaveFailed] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
@@ -128,19 +178,28 @@ export function RateCardEditor({
     else controls.current.delete(field);
   };
 
-  useUnsavedChangesGuard(textsOf(form) !== savedTexts);
+  useUnsavedChangesGuard(textsOf(form) !== textsOf(formOf(saved)));
 
-  const clearError = (field: string) =>
+  function clearError(field: string) {
+    clearRefusal();
     setErrors((prev) => {
       if (!(field in prev)) return prev;
       const { [field]: _, ...rest } = prev;
       return rest;
     });
+  }
 
   function showErrors(fields: Record<string, string>) {
     setErrors(fields);
     const first = FIELD_ORDER.find((field) => field in fields);
-    if (first) controls.current.get(first)?.focus();
+    if (!first) return;
+    const control = controls.current.get(first);
+    // Enter in the field: the focus is already there, so moving it would announce nothing.
+    if (control === document.activeElement) refuse(fields[first]);
+    else {
+      clearRefusal();
+      control?.focus();
+    }
   }
 
   function setBaseText(text: string) {
@@ -163,18 +222,31 @@ export function RateCardEditor({
   }
 
   function setRowText(key: RateOptionKey, text: string) {
-    const bps = parseMultiplierBps(text);
-    const valid = bps !== null && MultiplierBpsSchema.safeParse(bps).success;
-    setRow(key, valid ? { text, bps } : { text });
+    const bps = validBps(text);
+    setRow(key, bps === null ? { text } : { text, bps });
     clearError(key);
   }
 
-  /** After a save: the card is what's stored now, and it fills the form unless the form was edited meanwhile. */
-  function onSaved(saved: RateCardInput, submitted: string) {
-    const next = formOf(saved);
-    setForm((current) => (textsOf(current) === submitted ? next : current));
-    setSavedTexts(textsOf(next));
+  /** Off hides the premium: its error goes, and its text stays until the next save replaces it with the stored one. */
+  function setExclusiveEnabled(exclusiveEnabled: boolean) {
+    setForm((f) => ({ ...f, exclusiveEnabled }));
+    if (!exclusiveEnabled) clearError(EXCLUSIVE);
+  }
+
+  function setExclusiveText(exclusiveText: string) {
+    const bps = validBps(exclusiveText);
+    setForm((f) => ({
+      ...f,
+      exclusiveText,
+      exclusiveBps: bps ?? f.exclusiveBps,
+    }));
+    clearError(EXCLUSIVE);
+  }
+
+  function onSaved(stored: RateCardInput) {
+    setSaved(stored);
     setErrors({});
+    clearRefusal();
     setSaveFailed(false);
     toast("Prices saved.");
   }
@@ -182,7 +254,7 @@ export function RateCardEditor({
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (saving) return;
-    const input = inputOf(form);
+    const input = inputOf(form, saved.exclusiveMultiplierBps);
     const parsed = rateCardInputSchema(currency).safeParse(input);
     if (!parsed.success) {
       showErrors(rateCardFieldErrors(parsed.error, input));
@@ -193,7 +265,11 @@ export function RateCardEditor({
     const result = await runSave(() => saveRateCard(parsed.data));
     if (result === null) return;
     if (result.ok) {
-      onSaved(parsed.data, submitted);
+      onSaved(parsed.data);
+      // Edited since the press: the edits stay.
+      setForm((current) =>
+        textsOf(current) === submitted ? formOf(parsed.data) : current,
+      );
       return;
     }
     const { fields } = result.error;
@@ -215,8 +291,6 @@ export function RateCardEditor({
     event.preventDefault();
     if (resetting) return;
     const defaults = defaultRateCardInput(currency);
-    // The sheet holds the focus while it runs, so the form can't change meanwhile.
-    const submitted = textsOf(form);
     setResetFailed(false);
     const result = await runReset(() => saveRateCard(defaults));
     if (result === null) return;
@@ -225,7 +299,9 @@ export function RateCardEditor({
       return;
     }
     setResetOpen(false);
-    onSaved(defaults, submitted);
+    onSaved(defaults);
+    // Always: the sheet blocks edits, but a Save in flight can still change the form.
+    setForm(formOf(defaults));
   }
 
   const choices = rateChoices(
@@ -240,21 +316,24 @@ export function RateCardEditor({
     basePriceCents: form.baseCents,
     ...choices,
   };
-  const examplePrice = (row: Row) => {
-    const cents = examplePriceCents(
-      form.baseCents,
-      choices,
-      row.dimension,
-      row.bps,
-    );
-    return cents === null ? null : formatMoney(cents, currency);
-  };
+  const moneyOrNone = (cents: number | null) =>
+    cents === null ? null : formatMoney(cents, currency);
+  const termKeys = enabledKeys(choices.term);
+  const exclusiveOffer = resolveExclusiveOffer(
+    {
+      exclusiveEnabled: form.exclusiveEnabled,
+      exclusiveMultiplierBps: form.exclusiveBps,
+    },
+    FOLLOWS_RATE_CARD,
+    termKeys,
+  );
 
   const whole = (cents: number) =>
     formatMoney(cents, currency, { wholeDollars: true });
 
   return (
     <form noValidate onSubmit={save} className={TWO_COLUMN.page}>
+      <RefusalAlert refusal={refusal} />
       <div className={cn(TWO_COLUMN.span, "flex flex-col gap-2")}>
         <PricesTitle />
         <p className="text-footnote text-ink-2">
@@ -300,7 +379,14 @@ export function RateCardEditor({
                     multiplier={row.text}
                     onMultiplierChange={(text) => setRowText(row.key, text)}
                     error={errors[row.key]}
-                    examplePrice={examplePrice(row)}
+                    examplePrice={moneyOrNone(
+                      examplePriceCents(
+                        form.baseCents,
+                        choices,
+                        row.dimension,
+                        row.bps,
+                      ),
+                    )}
                     groupErrorId={groupError ? errorId : undefined}
                     switchRef={i === 0 ? register(dimension) : undefined}
                     fieldRef={register(row.key)}
@@ -309,6 +395,39 @@ export function RateCardEditor({
             </fieldset>
           );
         })}
+        <fieldset className="flex flex-col gap-4">
+          <legend className="mb-4 text-title-2 text-ink">
+            {EXCLUSIVE_COPY.title}
+          </legend>
+          <Switch
+            label={EXCLUSIVE_COPY.offerSwitch}
+            helper={EXCLUSIVE_COPY.offerSwitchHelper}
+            checked={form.exclusiveEnabled}
+            onCheckedChange={setExclusiveEnabled}
+          />
+          {form.exclusiveEnabled ? (
+            <ExclusiveRow
+              label={EXCLUSIVE_COPY.premiumLabel}
+              helper={EXCLUSIVE_COPY.premiumHelper}
+              note={
+                hasExclusiveTerm(termKeys)
+                  ? undefined
+                  : EXCLUSIVE_COPY.noExclusiveTerm
+              }
+              value={form.exclusiveText}
+              onChange={setExclusiveText}
+              error={errors[EXCLUSIVE]}
+              examplePrice={moneyOrNone(
+                exclusiveExamplePriceCents(
+                  form.baseCents,
+                  choices,
+                  form.exclusiveBps,
+                ),
+              )}
+              fieldRef={register(EXCLUSIVE)}
+            />
+          ) : null}
+        </fieldset>
       </div>
 
       <div
@@ -317,7 +436,11 @@ export function RateCardEditor({
           "flex flex-col gap-4 lg:sticky lg:top-[calc(var(--nav-h)+24px)]",
         )}
       >
-        <PricePreview options={preview} platformFeeBps={platformFeeBps} />
+        <PricePreview
+          options={preview}
+          platformFeeBps={platformFeeBps}
+          exclusive={exclusiveOffer}
+        />
         {saveFailed ? (
           <Banner tone="error">{GENERIC_ERROR_MESSAGE}</Banner>
         ) : null}
@@ -343,7 +466,9 @@ export function RateCardEditor({
             setResetFailed(false);
           }}
           title="Reset prices to defaults?"
-          description={`Your base price goes back to ${whole(DEFAULT_BASE_PRICE_CENTS[currency])} and every option to its default, switched on. New requests only.`}
+          description={EXCLUSIVE_COPY.resetSheet(
+            whole(DEFAULT_BASE_PRICE_CENTS[currency]),
+          )}
           confirmLabel="Reset prices"
           confirmLoading={resetting}
           confirmLoadingLabel="Resetting…"

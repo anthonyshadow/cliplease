@@ -8,13 +8,15 @@ import {
   RATE_OPTION_KEYS,
   type RateDimension,
   type RateOptionKey,
+  VIDEO_EXCLUSIVE_MODES,
 } from "../domain/values";
 import { formatMoney } from "../format";
-import { multiplierFieldValue } from "../pricing/multiplier";
+import { formatMultiplier, multiplierFieldValue } from "../pricing/multiplier";
 import {
   BASE_PRICE_MAX_CENTS,
   BASE_PRICE_MIN_CENTS,
   DEFAULT_BASE_PRICE_CENTS,
+  DEFAULT_EXCLUSIVE_MULTIPLIER_BPS,
   defaultRateOptions,
   MULTIPLIER_MAX_BPS,
   MULTIPLIER_MIN_BPS,
@@ -26,8 +28,8 @@ import { MUSIC_DISABLED_USES } from "../videos/rights";
 const WHOLE_DOLLARS_MESSAGE = "Use whole dollars.";
 
 const MULTIPLIER_MESSAGES = {
-  min: `Minimum is ×${multiplierFieldValue(MULTIPLIER_MIN_BPS)}.`,
-  max: `Maximum is ×${multiplierFieldValue(MULTIPLIER_MAX_BPS)}.`,
+  min: `Minimum is ${formatMultiplier(MULTIPLIER_MIN_BPS)}.`,
+  max: `Maximum is ${formatMultiplier(MULTIPLIER_MAX_BPS)}.`,
   step: `Use steps of ${multiplierFieldValue(MULTIPLIER_STEP_BPS)}.`,
 } as const;
 
@@ -84,6 +86,20 @@ export const MultiplierBpsSchema = z
   .max(MULTIPLIER_MAX_BPS, { error: MULTIPLIER_MESSAGES.max })
   .multipleOf(MULTIPLIER_STEP_BPS, { error: MULTIPLIER_MESSAGES.step });
 
+/** The exclusive premium's bounds are every multiplier's (07 D109). */
+export const ExclusiveMultiplierBpsSchema = MultiplierBpsSchema;
+
+/** setVideoExclusiveOffer's input (07 D109, D127): a premium only with 'on', where null is the rate card's. */
+export const VideoExclusiveOfferInputSchema = z
+  .object({
+    videoId: z.uuid(),
+    mode: z.enum(VIDEO_EXCLUSIVE_MODES),
+    multiplierBps: ExclusiveMultiplierBpsSchema.nullable(),
+  })
+  .refine((v) => v.mode === "on" || v.multiplierBps === null, {
+    error: GENERIC_ERROR_MESSAGE,
+  });
+
 const rateOptionInputSchema = z.object({
   dimension: z.enum(RATE_DIMENSIONS),
   key: z.enum(RATE_OPTION_KEYS),
@@ -91,11 +107,16 @@ const rateOptionInputSchema = z.object({
   multiplierBps: MultiplierBpsSchema,
 });
 
-/** The whole card: the base, then each of the 10 options exactly once, in its own group, and one on per group. */
+/**
+ * The whole card: the base, the exclusive offer, then each of the 10 options exactly once, in its own group, and one on
+ * per group.
+ */
 export function rateCardInputSchema(currency: Currency) {
   return z
     .object({
       basePriceCents: basePriceCentsSchema(currency),
+      exclusiveEnabled: z.boolean(),
+      exclusiveMultiplierBps: ExclusiveMultiplierBpsSchema,
       options: z.array(rateOptionInputSchema),
     })
     .superRefine(
@@ -136,10 +157,12 @@ export function rateCardInputSchema(currency: Currency) {
 
 export type RateCardInput = z.infer<ReturnType<typeof rateCardInputSchema>>;
 
-/** The J4.1 card in `currency`, as the editor sends it: what Reset to defaults saves. */
+/** The J4.1 card in `currency` with exclusive off at ×3.00, as the editor sends it: what Reset to defaults saves. */
 export function defaultRateCardInput(currency: Currency): RateCardInput {
   return {
     basePriceCents: DEFAULT_BASE_PRICE_CENTS[currency],
+    exclusiveEnabled: false,
+    exclusiveMultiplierBps: DEFAULT_EXCLUSIVE_MULTIPLIER_BPS,
     options: defaultRateOptions().map((o) => ({
       dimension: o.dimension,
       key: o.optionKey,

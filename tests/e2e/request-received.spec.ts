@@ -1,12 +1,12 @@
-import { expect, type Page, test } from "@playwright/test";
-import { formatMoney } from "../../src/lib/format";
+import { expect, test } from "@playwright/test";
 import { INBOX_COPY } from "../../src/lib/licensing/inbox";
 import { REQUEST_STATUS_COPY } from "../../src/lib/licensing/request-status";
-import { BARE_DOLLAR } from "../helpers/money";
+import { BARE_DOLLAR, cad } from "../helpers/money";
 import { readLatestEmail } from "../helpers/read-latest-email";
 import { E2E_LICENSEE } from "./helpers/buyer";
 import { collectConsoleErrors } from "./helpers/console";
 import { buyLicense, publishDemoVideo } from "./helpers/flows";
+import { expectNoBareDollar } from "./helpers/layout";
 import { pressLocator } from "./helpers/press";
 import { cleanCreatedVideos } from "./helpers/videos";
 
@@ -18,11 +18,7 @@ import { cleanCreatedVideos } from "./helpers/videos";
 test.use({ reducedMotion: "reduce" });
 test.afterEach(cleanCreatedVideos);
 
-const cad = (cents: number) => formatMoney(cents, "cad");
-/** A dollar amount with no currency before it (07 D98): "$1,732.50" but not "CA$1,732.50". */
 const SCOPE = "Paid social ads · 1 year · Worldwide";
-
-const mainText = (page: Page) => page.locator("main").innerText();
 
 test("J7.8, J7.17, J8.1, J8.12, J8.13: a paid request waits on /r, reaches the creator's Inbox and request page, and both emails go out", async ({
   page,
@@ -77,7 +73,7 @@ test("J7.8, J7.17, J8.1, J8.12, J8.13: a paid request waits on /r, reaches the c
   await expect(summary).toContainText(`@${handle}`);
   await expect(summary).toContainText(SCOPE);
   await expect(summary).toContainText(cad(173250));
-  expect(await mainText(buyer)).not.toMatch(BARE_DOLLAR);
+  await expectNoBareDollar(buyer);
 
   // The two emails (05 §8): request-new to the creator, never naming the buyer; request-received to the buyer.
   const toCreator = await readLatestEmail({
@@ -145,7 +141,7 @@ test("J7.8, J7.17, J8.1, J8.12, J8.13: a paid request waits on /r, reaches the c
   await expect(row).toContainText(SCOPE);
   await expect(row).toContainText(`You get ${cad(157500)}`);
   await expect(row.locator("time")).toHaveText(/^Expires in \d+ d \d+ h$/);
-  expect(await mainText(page)).not.toMatch(BARE_DOLLAR);
+  await expectNoBareDollar(page);
 
   // Details opens the facts; Open request shows them on the request's page.
   await pressLocator(row.getByRole("button", { name: INBOX_COPY.details }));
@@ -169,7 +165,7 @@ test("J7.8, J7.17, J8.1, J8.12, J8.13: a paid request waits on /r, reaches the c
   await expect(facts).toContainText(
     /If you don't answer, the hold is released\./,
   );
-  expect(await mainText(page)).not.toMatch(BARE_DOLLAR);
+  await expectNoBareDollar(page);
 
   // The buyer's address is nowhere a creator can see: not in the text, nor in the HTML and the data it carries (07 D47).
   for (const path of ["/dashboard", `/dashboard/requests/${requestId}`]) {

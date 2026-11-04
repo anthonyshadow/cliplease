@@ -20,7 +20,10 @@ import { HOUR_MS } from "@/lib/time";
 import { publicBadge } from "@/lib/videos/ownership";
 import { MUSIC_DISABLED_USES } from "@/lib/videos/rights";
 import { effectiveOptions } from "@/server/pricing/rate-card";
-import { rateCardFixture } from "../../../tests/helpers/rate-card-fixtures";
+import {
+  NO_VIDEO,
+  rateCardFixture,
+} from "../../../tests/helpers/rate-card-fixtures";
 import { LicensePageClient } from "./license-page-client";
 
 const mocks = vi.hoisted(() => ({
@@ -61,8 +64,8 @@ function page(
   }: { autoApprove?: boolean; approvalWindowHours?: number } = {},
 ): LicensePageDTO {
   const options = effectiveOptions(rateCardFixture(), {
+    ...NO_VIDEO,
     disabledUses: video.disabledUses ?? [],
-    basePriceOverrideCents: null,
   });
   const selection = defaultSelection(options, 1000);
   if (!selection) throw new Error("fixture: nothing fits");

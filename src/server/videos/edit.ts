@@ -14,6 +14,7 @@ import {
 import { type Actor, requireCreatorActor } from "../auth/actor";
 import { uniqueViolationConstraint } from "../db-errors";
 import { PostingsLockedError } from "../postings/errors";
+import { VIDEO_PRICING_COLUMNS } from "../pricing/rate-card";
 import { auditMusicUseChanges } from "../pricing/video-overrides";
 import { lockFlags } from "../storage/uploads";
 import {
@@ -123,8 +124,7 @@ export async function lockEditableVideo(
       slug: video.slug,
       publishedAt: video.publishedAt,
       containsMusic: video.containsMusic,
-      disabledUses: video.disabledUses,
-      basePriceOverrideCents: video.basePriceOverrideCents,
+      ...VIDEO_PRICING_COLUMNS,
     })
     .from(video)
     .where(ownedVideo(creatorId, videoId))

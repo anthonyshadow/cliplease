@@ -8,6 +8,7 @@ import {
   RATE_DIMENSIONS,
   type VideoDisabledReason,
 } from "../../lib/domain/values";
+import type { VideoExclusiveColumns } from "../../lib/pricing/exclusive";
 import { isValidSlug } from "../../lib/validation/handle";
 import { isUuid } from "../../lib/validation/uuid";
 import { PUBLISH_BLOCKERS, type PublishBlocker } from "../../lib/videos/review";
@@ -18,6 +19,7 @@ import {
   effectiveOptions,
   getRateCard,
   type RateCardDTO,
+  VIDEO_PRICING_COLUMNS,
   videoPricingOf,
 } from "../pricing/rate-card";
 import { VideoNotFoundError } from "./errors";
@@ -63,8 +65,7 @@ const publishColumns = {
   ...stepFactColumns,
   posterObjectKey: video.posterObjectKey,
   slug: video.slug,
-  disabledUses: video.disabledUses,
-  basePriceOverrideCents: video.basePriceOverrideCents,
+  ...VIDEO_PRICING_COLUMNS,
   disabledReason: video.disabledReason,
 };
 
@@ -110,9 +111,10 @@ function publishFactsOf(
 }
 
 /**
- * The creator's video's PublishFacts, with its disabled reason and the rate card itself, or null (not the creator's,
- * missing, not a uuid). The video, its postings with their accounts, and the rate card are read together, with no lock
- * (the Review's read). The rate card is for the Prices section's "Use my rate card ({base})" (07 D82).
+ * The creator's video's PublishFacts, with its disabled reason, the rate card itself and the video's own exclusive
+ * columns, or null (not the creator's, missing, not a uuid). The video, its postings with their accounts, and the rate
+ * card are read together, with no lock (the Review's read). The rate card is for the Prices section's "Use my rate card
+ * ({base})" (07 D82); the columns for the Exclusive licenses radio (07 D109; creator pages only).
  */
 export async function getPublishFacts(
   creatorId: string,
@@ -121,6 +123,7 @@ export async function getPublishFacts(
   facts: PublishFacts;
   disabledReason: VideoDisabledReason | null;
   rateCard: RateCardDTO;
+  videoExclusive: VideoExclusiveColumns;
 } | null> {
   if (!isUuid(videoId)) return null;
   const [[row], postings, rateCard] = await Promise.all([
@@ -134,6 +137,10 @@ export async function getPublishFacts(
     facts: publishFactsOf(row, postings, rateCard, creatorId),
     disabledReason: row.disabledReason,
     rateCard,
+    videoExclusive: {
+      exclusiveEnabled: row.exclusiveEnabled,
+      exclusiveMultiplierBps: row.exclusiveMultiplierBps,
+    },
   };
 }
 
@@ -201,7 +208,8 @@ export async function publishVideo(
 /**
  * The creator's video's blockers, with the platforms whose accounts need a reconnect (one Review row each, 07 D66), the
  * effective options (the Review's prices), the rate card itself (the price editor's "Use my rate card ({base})", 07 D82;
- * creator pages only) and the admin's reason when it is disabled. VideoNotFoundError when the video isn't the creator's.
+ * creator pages only), the video's own exclusive columns, for the Exclusive licenses radio (07 D109; creator pages only)
+ * and the admin's reason when it is disabled. VideoNotFoundError when the video isn't the creator's.
  */
 export async function getPublishBlockers(
   a: Actor,
@@ -211,12 +219,13 @@ export async function getPublishBlockers(
   reconnectPlatforms: PostingPlatform[];
   options: EffectiveOptions;
   rateCard: RateCardDTO;
+  videoExclusive: VideoExclusiveColumns;
   disabledReason: VideoDisabledReason | null;
 }> {
   const { creatorId } = requireCreatorActor(a);
   const read = await getPublishFacts(creatorId, videoId);
   if (!read) throw new VideoNotFoundError();
-  const { facts, disabledReason, rateCard } = read;
+  const { facts, disabledReason, rateCard, videoExclusive } = read;
   return {
     blockers: computePublishBlockers(facts),
     reconnectPlatforms: [
@@ -228,6 +237,7 @@ export async function getPublishBlockers(
     ],
     options: facts.options,
     rateCard,
+    videoExclusive,
     disabledReason,
   };
 }

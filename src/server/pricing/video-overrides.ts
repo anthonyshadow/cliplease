@@ -2,8 +2,14 @@ import "server-only";
 import { eq } from "drizzle-orm";
 import { db } from "@/db/client";
 import { creatorProfile, video } from "@/db/schema";
-import { type RateOptionKey, USE_KEYS } from "@/lib/domain/values";
 import {
+  type RateOptionKey,
+  USE_KEYS,
+  type VideoExclusiveMode,
+} from "@/lib/domain/values";
+import { exclusiveColumnsOf, exclusiveModeOf } from "@/lib/pricing/exclusive";
+import {
+  VideoExclusiveOfferInputSchema,
   VideoUseToggleInputSchema,
   videoBasePriceInputSchema,
 } from "@/lib/validation/pricing";
@@ -14,11 +20,11 @@ import { type Actor, requireCreatorActor } from "../auth/actor";
 import { lockEditableVideo } from "../videos/edit";
 import { NoMusicError, VideoNotFoundError } from "../videos/errors";
 
-// Per-video price and music re-enable (02 §5.5; 07 D82): the creator's own video, under its row lock (lockEditableVideo,
-// whose refusals come first: VideoNotFoundError, then VideoDisabledError), compared, written and audited in one
-// transaction; the same value again writes nothing. New requests only: no license_request is read or written, and
-// pending requests keep their snapshot. edit.ts imports auditMusicUseChanges from here and this file imports its lock: a
-// cycle that is safe because neither uses an imported binding while it loads. P19e adds setVideoExclusiveOffer here.
+// Per-video price and music re-enable (02 §5.5; 07 D82), and the exclusive offer (07 D109): the creator's own video, under
+// its row lock (lockEditableVideo, whose refusals come first: VideoNotFoundError, then VideoDisabledError), compared,
+// written and audited in one transaction; the same value again writes nothing. New requests only: no license_request is
+// read or written, and pending requests keep their snapshot. edit.ts imports auditMusicUseChanges from here and this file
+// imports its lock: a cycle that is safe because neither uses an imported binding while it loads.
 
 /**
  * Audits each music use whose state differs between `before` and `after` (`video.use_toggled { useKey, enabled }`), in
@@ -106,5 +112,46 @@ export async function setVideoUseEnabled(
       .set({ disabledUses: off })
       .where(eq(video.id, i.videoId));
     await auditMusicUseChanges(tx, a, i.videoId, row.disabledUses, off);
+  });
+}
+
+/**
+ * The video's own exclusive offer (07 D109, D127): 'rate_card' follows the card, 'on' offers it here (a null premium is
+ * the card's), 'off' doesn't (exclusiveColumnsOf). Audited `video.exclusive_set { fromMode, fromMultiplierBps, toMode,
+ * toMultiplierBps }` when it changes. New requests only: no request or license is read or written, and neither blocks it
+ * (J12.13). A ZodError for crafted input. Refusals: VideoNotFoundError, VideoDisabledError.
+ */
+export async function setVideoExclusiveOffer(
+  a: Actor,
+  i: {
+    videoId: string;
+    mode: VideoExclusiveMode;
+    multiplierBps: number | null;
+  },
+): Promise<void> {
+  const { creatorId } = requireCreatorActor(a);
+  if (!isUuid(i.videoId)) throw new VideoNotFoundError();
+  const { mode, multiplierBps } = VideoExclusiveOfferInputSchema.parse(i);
+  const to = exclusiveColumnsOf(mode, multiplierBps);
+  await db.transaction(async (tx) => {
+    const row = await lockEditableVideo(tx, creatorId, i.videoId);
+    if (
+      row.exclusiveEnabled === to.exclusiveEnabled &&
+      row.exclusiveMultiplierBps === to.exclusiveMultiplierBps
+    ) {
+      return;
+    }
+    await tx.update(video).set(to).where(eq(video.id, i.videoId));
+    await writeAudit(tx, a, {
+      action: "video.exclusive_set",
+      entityType: "video",
+      entityId: i.videoId,
+      data: {
+        fromMode: exclusiveModeOf(row.exclusiveEnabled),
+        fromMultiplierBps: row.exclusiveMultiplierBps,
+        toMode: mode,
+        toMultiplierBps: to.exclusiveMultiplierBps,
+      },
+    });
   });
 }

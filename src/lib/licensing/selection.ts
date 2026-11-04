@@ -12,7 +12,7 @@ import {
   type UseKey,
 } from "../domain/values";
 import { computeQuote, type QuoteResult } from "../pricing/compute-quote";
-import { PLATFORM_FEE_MIN_CENTS } from "../pricing/presets";
+import { NON_EXCLUSIVE_BPS, PLATFORM_FEE_MIN_CENTS } from "../pricing/presets";
 import { countryInSentence, countryName } from "./countries";
 import { REGIONS, rateOptionLabel } from "./options";
 
@@ -75,6 +75,7 @@ export function quoteFor(
     currency: options.currency,
     basePriceCents: options.basePriceCents,
     ...multipliers,
+    exclusiveBps: NON_EXCLUSIVE_BPS,
     ...fees,
   });
 }

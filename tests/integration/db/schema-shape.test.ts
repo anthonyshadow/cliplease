@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { db } from "../../../src/db/client";
 import * as schema from "../../../src/db/schema";
 
-// 0000_init (P03): 19 tables, 27 pgEnums, 56 CORE CHECKs (07 D60, D105).
+// 0000_init (P03): 19 tables, 27 pgEnums; CORE CHECKs: 0000_init 56 + 0002_exclusive_licenses 3 (07 D60, D105).
 const TABLES = [
   "user",
   "session",
@@ -34,6 +34,7 @@ const CORE_CHECKS = [
   "creator_profile_payouts_needs_account",
   "creator_profile_time_zone_len",
   "rate_card_base_price_range",
+  "rate_card_exclusive_multiplier_range",
   "rate_option_multiplier_range",
   "rate_option_key_matches_dimension",
   "social_account_tokens_sealed",
@@ -42,6 +43,7 @@ const CORE_CHECKS = [
   "video_slug_format",
   "video_title_len",
   "video_price_override_range",
+  "video_exclusive_multiplier_range",
   "video_disabled_uses_subset",
   "video_object_keys",
   "video_original_ready",
@@ -58,6 +60,7 @@ const CORE_CHECKS = [
   "license_request_territory_code",
   "license_request_base_range",
   "license_request_multiplier_range",
+  "license_request_exclusive_fields",
   "license_request_fee_bps_range",
   "license_request_fee_min_range",
   "license_request_money_nonneg",
@@ -184,12 +187,12 @@ describe("0000_init schema shape", () => {
     ]);
   });
 
-  it("has exactly the 56 CORE CHECKs", async () => {
+  it("has exactly the 59 CORE CHECKs", async () => {
     // Filtered to public: every database also has two information_schema domain checks.
     const { rows: checks } = await db.execute<{ name: string }>(sql`
       select conname as name from pg_constraint
       where contype = 'c' and connamespace = 'public'::regnamespace`);
-    expect(CORE_CHECKS).toHaveLength(56);
+    expect(CORE_CHECKS).toHaveLength(59);
     expect(checks.map((c) => c.name).sort()).toEqual([...CORE_CHECKS].sort());
   });
 
@@ -232,6 +235,74 @@ describe("0001_negative_balance_debits", () => {
     expect(columns).toEqual([
       {
         data_type: "timestamp with time zone",
+        is_nullable: "YES",
+        column_default: null,
+      },
+    ]);
+  });
+});
+
+describe("0002_exclusive_licenses", () => {
+  it("adds exactly its 7 columns, with their types, nullability and defaults (07 D109, D111)", async () => {
+    const { rows: columns } = await db.execute<{
+      table_name: string;
+      column_name: string;
+      data_type: string;
+      is_nullable: string;
+      column_default: string | null;
+    }>(sql`
+      select table_name, column_name, data_type, is_nullable, column_default
+      from information_schema.columns
+      where table_schema = 'public'
+        and column_name in ('exclusive', 'exclusive_enabled', 'exclusive_multiplier_bps')
+      order by 1, 2`);
+    expect(columns).toEqual([
+      {
+        table_name: "license",
+        column_name: "exclusive",
+        data_type: "boolean",
+        is_nullable: "NO",
+        column_default: "false",
+      },
+      {
+        table_name: "license_request",
+        column_name: "exclusive",
+        data_type: "boolean",
+        is_nullable: "NO",
+        column_default: "false",
+      },
+      {
+        table_name: "license_request",
+        column_name: "exclusive_multiplier_bps",
+        data_type: "integer",
+        is_nullable: "NO",
+        column_default: "10000",
+      },
+      {
+        table_name: "rate_card",
+        column_name: "exclusive_enabled",
+        data_type: "boolean",
+        is_nullable: "NO",
+        column_default: "false",
+      },
+      {
+        table_name: "rate_card",
+        column_name: "exclusive_multiplier_bps",
+        data_type: "integer",
+        is_nullable: "NO",
+        column_default: "30000",
+      },
+      {
+        table_name: "video",
+        column_name: "exclusive_enabled",
+        data_type: "boolean",
+        is_nullable: "YES",
+        column_default: null,
+      },
+      {
+        table_name: "video",
+        column_name: "exclusive_multiplier_bps",
+        data_type: "integer",
         is_nullable: "YES",
         column_default: null,
       },

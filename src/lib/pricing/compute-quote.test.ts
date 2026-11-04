@@ -6,6 +6,7 @@ import {
   platformFeeCents,
   type QuoteInput,
 } from "./compute-quote";
+import { NON_EXCLUSIVE_BPS } from "./presets";
 
 // 02 §5.5, 03 §3.7.1, 07 D79, D97, D99: base, use, term, territory, feeBps, min → license / fee / total (minor units).
 function quote(
@@ -18,10 +19,25 @@ function quote(
     useBps: use,
     termBps: term,
     territoryBps: territory,
+    exclusiveBps: NON_EXCLUSIVE_BPS,
     platformFeeBps: feeBps,
     platformFeeMinCents: min,
   };
   return computeQuote(input);
+}
+
+// 07 D109: base, use, term, territory, exclusive at the 10 % fee with the CA$2.00 floor.
+function exclusive([base, use, term, territory, ex]: readonly number[]) {
+  return computeQuote({
+    currency: "cad",
+    basePriceCents: base,
+    useBps: use,
+    termBps: term,
+    territoryBps: territory,
+    exclusiveBps: ex,
+    platformFeeBps: 1000,
+    platformFeeMinCents: 200,
+  });
 }
 
 function amounts(inputs: readonly number[], currency?: Currency) {
@@ -144,13 +160,92 @@ describe("invalid input", () => {
   });
 });
 
+describe("the exclusive factor (07 D109)", () => {
+  it.each([
+    [
+      "Paid social ads · 1 year · Worldwide at ×3.00",
+      [15000, 30000, 20000, 17500, 30000],
+      [472500, 47250, 519750],
+    ],
+    [
+      "Organic · 30 days · One country at ×3.00",
+      [15000, 10000, 10000, 10000, 30000],
+      [45000, 4500, 49500],
+    ],
+    [
+      "CA$10.00 at ×3.00: 10 % is over the floor",
+      [1000, 10000, 10000, 10000, 30000],
+      [3000, 300, 3300],
+    ],
+    [
+      "rounds every step half up",
+      [12345, 13000, 15000, 13000, 30000],
+      [93884, 9388, 103272],
+    ],
+    [
+      "TV · 1 year · Worldwide at ×10.00",
+      [15000, 50000, 20000, 17500, 100000],
+      [2625000, 262500, 2887500],
+    ],
+    [
+      "a video's own ×4.00",
+      [15000, 30000, 20000, 17500, 40000],
+      [630000, 63000, 693000],
+    ],
+    [
+      "a video's own CA$300 base",
+      [30000, 30000, 20000, 17500, 30000],
+      [945000, 94500, 1039500],
+    ],
+    [
+      "the fee's tie rounds up",
+      [15000, 30000, 15000, 17500, 30000],
+      [354375, 35438, 389813],
+    ],
+  ] as const)("%s", (_name, inputs, [license, fee, total]) => {
+    expect(exclusive(inputs)).toEqual({
+      ok: true,
+      quote: {
+        currency: "cad",
+        licensePriceCents: license,
+        platformFeeCents: fee,
+        totalCents: total,
+      },
+    });
+  });
+
+  it("puts the premium under the cap too", () => {
+    expect(exclusive([1000000, 30000, 20000, 17500, 100000])).toEqual({
+      ok: false,
+      reason: "over_max",
+    });
+  });
+
+  it.each([0, -1, 1.5, Number.NaN])("refuses a factor of %s", (ex) => {
+    expect(exclusive([15000, 30000, 20000, 17500, ex])).toEqual({
+      ok: false,
+      reason: "invalid_input",
+    });
+  });
+});
+
 describe("the two steps", () => {
-  it("licensePriceCents is the product over 10^12, half up", () => {
-    expect(licensePriceCents(15000, 30000, 20000, 17500)).toBe(157500);
-    expect(licensePriceCents(1001, 15000, 10000, 10000)).toBe(1502);
+  it("licensePriceCents is the product over 10^16, half up", () => {
+    expect(
+      licensePriceCents(15000, 30000, 20000, 17500, NON_EXCLUSIVE_BPS),
+    ).toBe(157500);
+    expect(
+      licensePriceCents(1001, 15000, 10000, 10000, NON_EXCLUSIVE_BPS),
+    ).toBe(1502);
     // 1504.5 → 1505 (half to even would give 1504); 1051.05 → 1051 (rounding up would give 1052).
-    expect(licensePriceCents(1003, 15000, 10000, 10000)).toBe(1505);
-    expect(licensePriceCents(1001, 10500, 10000, 10000)).toBe(1051);
+    expect(
+      licensePriceCents(1003, 15000, 10000, 10000, NON_EXCLUSIVE_BPS),
+    ).toBe(1505);
+    expect(
+      licensePriceCents(1001, 10500, 10000, 10000, NON_EXCLUSIVE_BPS),
+    ).toBe(1051);
+    // The tie again, through the fifth factor.
+    expect(licensePriceCents(1003, 10000, 10000, 10000, 15000)).toBe(1505);
   });
 
   it("platformFeeCents rounds half up and keeps the floor", () => {

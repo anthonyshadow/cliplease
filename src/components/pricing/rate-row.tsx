@@ -9,6 +9,11 @@ import { cn } from "@/lib/utils";
 // the row below them.
 const ROW_CELL = cn("flex items-center", FIELD_HEIGHT);
 
+export const EXAMPLE_PRICE_CELL = cn(
+  ROW_CELL,
+  "justify-end text-right text-footnote text-ink-2 tabular-nums wrap-anywhere",
+);
+
 type RateRowProps = {
   label: string;
   enabled: boolean;
@@ -76,14 +81,7 @@ export function RateRow({
         onChange={(event) => onMultiplierChange(event.target.value)}
         error={error}
       />
-      <p
-        className={cn(
-          ROW_CELL,
-          "justify-end text-right text-footnote text-ink-2 tabular-nums wrap-anywhere",
-        )}
-      >
-        {examplePrice}
-      </p>
+      <p className={EXAMPLE_PRICE_CELL}>{examplePrice}</p>
     </fieldset>
   );
 }

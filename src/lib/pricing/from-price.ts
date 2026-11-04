@@ -3,14 +3,15 @@ import type { EffectiveOptions } from "../../server/pricing/rate-card";
 import type { Currency, RateDimension } from "../domain/values";
 import { formatMoney } from "../format";
 import { computeQuote } from "./compute-quote";
-import { PLATFORM_FEE_MIN_CENTS } from "./presets";
+import { NON_EXCLUSIVE_BPS, PLATFORM_FEE_MIN_CENTS } from "./presets";
 
 /**
  * The lowest license price (without the service fee) over the enabled combinations a buyer can pay in one payment, in
  * `options.currency`; null when a group has nothing on or every combination is over the cap. The price grows with each
  * multiplier, so the cheapest combination takes each group's lowest enabled one; the fee (`platformFeeBps`, the
  * server's PLATFORM_FEE_BPS) only decides whether it fits under the cap (computeQuote's over_max). Callers pass
- * effectiveOptions(rateCard, video) and print the result with formatMoney(cents, options.currency).
+ * effectiveOptions(rateCard, video) and print the result with formatMoney(cents, options.currency). A standard price:
+ * the premium is never below ×1.00, so the lowest price is always a standard one.
  */
 export function fromPriceCents(
   options: EffectiveOptions,
@@ -30,6 +31,7 @@ export function fromPriceCents(
     useBps,
     termBps,
     territoryBps,
+    exclusiveBps: NON_EXCLUSIVE_BPS,
     platformFeeBps,
     platformFeeMinCents: PLATFORM_FEE_MIN_CENTS[options.currency],
   });

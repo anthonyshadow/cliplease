@@ -41,9 +41,9 @@ describe("parseMultiplierBps (string math)", () => {
 });
 
 describe("the multiplier's text", () => {
-  it("formats read-only text with the sign and a space", () => {
-    expect(formatMultiplier(15000)).toBe("× 1.50");
-    expect(formatMultiplier(100000)).toBe("× 10.00");
+  it("formats read-only text with the sign", () => {
+    expect(formatMultiplier(15000)).toBe("×1.50");
+    expect(formatMultiplier(100000)).toBe("×10.00");
   });
 
   it("gives the field its bare value", () => {

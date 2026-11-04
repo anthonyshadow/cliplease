@@ -175,6 +175,7 @@ export const CURRENCIES = ["cad", "usd"] as const; // type Currency; pgEnum curr
 // 07 §9.2 exclusive and renewal tuples, with the one 07 §10.2 change (every exclusive length renews)
 export const EXCLUSIVE_TERM_KEYS = ["d30", "m6", "y1"] as const; // subset of TERM_KEYS; client-safe, not a pgEnum
 export const RENEWABLE_TERM_KEYS = EXCLUSIVE_TERM_KEYS; // OQ-49 answered (07 §10.2, D133); not a pgEnum
+export const VIDEO_EXCLUSIVE_MODES = ["rate_card", "on", "off"] as const; // setVideoExclusiveOffer's mode (07 D109): client-safe, not a pgEnum
 export const LICENSE_AVAILABILITY_STATES = [
   "open",
   "non_exclusive_only",
@@ -277,6 +278,7 @@ export type ApprovalWindowHours = (typeof APPROVAL_WINDOW_HOURS)[number];
 export type Currency = (typeof CURRENCIES)[number];
 export type ExclusiveTermKey = (typeof EXCLUSIVE_TERM_KEYS)[number];
 export type RenewableTermKey = (typeof RENEWABLE_TERM_KEYS)[number];
+export type VideoExclusiveMode = (typeof VIDEO_EXCLUSIVE_MODES)[number];
 export type LicenseAvailabilityState =
   (typeof LICENSE_AVAILABILITY_STATES)[number];
 export type RenewalDisplayState = (typeof RENEWAL_DISPLAY_STATES)[number];

@@ -1,5 +1,4 @@
 import { expect, test } from "@playwright/test";
-import { POSTINGS_COPY } from "../../src/lib/postings/copy";
 import { videoUrl } from "../../src/lib/urls";
 import { BADGE_COPY } from "../../src/lib/videos/ownership";
 import { PUBLISHED_COPY } from "../../src/lib/videos/review";
@@ -7,7 +6,12 @@ import { sourcePageHref, videoHref } from "../../src/lib/videos/steps";
 import { OBJECT_KEY } from "../helpers/object-key";
 import { collectConsoleErrors } from "./helpers/console";
 import { signUpCreator } from "./helpers/creator";
-import { publish, publishedView, videoCard } from "./helpers/flows";
+import {
+  publish,
+  publishedView,
+  reviewPlainUpload,
+  videoCard,
+} from "./helpers/flows";
 import {
   LIBRARY,
   libraryPostId,
@@ -25,7 +29,6 @@ import {
   continueToPostings,
   continueToReview,
   continueToRights,
-  createDraft,
   DRAFT_TITLE,
   makeLicensable,
   sameVideoTick,
@@ -166,18 +169,7 @@ test("J5.17, D74: a creator without payouts publishes an upload posted nowhere; 
 }) => {
   test.setTimeout(240_000);
   const errors = collectConsoleErrors(page);
-  await signUpCreator(page, { payouts: false });
-  const videoId = await createDraft(page);
-  await attachSample(page);
-  await continueToPostings(page, videoId);
-  const notPosted = page
-    .locator("main")
-    .getByLabel(POSTINGS_COPY.notPosted, { exact: true });
-  await notPosted.focus();
-  await notPosted.press("Space");
-  await continueToRights(page, videoId);
-  await answerRights(page);
-  await continueToReview(page, videoId);
+  await reviewPlainUpload(page);
   await publish(page);
   await expect(
     publishedView(page).getByText(BADGE_COPY.selfAttested, { exact: true }),

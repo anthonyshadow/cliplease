@@ -1,12 +1,11 @@
 // The one pricing function (02 §5.5, 03 §3.7.1): the editor's live preview, the license page and the server's authority
-// all run this code. Integer minor units and basis points, BigInt inside, round half up. BigInt goes through the
-// constructor: the tsconfig targets ES2017, where `10n` literals don't compile. P19e adds the exclusive factor
-// (07 D109).
+// all run this code. Integer minor units and basis points, BigInt inside, round half up, with the exclusive factor
+// (07 D109). BigInt goes through the constructor (house style, 03 §3.7.1).
 import type { Currency } from "../domain/values";
 import { MAX_TOTAL_CENTS } from "./presets";
 
 const BPS = BigInt(10_000);
-const BPS3 = BPS * BPS * BPS;
+const BPS4 = BPS * BPS * BPS * BPS;
 const TWO = BigInt(2);
 const FEE_BPS_MAX = 10_000;
 const FEE_MIN_CENTS_MAX = 10_000; // CHECK license_request_fee_min_range
@@ -17,6 +16,8 @@ export type QuoteInput = {
   useBps: number;
   termBps: number;
   territoryBps: number;
+  /** NON_EXCLUSIVE_BPS, or the premium (07 D109). */
+  exclusiveBps: number;
   /** PLATFORM_FEE_BPS (env, 1000 = 10 %). */
   platformFeeBps: number;
   /** PLATFORM_FEE_MIN_CENTS[currency]; a request snapshots it (07 D79, D97). */
@@ -34,19 +35,21 @@ export type QuoteResult =
   | { ok: true; quote: Quote }
   | { ok: false; reason: "invalid_input" | "over_max" };
 
-/** round_half_up(base × use × term × territory / 10^12): exact integer math. */
+/** round_half_up(base × use × term × territory × exclusive / 10^16): exact integer math. */
 export function licensePriceCents(
   basePriceCents: number,
   useBps: number,
   termBps: number,
   territoryBps: number,
+  exclusiveBps: number,
 ): number {
   const product =
     BigInt(basePriceCents) *
     BigInt(useBps) *
     BigInt(termBps) *
-    BigInt(territoryBps);
-  return Number((product + BPS3 / TWO) / BPS3);
+    BigInt(territoryBps) *
+    BigInt(exclusiveBps);
+  return Number((product + BPS4 / TWO) / BPS4);
 }
 
 /** max(round_half_up(price × feeBps / 10^4), minCents): the service fee with its floor (07 D79, D97). */
@@ -70,7 +73,13 @@ const isIntegerIn = (n: number, max: number) =>
  * Zod schemas, src/lib/validation/pricing.ts); `over_max` when the total passes MAX_TOTAL_CENTS[currency] (07 D22).
  */
 export function computeQuote(i: QuoteInput): QuoteResult {
-  const factors = [i.basePriceCents, i.useBps, i.termBps, i.territoryBps];
+  const factors = [
+    i.basePriceCents,
+    i.useBps,
+    i.termBps,
+    i.territoryBps,
+    i.exclusiveBps,
+  ];
   if (
     !factors.every(isPositiveInteger) ||
     !isIntegerIn(i.platformFeeBps, FEE_BPS_MAX) ||
@@ -83,6 +92,7 @@ export function computeQuote(i: QuoteInput): QuoteResult {
     i.useBps,
     i.termBps,
     i.territoryBps,
+    i.exclusiveBps,
   );
   const fee = platformFeeCents(price, i.platformFeeBps, i.platformFeeMinCents);
   const total = price + fee;

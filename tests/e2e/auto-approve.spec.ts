@@ -1,14 +1,14 @@
-import { expect, type Locator, type Page, test } from "@playwright/test";
+import { expect, type Locator, test } from "@playwright/test";
 import { REQUEST_EMAIL_COPY } from "../../src/emails/request-copy";
-import { formatMoney } from "../../src/lib/format";
 import { INBOX_COPY, requestPill } from "../../src/lib/licensing/inbox";
 import { LICENSE_PAGE_COPY } from "../../src/lib/licensing/license-page";
 import { REQUEST_STATUS_COPY } from "../../src/lib/licensing/request-status";
 import { REQUESTS_SETTINGS_COPY } from "../../src/lib/payouts";
 import { licensePath, requestDetailPath } from "../../src/lib/urls";
-import { BARE_DOLLAR } from "../helpers/money";
+import { BARE_DOLLAR, cad } from "../helpers/money";
 import { readLatestEmail } from "../helpers/read-latest-email";
 import {
+  BUYER_PHONE,
   choose,
   chooseDemoSelection,
   E2E_LICENSEE,
@@ -17,6 +17,7 @@ import {
 } from "./helpers/buyer";
 import { collectConsoleErrors } from "./helpers/console";
 import { buyLicense, publishDemoVideo } from "./helpers/flows";
+import { expectNoBareDollar } from "./helpers/layout";
 import { pressAndSettleIn } from "./helpers/press";
 import { cleanCreatedVideos } from "./helpers/videos";
 
@@ -30,9 +31,6 @@ import { cleanCreatedVideos } from "./helpers/videos";
 // The creator's History reads «✓ Approved» and "Auto-approved", nothing waits, and the request page says it too.
 test.use({ reducedMotion: "reduce" });
 test.afterEach(cleanCreatedVideos);
-
-const cad = (cents: number) => formatMoney(cents, "cad");
-const mainText = (page: Page) => page.locator("main").innerText();
 
 /** Filled in where a sentence names a value the test can't know (a deadline); leadOf keeps the words before it. */
 const MARK = "\u0000";
@@ -92,9 +90,7 @@ test("J7.6, J7.18: with auto-approve on, the license page says Instant approval.
 
   // The license page, logged out at 390 × 844 (01 J7.6's auto variant; 04 §11.2): "Instant approval." and the charge
   // now, server-rendered, with no deadline and nothing of the manual hold copy.
-  const visitor = await browser.newContext({
-    viewport: { width: 390, height: 844 },
-  });
+  const visitor = await browser.newContext({ viewport: BUYER_PHONE });
   const licensePage = await visitor.newPage();
   const visitorErrors = collectConsoleErrors(licensePage);
   await licensePage.goto(shareUrl);
@@ -105,7 +101,7 @@ test("J7.6, J7.18: with auto-approve on, the license page says Instant approval.
   ).toHaveText(
     `${LICENSE_PAGE_COPY.holdAutoLead} ${LICENSE_PAGE_COPY.holdAutoBody(handle, cad(173250))}`,
   );
-  const shown = await mainText(licensePage);
+  const shown = await licensePage.locator("main").innerText();
   expect(shown).not.toContain(LICENSE_PAGE_COPY.holdLead(handle));
   expect(shown).not.toContain(
     leadOf(LICENSE_PAGE_COPY.holdDeadline(handle, MARK)),
@@ -138,7 +134,7 @@ test("J7.6, J7.18: with auto-approve on, the license page says Instant approval.
     COPY.approvedBody(handle, cad(173250)),
   );
   await expect(buyer.locator("main time")).toHaveCount(0);
-  expect(await mainText(buyer)).not.toMatch(BARE_DOLLAR);
+  await expectNoBareDollar(buyer);
   await context.close();
   expect(buyerErrors).toEqual([]);
 

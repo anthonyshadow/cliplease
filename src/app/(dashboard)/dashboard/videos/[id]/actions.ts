@@ -4,7 +4,11 @@ import { refresh } from "next/cache";
 import { notFound, RedirectType, redirect } from "next/navigation";
 import { type ZodError, z } from "zod";
 import { CREATOR_NAV } from "@/components/layout/creator-nav";
-import { isOneOf, POSTING_PLATFORMS } from "@/lib/domain/values";
+import {
+  isOneOf,
+  POSTING_PLATFORMS,
+  type VideoExclusiveMode,
+} from "@/lib/domain/values";
 import {
   POSTINGS_COPY,
   type PostingFieldError,
@@ -37,6 +41,7 @@ import {
 } from "@/lib/result";
 import { DROPZONE_COPY } from "@/lib/upload/messages";
 import {
+  VideoExclusiveOfferInputSchema,
   VideoUseToggleInputSchema,
   videoBasePriceInputSchema,
 } from "@/lib/validation/pricing";
@@ -90,8 +95,8 @@ import {
 import { shareUrl } from "@/server/videos/visibility";
 
 // The Where posted step's Server Actions, Review's Publish and the video's Turn off and Delete draft (02 §6.1; 07 D69),
-// and the Prices section's base price and music Switches (setVideoBasePrice, setVideoUseEnabled; 07 D82, below). Where
-// posted: Continue (saveVideoPostings, which also stores the same-video
+// and the Prices section's base price, music Switches and exclusive offer (setVideoBasePrice, setVideoUseEnabled,
+// setVideoExclusiveOffer; 07 D82, D109, below). Where posted: Continue (saveVideoPostings, which also stores the same-video
 // tick or takes it back: no separate confirmSameVideo action, P11c Task 3; owner answer Q-83 a) and Check again
 // (recheckPosting). Thin: the form read (postingsFromFormData), the session gate, 02 §6.1's Zod (saveVideoPostingsInput),
 // the domain, and its refusals in 04 §11.10's words. Error shapes the step reads:
@@ -559,6 +564,35 @@ export async function deleteDraftVideo(input: {
   });
 }
 
+/** A price field's own message ("Minimum is CA$10."); anything else crafted is the generic error (owner answer Q-159). */
+function priceFieldRefusal(error: ZodError, field: string) {
+  const issue = error.issues.find((i) => i.path[0] === field);
+  return issue
+    ? fieldError("invalid_input", field, issue.message)
+    : formError("invalid_input");
+}
+
+/**
+ * One save in the Prices section, then refresh(): a disabled video is the generic error and refresh()es (owner answer
+ * Q-159); not the creator's video → 404. Other errors go to the caller.
+ */
+async function savePriceChange(
+  save: () => Promise<void>,
+): Promise<ActionResult> {
+  try {
+    await save();
+  } catch (error) {
+    if (error instanceof VideoDisabledError) {
+      refresh();
+      return formError("video_disabled");
+    }
+    if (!(error instanceof VideoNotFoundError)) throw error;
+    notFound();
+  }
+  refresh();
+  return { ok: true, data: undefined };
+}
+
 /**
  * **Save** in the Prices section's base price (02 §6.1; 07 D82, D97; owner answer Q-161), on Review and the video page:
  * the video's own base, or null for the rate card, then refresh(). A bound refused names the field ("Minimum is
@@ -577,25 +611,11 @@ export async function setVideoBasePrice(input: {
       ctx.creator.payoutCurrency,
     ).safeParse(input);
     if (!parsed.success) {
-      const issue = parsed.error.issues.find(
-        (i) => i.path[0] === "basePriceCents",
-      );
-      return issue
-        ? fieldError("invalid_input", "basePriceCents", issue.message)
-        : formError("invalid_input");
+      return priceFieldRefusal(parsed.error, "basePriceCents");
     }
-    try {
-      await overrides.setVideoBasePrice(toActor(ctx), parsed.data);
-    } catch (error) {
-      if (error instanceof VideoDisabledError) {
-        refresh();
-        return formError("video_disabled");
-      }
-      if (!(error instanceof VideoNotFoundError)) throw error;
-      notFound();
-    }
-    refresh();
-    return { ok: true, data: undefined };
+    return savePriceChange(() =>
+      overrides.setVideoBasePrice(toActor(ctx), parsed.data),
+    );
   });
 }
 
@@ -616,20 +636,37 @@ export async function setVideoUseEnabled(input: {
     const parsed = VideoUseToggleInputSchema.safeParse(input);
     if (!parsed.success) return formError("invalid_input");
     try {
-      await overrides.setVideoUseEnabled(toActor(ctx), parsed.data);
+      return await savePriceChange(() =>
+        overrides.setVideoUseEnabled(toActor(ctx), parsed.data),
+      );
     } catch (error) {
-      if (error instanceof VideoDisabledError) {
-        refresh();
-        return formError("video_disabled");
-      }
-      if (error instanceof NoMusicError) {
-        refresh();
-        return formError("no_music");
-      }
-      if (!(error instanceof VideoNotFoundError)) throw error;
-      notFound();
+      if (!(error instanceof NoMusicError)) throw error;
+      refresh();
+      return formError("no_music");
     }
-    refresh();
-    return { ok: true, data: undefined };
+  });
+}
+
+/**
+ * **Save** in the Prices section's Exclusive licenses (02 §6.1; 07 D109, D127; owner answer Q-163), on Review and the
+ * video page, then refresh(). A premium out of bounds names the field ("Maximum is ×10.00."); anything else crafted, and
+ * a disabled video (which refresh()es), is the generic error (owner answer Q-159); not the creator's video → 404.
+ */
+export async function setVideoExclusiveOffer(input: {
+  videoId: string;
+  mode: VideoExclusiveMode;
+  multiplierBps: number | null;
+}): Promise<ActionResult> {
+  return redactErrors("video.exclusive_set_failed", async () => {
+    const id = videoInput.safeParse(input);
+    if (!id.success) notFound();
+    const ctx = await requireCreator(videoHref(id.data.videoId));
+    const parsed = VideoExclusiveOfferInputSchema.safeParse(input);
+    if (!parsed.success) {
+      return priceFieldRefusal(parsed.error, "multiplierBps");
+    }
+    return savePriceChange(() =>
+      overrides.setVideoExclusiveOffer(toActor(ctx), parsed.data),
+    );
   });
 }

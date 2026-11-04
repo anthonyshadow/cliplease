@@ -1,7 +1,8 @@
-import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { allMigrationsSql } from "../../../tests/helpers/migrations";
 import {
   APPROVAL_WINDOW_HOURS,
+  EXCLUSIVE_TERM_KEYS,
   REGION_KEYS,
   TERM_KEYS,
   TERRITORY_KEYS,
@@ -14,12 +15,7 @@ import { ORIGINAL_MIME } from "../../lib/upload/limits";
 // The CHECKs that copy a values.ts tuple as literals (07 D04: values.ts is the only place tuples are declared), read from
 // the migrations in journal order, so a tuple edit without a migration fails here first. enums.test.ts covers the
 // pgEnums and src/lib/pricing/presets.test.ts the money ranges.
-const journal = JSON.parse(
-  readFileSync("drizzle/meta/_journal.json", "utf8"),
-) as { entries: { tag: string }[] };
-const migrations = journal.entries
-  .map((entry) => readFileSync(`drizzle/${entry.tag}.sql`, "utf8"))
-  .join("\n");
+const migrations = allMigrationsSql();
 
 /** The body of CHECK `name` as the last migration that defines it wrote it, up to its matching close paren. */
 function checkBody(name: string): string {
@@ -76,6 +72,7 @@ describe("CHECK literals that copy values.ts tuples (07 D04)", () => {
     ["video_posting_verified_fields", "platform", VERIFIABLE_POSTING_PLATFORMS],
     ["video_posting_unverifiable", "platform", VERIFIABLE_POSTING_PLATFORMS],
     ["video_original_ready", "original_mime", ORIGINAL_MIME],
+    ["license_request_exclusive_fields", "term_key", EXCLUSIVE_TERM_KEYS],
   ] as const)("%s lists %s as the tuple", (name, column, tuple) => {
     expect(sorted(inList(checkBody(name), column))).toEqual(sorted(tuple));
   });

@@ -14,7 +14,15 @@ import { formatMoney } from "@/lib/format";
 import { DIMENSION_LABELS } from "@/lib/licensing/options";
 import type { RateChoice, RateChoices } from "@/lib/pricing/choices";
 import { computeQuote } from "@/lib/pricing/compute-quote";
-import { PLATFORM_FEE_MIN_CENTS } from "@/lib/pricing/presets";
+import {
+  type ExclusiveLine,
+  isExclusiveTermKey,
+} from "@/lib/pricing/exclusive";
+import { EXCLUSIVE_COPY } from "@/lib/pricing/exclusive-copy";
+import {
+  NON_EXCLUSIVE_BPS,
+  PLATFORM_FEE_MIN_CENTS,
+} from "@/lib/pricing/presets";
 
 /** What the preview needs: the editor builds it from unsaved edits; Review (P13) passes effectiveOptions' result. */
 export type PreviewOptions = RateChoices & {
@@ -39,17 +47,20 @@ const percent = (bps: number) => `${bps / 100}%`;
 
 /**
  * 04 §9.29 PricePreview: a use, a term and a territory among the enabled options, and the line the buyer's quote gives
- * (01 J4.4; template 07 D98) from the same computeQuote the server runs, on every change. `readOnly` is the Review
- * step's use (P13): the same picker over the video's prices, with "Edit your rate card".
+ * (01 J4.4; template 07 D98) from the same computeQuote the server runs, on every change, and the same quote with the
+ * premium while `exclusive` is offered (04 §9.29, 07 D109). `readOnly` is the Review step's use (P13): the same picker
+ * over the video's prices, with "Edit your rate card".
  */
 export function PricePreview({
   options,
   platformFeeBps,
   readOnly = false,
+  exclusive,
 }: {
   options: PreviewOptions;
   platformFeeBps: number;
   readOnly?: boolean;
+  exclusive?: ExclusiveLine | null;
 }) {
   const { currency } = options;
   const [chosen, setChosen] =
@@ -61,19 +72,37 @@ export function PricePreview({
   };
   const { use, term, territory } = picks;
   const minFeeCents = PLATFORM_FEE_MIN_CENTS[currency];
-  const quote =
-    use && term && territory
-      ? computeQuote({
-          currency,
-          basePriceCents: options.basePriceCents,
-          useBps: use.bps,
-          termBps: term.bps,
-          territoryBps: territory.bps,
-          platformFeeBps,
-          platformFeeMinCents: minFeeCents,
-        })
-      : null;
+  const inputs = use &&
+    term &&
+    territory && {
+      currency,
+      basePriceCents: options.basePriceCents,
+      useBps: use.bps,
+      termBps: term.bps,
+      territoryBps: territory.bps,
+      platformFeeBps,
+      platformFeeMinCents: minFeeCents,
+    };
+  const quote = inputs
+    ? computeQuote({ ...inputs, exclusiveBps: NON_EXCLUSIVE_BPS })
+    : null;
   const money = (cents: number) => formatMoney(cents, currency);
+  const exclusiveText = (): string | null => {
+    if (!exclusive?.offered || !inputs || !term) return null;
+    if (!isExclusiveTermKey(term.key)) return EXCLUSIVE_COPY.perpetualLine;
+    const result = computeQuote({
+      ...inputs,
+      exclusiveBps: exclusive.multiplierBps,
+    });
+    if (result.ok) {
+      return EXCLUSIVE_COPY.line(
+        money(result.quote.licensePriceCents),
+        money(result.quote.totalCents),
+      );
+    }
+    return result.reason === "over_max" ? EXCLUSIVE_COPY.tooHighLine : null;
+  };
+  const exclusiveLine = exclusiveText();
 
   return (
     <div
@@ -120,6 +149,11 @@ export function PricePreview({
           ) : (
             "Too high for one payment."
           )}
+        </p>
+      ) : null}
+      {exclusiveLine ? (
+        <p data-exclusive-line className="text-body text-ink tabular-nums">
+          {exclusiveLine}
         </p>
       ) : null}
       <p className="text-footnote text-ink-2">

@@ -24,10 +24,7 @@ import { createLicenseRequest } from "../../src/server/licensing/requests";
 import { getAuthorization, retrieveCheckout } from "../../src/server/payments";
 import { openFakeCheckout } from "../../src/server/payments/fake-checkout";
 import { paymentsDriver } from "../../src/server/payments/registry";
-import {
-  clientUserAgent,
-  type RequestContext,
-} from "../../src/server/request-context";
+import { clientUserAgent } from "../../src/server/request-context";
 import {
   findRequestForBuyer,
   hashBuyerToken,
@@ -45,6 +42,7 @@ import {
   readyLibraryVideo,
   readyUpload,
 } from "../helpers/ready-videos";
+import { REQUEST_CTX } from "../helpers/request-flow";
 import { storedPayouts } from "../helpers/transfer-fixtures";
 
 // startCheckout's domain half (P16a; 02 §5.7; 03 T1; 07 D24, D31, D74, D79, D81, D82, D84, D94, D95; owner answers
@@ -52,10 +50,6 @@ import { storedPayouts } from "../helpers/transfer-fixtures";
 // submission, the creator's settings and currency snapshotted, Checkout called only after the commit; and what the
 // fake checkout and /r read (owner answer Q-118 a).
 
-const CTX: RequestContext = {
-  ip: "203.0.113.7",
-  userAgent: "Mozilla/5.0 (test)",
-};
 const DEMO_TOTAL = DEMO_REQUEST.expectedTotalCents;
 const HOLD_MS = 7 * DAY_MS;
 
@@ -111,7 +105,7 @@ describe("createLicenseRequest: prices (07 D79, D82, D97)", () => {
     expect(
       await createLicenseRequest(
         input(live.id, { expectedTotalCents: 100 }),
-        CTX,
+        REQUEST_CTX,
       ),
     ).toEqual({ ok: false, reason: "price_changed", totalCents: DEMO_TOTAL });
     expect(await requestsOf(live.id)).toEqual([]);
@@ -136,7 +130,7 @@ describe("createLicenseRequest: prices (07 D79, D82, D97)", () => {
     const url = okUrl(
       await createLicenseRequest(
         input(live.id, { buyerEmail: "  Ana.Buyer@Studio.COM " }),
-        CTX,
+        REQUEST_CTX,
       ),
     );
     const row = await onlyRequest(live.id);
@@ -222,7 +216,7 @@ describe("createLicenseRequest: prices (07 D79, D82, D97)", () => {
           territoryCode: "CA",
           expectedTotalCents: 1200,
         }),
-        CTX,
+        REQUEST_CTX,
       ),
     );
     expect(await onlyRequest(live.id)).toMatchObject({
@@ -242,7 +236,7 @@ describe("createLicenseRequest: prices (07 D79, D82, D97)", () => {
     okUrl(
       await createLicenseRequest(
         input(live.id, { expectedTotalCents: 231000 }),
-        CTX,
+        REQUEST_CTX,
       ),
     );
     expect(await onlyRequest(live.id)).toMatchObject({
@@ -255,7 +249,7 @@ describe("createLicenseRequest: prices (07 D79, D82, D97)", () => {
 
   it("refuses an option the creator turned off, or the music rule took (07 D82)", async () => {
     const { live } = await liveVideo(["paid_social"]);
-    expect(await createLicenseRequest(input(live.id), CTX)).toEqual({
+    expect(await createLicenseRequest(input(live.id), REQUEST_CTX)).toEqual({
       ok: false,
       reason: "option_disabled",
     });
@@ -264,7 +258,7 @@ describe("createLicenseRequest: prices (07 D79, D82, D97)", () => {
       containsMusic: true,
       disabledUses: [...MUSIC_DISABLED_USES],
     });
-    expect(await createLicenseRequest(input(music.id), CTX)).toEqual({
+    expect(await createLicenseRequest(input(music.id), REQUEST_CTX)).toEqual({
       ok: false,
       reason: "option_disabled",
     });
@@ -288,7 +282,7 @@ describe("createLicenseRequest: prices (07 D79, D82, D97)", () => {
           inArray(rateOption.optionKey, ["paid_social", "y1", "worldwide"]),
         ),
       );
-    expect(await createLicenseRequest(input(live.id), CTX)).toEqual({
+    expect(await createLicenseRequest(input(live.id), REQUEST_CTX)).toEqual({
       ok: false,
       reason: "over_max",
     });
@@ -317,7 +311,7 @@ describe("createLicenseRequest: territories (07 D04)", () => {
       },
     ];
     for (const change of cases) {
-      okUrl(await createLicenseRequest(input(live.id, change), CTX));
+      okUrl(await createLicenseRequest(input(live.id, change), REQUEST_CTX));
     }
     const rows = await requestsOf(live.id);
     expect(rows.map((r) => r.territoryCode).sort()).toEqual(
@@ -330,14 +324,14 @@ describe("createLicenseRequest: one request per submission (07 D31; owner answer
   it("returns the same Checkout for the same submission, a double tap included, and saves one row", async () => {
     const { live } = await liveVideo();
     const once = input(live.id);
-    const first = okUrl(await createLicenseRequest(once, CTX));
-    expect(okUrl(await createLicenseRequest(once, CTX))).toBe(first);
+    const first = okUrl(await createLicenseRequest(once, REQUEST_CTX));
+    expect(okUrl(await createLicenseRequest(once, REQUEST_CTX))).toBe(first);
     // The same address padded and in capitals is the same buyer.
     expect(
       okUrl(
         await createLicenseRequest(
           { ...once, buyerEmail: " SAM@DailyLaughs.com " },
-          CTX,
+          REQUEST_CTX,
         ),
       ),
     ).toBe(first);
@@ -346,8 +340,8 @@ describe("createLicenseRequest: one request per submission (07 D31; owner answer
     const spy = checkoutSpy();
     const twice = input(live.id);
     const results = await Promise.all([
-      createLicenseRequest(twice, CTX),
-      createLicenseRequest(twice, CTX),
+      createLicenseRequest(twice, REQUEST_CTX),
+      createLicenseRequest(twice, REQUEST_CTX),
     ]);
     const rows = (await requestsOf(live.id)).filter(
       (r) => r.checkoutSubmissionId === twice.submissionId,
@@ -365,7 +359,7 @@ describe("createLicenseRequest: one request per submission (07 D31; owner answer
   it("says already sent when anything the buyer entered changed, or the request moved on", async () => {
     const { live } = await liveVideo();
     const once = input(live.id);
-    okUrl(await createLicenseRequest(once, CTX));
+    okUrl(await createLicenseRequest(once, REQUEST_CTX));
     const changes: Partial<StartCheckoutInput>[] = [
       { buyerEmail: "someone@else.com" },
       { licenseeName: "Another Studio" },
@@ -374,7 +368,10 @@ describe("createLicenseRequest: one request per submission (07 D31; owner answer
       { useKey: "broadcast", expectedTotalCents: DEMO_TOTAL },
     ];
     for (const change of changes) {
-      const result = await createLicenseRequest({ ...once, ...change }, CTX);
+      const result = await createLicenseRequest(
+        { ...once, ...change },
+        REQUEST_CTX,
+      );
       // A changed use changes the price first; every other change reaches the submission.
       expect(result).toEqual(
         "useKey" in change
@@ -386,7 +383,7 @@ describe("createLicenseRequest: one request per submission (07 D31; owner answer
       .update(licenseRequest)
       .set({ status: "abandoned", statusReason: "checkout_expired" })
       .where(eq(licenseRequest.checkoutSubmissionId, once.submissionId));
-    expect(await createLicenseRequest(once, CTX)).toEqual({
+    expect(await createLicenseRequest(once, REQUEST_CTX)).toEqual({
       ok: false,
       reason: "already_submitted",
     });
@@ -396,14 +393,14 @@ describe("createLicenseRequest: one request per submission (07 D31; owner answer
   it("keeps the submission when its Checkout can't be read, so a retry finds the same one (07 D31)", async () => {
     const { live } = await liveVideo();
     const once = input(live.id);
-    const first = okUrl(await createLicenseRequest(once, CTX));
+    const first = okUrl(await createLicenseRequest(once, REQUEST_CTX));
     vi.spyOn(paymentsDriver("cad"), "retrieveCheckout").mockRejectedValueOnce(
       new Error("stripe down"),
     );
-    await expect(createLicenseRequest(once, CTX)).rejects.toThrow(
+    await expect(createLicenseRequest(once, REQUEST_CTX)).rejects.toThrow(
       "stripe down",
     );
-    expect(okUrl(await createLicenseRequest(once, CTX))).toBe(first);
+    expect(okUrl(await createLicenseRequest(once, REQUEST_CTX))).toBe(first);
     await onlyRequest(live.id);
   });
 });
@@ -422,7 +419,7 @@ describe("createLicenseRequest: who can buy (07 D51, D72, D74)", () => {
       payoutsStatus: "not_started",
       stripeAccountId: null,
     });
-    const url = okUrl(await createLicenseRequest(input(live.id), CTX));
+    const url = okUrl(await createLicenseRequest(input(live.id), REQUEST_CTX));
     expect(url).toMatch(/\/dev\/fake-checkout\/[0-9a-f-]{36}$/);
   });
 
@@ -430,18 +427,20 @@ describe("createLicenseRequest: who can buy (07 D51, D72, D74)", () => {
     const { live } = await liveVideo();
     for (const status of ["draft", "unpublished", "disabled"] as const) {
       await db.update(video).set({ status }).where(eq(video.id, live.id));
-      expect(await createLicenseRequest(input(live.id), CTX)).toEqual({
+      expect(await createLicenseRequest(input(live.id), REQUEST_CTX)).toEqual({
         ok: false,
         reason: "not_available",
       });
     }
     const { creator } = await pricedCreator();
     const demo = await publishVideo(await readyLibraryVideo(creator.id));
-    expect(await createLicenseRequest(input(demo.id), CTX, [])).toEqual({
-      ok: false,
-      reason: "not_available",
-    });
-    okUrl(await createLicenseRequest(input(demo.id), CTX, ["mock"]));
+    expect(await createLicenseRequest(input(demo.id), REQUEST_CTX, [])).toEqual(
+      {
+        ok: false,
+        reason: "not_available",
+      },
+    );
+    okUrl(await createLicenseRequest(input(demo.id), REQUEST_CTX, ["mock"]));
     expect(await requestsOf(live.id)).toEqual([]);
   });
 });
@@ -450,7 +449,9 @@ describe("createLicenseRequest: snapshots (07 D81, D84)", () => {
   it("keeps the buyer's zone when it is one, else UTC", async () => {
     const { live } = await liveVideo();
     for (const timeZone of ["Bogus/Zone", undefined]) {
-      okUrl(await createLicenseRequest(input(live.id, { timeZone }), CTX));
+      okUrl(
+        await createLicenseRequest(input(live.id, { timeZone }), REQUEST_CTX),
+      );
     }
     const zones = (await requestsOf(live.id)).map((r) => r.buyerTimeZone);
     expect(zones).toEqual(["UTC", "UTC"]);
@@ -463,7 +464,7 @@ describe("createLicenseRequest: snapshots (07 D81, D84)", () => {
       approvalWindowHours: 48,
       autoApprove: true,
     });
-    okUrl(await createLicenseRequest(input(live.id), CTX));
+    okUrl(await createLicenseRequest(input(live.id), REQUEST_CTX));
     await db
       .update(creatorProfile)
       .set({ approvalWindowHours: 120, autoApprove: false })
@@ -477,7 +478,7 @@ describe("createLicenseRequest: snapshots (07 D81, D84)", () => {
   it("snapshots auto-approve off while the creator's payouts aren't active, though the setting is on (owner answer Q-155)", async () => {
     const { creator, live } = await liveVideo();
     await storedPayouts(creator.id, "restricted", 0, { autoApprove: true });
-    okUrl(await createLicenseRequest(input(live.id), CTX));
+    okUrl(await createLicenseRequest(input(live.id), REQUEST_CTX));
     expect(await onlyRequest(live.id)).toMatchObject({ autoApprove: false });
   });
 
@@ -500,7 +501,7 @@ describe("createLicenseRequest: a failed Checkout (07 D57)", () => {
     const { live } = await liveVideo();
     checkoutSpy().mockRejectedValueOnce(new Error("stripe down"));
     const logs = captureLogEvents("license_request.checkout_failed");
-    const result = await createLicenseRequest(input(live.id), CTX);
+    const result = await createLicenseRequest(input(live.id), REQUEST_CTX);
     const { written, events } = logs();
     expect(result).toEqual({ ok: false, reason: "checkout_failed" });
     const row = await onlyRequest(live.id);
@@ -518,7 +519,7 @@ describe("the fake driver's view of a request (07 D35, D74, D76; owner answer Q-
   it("is an open session and a hold for a request in checkout, a platform charge in the request's currency", async () => {
     const { live } = await liveVideo();
     const spy = checkoutSpy();
-    okUrl(await createLicenseRequest(input(live.id), CTX));
+    okUrl(await createLicenseRequest(input(live.id), REQUEST_CTX));
     const row = await onlyRequest(live.id);
     await expect(
       retrieveCheckout("cad", `cs_fake_${row.id}`),
@@ -613,7 +614,7 @@ describe("the fake driver's view of a request (07 D35, D74, D76; owner answer Q-
 describe("the buyer's pages: the fake checkout and /r (05 §4.3, §10; owner answer Q-118 a)", () => {
   it("opens the fake checkout on the request's snapshot, returning to the buyer's own link, which /r opens", async () => {
     const { creator, live } = await liveVideo();
-    okUrl(await createLicenseRequest(input(live.id), CTX));
+    okUrl(await createLicenseRequest(input(live.id), REQUEST_CTX));
     const row = await onlyRequest(live.id);
     const checkout = await openFakeCheckout(row.id);
     expect(checkout).toMatchObject({
@@ -662,12 +663,12 @@ describe("the buyer's pages: the fake checkout and /r (05 §4.3, §10; owner ans
   it("has no fake checkout for a request whose Checkout never opened, an unknown or malformed id, or outside development and test", async () => {
     const { live } = await liveVideo();
     checkoutSpy().mockRejectedValueOnce(new Error("stripe down"));
-    await createLicenseRequest(input(live.id), CTX);
+    await createLicenseRequest(input(live.id), REQUEST_CTX);
     expect(await openFakeCheckout((await onlyRequest(live.id)).id)).toBeNull();
     expect(await openFakeCheckout(randomUUID())).toBeNull();
     expect(await openFakeCheckout("not-a-uuid")).toBeNull();
     const { live: other } = await liveVideo();
-    okUrl(await createLicenseRequest(input(other.id), CTX));
+    okUrl(await createLicenseRequest(input(other.id), REQUEST_CTX));
     const { id } = await onlyRequest(other.id);
     const before = env.APP_ENV;
     env.APP_ENV = "preview";
@@ -702,7 +703,7 @@ describe("createLicenseRequest: another currency's account (07 D94, D95)", () =>
       await insertRateCard(creator);
       const live = await publishVideo(await readyUpload(creator.id));
       videos.push(live.id);
-      okUrl(await createLicenseRequest(input(live.id), CTX));
+      okUrl(await createLicenseRequest(input(live.id), REQUEST_CTX));
       const row = await onlyRequest(live.id);
       expect(row).toMatchObject({
         currency: "usd",

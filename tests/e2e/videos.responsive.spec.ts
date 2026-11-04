@@ -1,4 +1,5 @@
 import { expect, type Locator, test } from "@playwright/test";
+import { VIDEO_EXCLUSIVE_MODES } from "../../src/lib/domain/values";
 import { PUBLISHED_COPY, REVIEW_COPY } from "../../src/lib/videos/review";
 import { videoHref } from "../../src/lib/videos/steps";
 import {
@@ -36,18 +37,23 @@ import {
   baseField,
   basePriceRadio,
   basePriceTile,
+  editorButton,
+  exclusiveEditor,
+  exclusiveField,
+  exclusiveRadio,
+  exclusiveTile,
   musicSwitchControls,
-  pricesSection,
 } from "./helpers/video-price";
 import { cleanCreatedVideos, createDraft, DRAFT_TITLE } from "./helpers/videos";
 
-// G.6 for publishing and the video page (P14a, P14b, P19d; 05 §1.6 S06, S17, S19, S20; 07 D82, D145, D146, D149, D152,
-// D153, D154) on all four projects, from one Demo video with music published through the UI: the success view is one
-// centered column of at most 640 px at every tier; the video's page is that column below 1024 and two columns from 1024,
-// its Prices' base-price choices and live music Switches 44 px targets inside the sections, and with "Set a base price
-// for this video" chosen its field, Save and Cancel too, with no sideways scroll; /dashboard/videos (with a draft beside
-// it, its Menu's Delete sheet a bottom sheet or a dialog) and, logged out, /@handle hold their cards in 2 / 3 / 4 / 5
-// columns (Mobile / Tablet / Desktop / XL) inside the app frame, with no sideways scroll and no console error.
+// G.6 for publishing and the video page (P14a, P14b, P19d, P19e; 05 §1.6 S06, S17, S19, S20; 07 D82, D109, D145, D146,
+// D149, D152, D153, D154) on all four projects, from one Demo video with music published through the UI: the success view
+// is one centered column of at most 640 px at every tier; the video's page is that column below 1024 and two columns from
+// 1024, its Prices' base-price choices, exclusive choices and live music Switches 44 px targets inside the sections, and
+// with "Set a base price for this video" and "Offer on this video" both chosen each field, Save and Cancel too, with no
+// sideways scroll; /dashboard/videos (with a draft beside it, its Menu's Delete sheet a bottom sheet or a dialog) and,
+// logged out, /@handle hold their cards in 2 / 3 / 4 / 5 columns (Mobile / Tablet / Desktop / XL) inside the app frame,
+// with no sideways scroll and no console error.
 test.use({ reducedMotion: "reduce" });
 test.afterEach(cleanCreatedVideos);
 
@@ -123,11 +129,12 @@ test("G.6: the success view, the video's page, /dashboard/videos and the public 
     }
     await expectInside(copy, aside);
     await expectInside(turnOff, sections);
-    // The Prices' base-price choices and music Switches (07 D82, D152).
+    // The Prices' base-price choices, exclusive choices and music Switches (07 D82, D109, D152).
     await expect(switches).toHaveCount(2);
     for (const control of [
       basePriceTile(page, "rate_card"),
       basePriceTile(page, "video"),
+      ...VIDEO_EXCLUSIVE_MODES.map((mode) => exclusiveTile(page, mode)),
       ...(await switches.all()),
     ]) {
       await expectInside(control, sections);
@@ -135,24 +142,28 @@ test("G.6: the success view, the video's page, /dashboard/videos and the public 
     }
   });
 
-  // "Set a base price for this video" chosen: its field, Save and Cancel stay inside the sections; Cancel leaves the
-  // editor clean (no leave guard) for the navigations below.
+  // "Set a base price for this video" and "Offer on this video" both chosen: each field, Save and Cancel stay inside the
+  // sections; each Cancel leaves its editor clean (no leave guard) for the navigations below.
   await choose(page, "basePrice", "video");
-  const prices = pricesSection(page);
+  await choose(page, "exclusiveOffer", "on");
+  const baseEditor = page.locator("[data-video-price-editor]");
+  const offerEditor = exclusiveEditor(page);
   const field = baseField(page);
-  const save = prices.getByRole("button", {
-    name: REVIEW_COPY.save,
-    exact: true,
-  });
-  const cancel = prices.getByRole("button", {
-    name: REVIEW_COPY.cancel,
-    exact: true,
-  });
+  const premium = exclusiveField(page);
+  const cancel = editorButton(baseEditor, REVIEW_COPY.cancel);
+  const cancelOffer = editorButton(offerEditor, REVIEW_COPY.cancel);
   await atEveryWidth(page, testInfo, async () => {
     await expectNoHorizontalScroll(page);
     await expect(field).toBeVisible();
-    await expectInside(field, sections);
-    for (const control of [save, cancel]) {
+    await expect(premium).toBeVisible();
+    for (const control of [
+      field,
+      editorButton(baseEditor, REVIEW_COPY.save),
+      cancel,
+      premium,
+      editorButton(offerEditor, REVIEW_COPY.save),
+      cancelOffer,
+    ]) {
       await expectInside(control, sections);
       await expectTouchTarget(control);
     }
@@ -160,6 +171,9 @@ test("G.6: the success view, the video's page, /dashboard/videos and the public 
   await pressLocator(cancel);
   await expect(field).toHaveCount(0);
   await expect(basePriceRadio(page, "rate_card")).toBeChecked();
+  await pressLocator(cancelOffer);
+  await expect(premium).toHaveCount(0);
+  await expect(exclusiveRadio(page, "rate_card")).toBeChecked();
 
   // A draft beside it, so the list has a Continue row too.
   await createDraft(page);

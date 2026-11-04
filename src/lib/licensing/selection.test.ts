@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { rateCardFixture } from "../../../tests/helpers/rate-card-fixtures";
+import {
+  NO_VIDEO,
+  rateCardFixture,
+} from "../../../tests/helpers/rate-card-fixtures";
 import { effectiveOptions } from "../../server/pricing/rate-card";
 import type { RateOptionKey, UseKey } from "../domain/values";
 import { formatDelta } from "../format";
@@ -33,6 +36,7 @@ const options = (
   video: { disabledUses?: UseKey[]; basePriceOverrideCents?: number } = {},
 ) =>
   effectiveOptions(c, {
+    ...NO_VIDEO,
     disabledUses: video.disabledUses ?? [],
     basePriceOverrideCents: video.basePriceOverrideCents ?? null,
   });
@@ -47,6 +51,22 @@ const PAID_YEAR_WORLD: Selection = {
 describe("quoteFor (07 D79, D82, D97)", () => {
   it("prices Paid social ads · 1 year · Worldwide on the default card", () => {
     expect(quoteFor(options(), PAID_YEAR_WORLD, FEES)).toEqual({
+      ok: true,
+      quote: {
+        currency: "cad",
+        licensePriceCents: 157500,
+        platformFeeCents: 15750,
+        totalCents: 173250,
+      },
+    });
+  });
+
+  it("stays the standard price with the exclusive offer on at ×10.00 (07 D109)", () => {
+    const offering = rateCardFixture(undefined, {
+      exclusiveEnabled: true,
+      exclusiveMultiplierBps: 100000,
+    });
+    expect(quoteFor(options(offering), PAID_YEAR_WORLD, FEES)).toEqual({
       ok: true,
       quote: {
         currency: "cad",

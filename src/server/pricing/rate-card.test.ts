@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { rateCardFixture } from "../../../tests/helpers/rate-card-fixtures";
+import {
+  NO_VIDEO,
+  rateCardFixture,
+} from "../../../tests/helpers/rate-card-fixtures";
+import { EXCLUSIVE_TERM_KEYS, isOneOf } from "../../lib/domain/values";
 import { effectiveOptions } from "./rate-card";
-
-const NO_VIDEO = { disabledUses: [], basePriceOverrideCents: null };
 
 describe("effectiveOptions (02 §5.5, 07 D82)", () => {
   it("gives the card's options with their buyer labels, on the card's base", () => {
@@ -40,7 +42,7 @@ describe("effectiveOptions (02 §5.5, 07 D82)", () => {
 
   it("uses the video's base override", () => {
     const options = effectiveOptions(rateCardFixture(), {
-      disabledUses: [],
+      ...NO_VIDEO,
       basePriceOverrideCents: 20000,
     });
     expect(options.basePriceCents).toBe(20000);
@@ -49,8 +51,8 @@ describe("effectiveOptions (02 §5.5, 07 D82)", () => {
 
   it("turns off the music-disabled uses with the reason 'music'", () => {
     const options = effectiveOptions(rateCardFixture(), {
+      ...NO_VIDEO,
       disabledUses: ["paid_social", "broadcast"],
-      basePriceOverrideCents: null,
     });
     expect(
       options.use.map((o) => [o.key, o.enabled, o.disabledReason]),
@@ -65,8 +67,8 @@ describe("effectiveOptions (02 §5.5, 07 D82)", () => {
     const options = effectiveOptions(
       rateCardFixture((o) => (o.key === "broadcast" ? { enabled: false } : {})),
       {
+        ...NO_VIDEO,
         disabledUses: ["paid_social", "broadcast"],
-        basePriceOverrideCents: null,
       },
     );
     expect(options.use.find((o) => o.key === "broadcast")).toMatchObject({
@@ -94,8 +96,8 @@ describe("effectiveOptions (02 §5.5, 07 D82)", () => {
 
   it("re-enables a use music turned off: only broadcast stays off, Paid social is an ordinary option (P19d)", () => {
     const options = effectiveOptions(rateCardFixture(), {
+      ...NO_VIDEO,
       disabledUses: ["broadcast"],
-      basePriceOverrideCents: null,
     });
     expect(
       options.use.map((o) => [o.key, o.enabled, o.disabledReason]),
@@ -110,12 +112,15 @@ describe("effectiveOptions (02 §5.5, 07 D82)", () => {
     const card = rateCardFixture();
     const plain = effectiveOptions(card, NO_VIDEO);
     for (const video of [
+      { ...NO_VIDEO, disabledUses: ["paid_social", "broadcast"] as const },
       {
-        disabledUses: ["paid_social", "broadcast"] as const,
-        basePriceOverrideCents: null,
+        ...NO_VIDEO,
+        disabledUses: ["broadcast"] as const,
+        basePriceOverrideCents: 30000,
       },
-      { disabledUses: ["broadcast"] as const, basePriceOverrideCents: 30000 },
-      { disabledUses: [] as const, basePriceOverrideCents: 1000 },
+      { ...NO_VIDEO, basePriceOverrideCents: 1000 },
+      { ...NO_VIDEO, exclusiveEnabled: true, exclusiveMultiplierBps: 40000 },
+      { ...NO_VIDEO, exclusiveEnabled: false, exclusiveMultiplierBps: null },
     ]) {
       const before = structuredClone({ card, video });
       const options = effectiveOptions(card, video);
@@ -130,13 +135,44 @@ describe("effectiveOptions (02 §5.5, 07 D82)", () => {
   it("takes a 30000 override over the card's 15000, and the card's again without one", () => {
     expect(
       effectiveOptions(rateCardFixture(), {
-        disabledUses: [],
+        ...NO_VIDEO,
         basePriceOverrideCents: 30000,
       }),
     ).toMatchObject({ basePriceCents: 30000, basePriceSource: "video" });
     expect(effectiveOptions(rateCardFixture(), NO_VIDEO)).toMatchObject({
       basePriceCents: 15000,
       basePriceSource: "rate_card",
+    });
+  });
+
+  it("offers no exclusive license on the default card (07 D109)", () => {
+    expect(effectiveOptions(rateCardFixture(), NO_VIDEO).exclusive).toEqual({
+      offered: false,
+      multiplierBps: 30000,
+      source: "rate_card",
+    });
+  });
+
+  it("offers none without a 30-day, 6-month or 1-year term, even with the video's own switch on", () => {
+    const perpetualOnly = rateCardFixture((o) =>
+      isOneOf(EXCLUSIVE_TERM_KEYS, o.key) ? { enabled: false } : {},
+    );
+    expect(
+      effectiveOptions(perpetualOnly, { ...NO_VIDEO, exclusiveEnabled: true })
+        .exclusive,
+    ).toEqual({ offered: false, multiplierBps: 30000, source: "video" });
+  });
+
+  it("offers it with 6 months alone", () => {
+    const sixMonths = rateCardFixture(
+      (o) =>
+        o.dimension === "term" && o.key !== "m6" ? { enabled: false } : {},
+      { exclusiveEnabled: true },
+    );
+    expect(effectiveOptions(sixMonths, NO_VIDEO).exclusive).toEqual({
+      offered: true,
+      multiplierBps: 30000,
+      source: "rate_card",
     });
   });
 });

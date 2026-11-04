@@ -14,8 +14,9 @@ import {
   VIDEO_PAGE_COPY,
 } from "../../src/lib/videos/video-page";
 import { VIDEO_PRICE_COPY } from "../../src/lib/videos/video-price";
-import { BARE_DOLLAR } from "../helpers/money";
+import { cad } from "../helpers/money";
 import {
+  BUYER_PHONE,
   choose,
   chooseDemoSelection,
   hydrated,
@@ -25,6 +26,7 @@ import {
 } from "./helpers/buyer";
 import { collectConsoleErrors } from "./helpers/console";
 import { buyLicense, publishDemoVideo } from "./helpers/flows";
+import { expectNoBareDollar } from "./helpers/layout";
 import { trackServerActions } from "./helpers/network";
 import {
   isServerAction,
@@ -63,12 +65,9 @@ import {
 test.use({ reducedMotion: "reduce" });
 test.afterEach(cleanCreatedVideos);
 
-const cad = (cents: number) => formatMoney(cents, "cad");
 /** The PriceBar's lines: "License CA$300.00 · Service fee CA$30.00". */
 const priceLines = (license: number, fee: number) =>
   `${LICENSE_PAGE_COPY.license(cad(license))} · ${LICENSE_PAGE_COPY.serviceFee(cad(fee))}`;
-/** A buyer's phone, logged out (05 §4.1's frame). */
-const PHONE = { width: 390, height: 844 };
 
 /** The From line's uses: "Organic social repost", "Paid social ads", "TV / broadcast". */
 const ALL_USES = USE_KEYS.map((key) => rateOptionLabel(key));
@@ -121,7 +120,7 @@ test("J4.8: a video's own base price is a draft until Save, then prices its From
   await expect(fromLine(page)).toHaveText(
     fromPriceLine(15_000, "cad", ALL_USES),
   );
-  expect(await page.locator("main").innerText()).not.toMatch(BARE_DOLLAR);
+  await expectNoBareDollar(page);
 
   // An arrow key moves to "Set a base price for this video" and only drafts (owner answer Q-161): the field holds the
   // card's base, Save and Cancel show, leaving would ask first, and nothing is sent.
@@ -153,7 +152,7 @@ test("J4.8: a video's own base price is a draft until Save, then prices its From
   await expect.poll(() => leaveIsGuarded(page)).toBe(false);
 
   // Logged out at 390 × 844: the /@handle card, then the license page's first load and the demo selection at CA$300.
-  const context = await browser.newContext({ baseURL, viewport: PHONE });
+  const context = await browser.newContext({ baseURL, viewport: BUYER_PHONE });
   const buyer = await context.newPage();
   const buyerErrors = collectConsoleErrors(buyer);
   await buyer.goto(`/@${handle}`);
@@ -226,7 +225,7 @@ test("J5.14, J7.4: on a music video, Allow Paid social ads anyway saves on toggl
   });
 
   // The buyer first: both music uses off, each saying why (01 J7.4).
-  const context = await browser.newContext({ baseURL, viewport: PHONE });
+  const context = await browser.newContext({ baseURL, viewport: BUYER_PHONE });
   const buyer = await context.newPage();
   const buyerErrors = collectConsoleErrors(buyer);
   await buyer.goto(shareUrl);

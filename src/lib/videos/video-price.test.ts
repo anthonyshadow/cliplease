@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { effectiveOptions } from "@/server/pricing/rate-card";
-import { rateCardFixture } from "../../../tests/helpers/rate-card-fixtures";
+import {
+  NO_VIDEO,
+  rateCardFixture,
+} from "../../../tests/helpers/rate-card-fixtures";
 import { MUSIC_DISABLED_USES, type MusicUseKey } from "./rights";
 import { musicSwitches, VIDEO_PRICE_COPY } from "./video-price";
 
@@ -12,7 +15,7 @@ const optionsOf = (
     rateCardFixture((o) =>
       cardOff.some((key) => key === o.key) ? { enabled: false } : {},
     ),
-    { disabledUses, basePriceOverrideCents: null },
+    { ...NO_VIDEO, disabledUses },
   );
 
 describe("musicSwitches (07 D82; owner answer Q-158)", () => {

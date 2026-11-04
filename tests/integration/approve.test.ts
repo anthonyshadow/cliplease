@@ -26,6 +26,7 @@ import {
   LicenseSnapshotV1Schema,
 } from "../../src/lib/licensing/snapshot";
 import { computeQuote } from "../../src/lib/pricing/compute-quote";
+import { NON_EXCLUSIVE_BPS } from "../../src/lib/pricing/presets";
 import { MINUTE_MS } from "../../src/lib/time";
 import { defaultRateCardInput } from "../../src/lib/validation/pricing";
 import { LAZY, WEBHOOK } from "../../src/server/auth/actor";
@@ -493,6 +494,7 @@ describe("Approve (02 §8.2; 01 J8.2, J9.1, J9.3)", () => {
         useBps: 30000,
         termBps: 20000,
         territoryBps: 17500,
+        exclusiveBps: NON_EXCLUSIVE_BPS,
         platformFeeBps: row.platformFeeBps,
         platformFeeMinCents: row.platformFeeMinCents,
       }),

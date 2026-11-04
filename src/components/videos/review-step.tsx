@@ -15,24 +15,23 @@ import { listVideoPostings } from "@/server/postings/queries";
 import { getPublishBlockers } from "@/server/videos/publish";
 import type { CreatorVideoDTO } from "@/server/videos/queries";
 import { PosterPicker } from "./poster-picker";
-import { DraftPricePreview, PriceDraftProvider } from "./price-draft";
 import { PublishButton } from "./publish-button";
 import { RefreshOnCoverDone } from "./refresh-on-cover";
 import { ReviewBlockers } from "./review-blockers";
 import { ReviewDetails } from "./review-details";
 import { ReviewPayoutsNotice } from "./review-payouts-notice";
-import { VideoPriceEditor } from "./video-price-editor";
+import { VideoPrices } from "./video-prices";
 import { VideoStepFrame } from "./video-step-frame";
 import { EditLink, PostingSummary } from "./where-posted-summary";
 
 /**
  * Step 4 · Review, `/dashboard/videos/<id>?step=review` (01 J5.16, J5.17; 05 §6.5 callouts 42–52; 07 D69, D74, D146,
  * D156), in Rights' layout. The step: "Ready to publish" when nothing blocks, the rows (Title and Link edited in place,
- * the cover image, "Where it was posted" with _Edit_ to that step, the video's prices (VideoPriceEditor over the
- * read-only preview, 07 D82) and the badge buyers will see), the payouts Notice while payouts aren't on (never a
- * blocker), "Before you can publish", and Publish, off while anything blocks (once published, the page renders
- * PublishedView instead). The postings and the blockers (with the effective options and the rate card) are read
- * together.
+ * the cover image, "Where it was posted" with _Edit_ to that step, the video's prices (VideoPriceEditor and
+ * ExclusiveOfferEditor over the read-only preview, 07 D82, D109; owner answer Q-166) and the badge buyers will see), the
+ * payouts Notice while payouts aren't on (never a blocker), "Before you can publish", and Publish, off while anything
+ * blocks (once published, the page renders PublishedView instead). The postings and the blockers (with the effective
+ * options and the rate card) are read together.
  */
 export async function ReviewStep({
   actor,
@@ -101,21 +100,13 @@ export async function ReviewStep({
           {
             label: REVIEW_COPY.prices,
             value: (
-              <PriceDraftProvider>
-                <div className="flex min-w-0 flex-col gap-4">
-                  <VideoPriceEditor
-                    videoId={video.id}
-                    legend={REVIEW_COPY.prices}
-                    options={publish.options}
-                    rateCard={publish.rateCard}
-                    containsMusic={video.containsMusic}
-                  />
-                  <DraftPricePreview
-                    options={publish.options}
-                    platformFeeBps={platformFeeBps}
-                  />
-                </div>
-              </PriceDraftProvider>
+              <VideoPrices
+                videoId={video.id}
+                legend={REVIEW_COPY.prices}
+                containsMusic={video.containsMusic}
+                publish={publish}
+                platformFeeBps={platformFeeBps}
+              />
             ),
           },
           {

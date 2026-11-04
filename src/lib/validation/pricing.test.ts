@@ -3,9 +3,11 @@ import { GENERIC_ERROR_MESSAGE } from "../result";
 import {
   basePriceCentsSchema,
   defaultRateCardInput,
+  ExclusiveMultiplierBpsSchema,
   MultiplierBpsSchema,
   rateCardFieldErrors,
   rateCardInputSchema,
+  VideoExclusiveOfferInputSchema,
   VideoUseToggleInputSchema,
   videoBasePriceInputSchema,
 } from "./pricing";
@@ -16,6 +18,13 @@ const firstMessage = (result: {
 }) => (result.success ? null : result.error?.issues[0]?.message);
 
 const defaults = () => defaultRateCardInput("cad").options;
+
+/** The default card with this base and these options. */
+const cardWith = <O>(basePriceCents: number, options: O) => ({
+  ...defaultRateCardInput("cad"),
+  basePriceCents,
+  options,
+});
 
 describe("basePriceCentsSchema (01 J4.2, 07 D21, D97)", () => {
   const schema = basePriceCentsSchema("cad");
@@ -63,9 +72,7 @@ describe("rateCardInputSchema", () => {
   const schema = rateCardInputSchema("cad");
 
   it("accepts the J4.1 card", () => {
-    expect(
-      schema.safeParse({ basePriceCents: 15000, options: defaults() }).success,
-    ).toBe(true);
+    expect(schema.safeParse(cardWith(15000, defaults())).success).toBe(true);
   });
 
   it.each([
@@ -76,7 +83,7 @@ describe("rateCardInputSchema", () => {
     const options = defaults().map((o) =>
       o.dimension === dimension ? { ...o, enabled: false } : o,
     );
-    const result = schema.safeParse({ basePriceCents: 15000, options });
+    const result = schema.safeParse(cardWith(15000, options));
     expect(result.success).toBe(false);
     if (!result.success) {
       expect(rateCardFieldErrors(result.error, { options })).toEqual({
@@ -91,7 +98,7 @@ describe("rateCardInputSchema", () => {
       if (o.dimension === "term") return { ...o, enabled: false };
       return o;
     });
-    const input = { basePriceCents: 999, options };
+    const input = cardWith(999, options);
     const result = schema.safeParse(input);
     expect(result.success).toBe(false);
     if (!result.success) {
@@ -117,7 +124,7 @@ describe("rateCardInputSchema", () => {
     const options = defaults().map((o) =>
       o.dimension === "term" ? { ...o, enabled: false } : o,
     );
-    const input = { basePriceCents: Number.NaN, options };
+    const input = cardWith(Number.NaN, options);
     const result = schema.safeParse(input);
     expect(result.success).toBe(false);
     if (!result.success) {
@@ -138,12 +145,118 @@ describe("rateCardInputSchema", () => {
       ),
     ],
   ])("refuses %s", (_name, options) => {
-    const result = schema.safeParse({ basePriceCents: 15000, options });
+    const result = schema.safeParse(cardWith(15000, options));
     expect(result.success).toBe(false);
     if (!result.success) {
       expect(rateCardFieldErrors(result.error, { options })).toEqual({
         options: GENERIC_ERROR_MESSAGE,
       });
+    }
+  });
+
+  it("refuses a card without the exclusive switch", () => {
+    const { exclusiveEnabled: _dropped, ...input } =
+      defaultRateCardInput("cad");
+    expect(schema.safeParse(input).success).toBe(false);
+  });
+
+  it.each([
+    [9500, "Minimum is ×1.00."],
+    [100500, "Maximum is ×10.00."],
+    [30250, "Use steps of 0.05."],
+  ])(
+    "names the exclusive premium for %i: %s",
+    (exclusiveMultiplierBps, message) => {
+      const input = { ...defaultRateCardInput("cad"), exclusiveMultiplierBps };
+      const result = schema.safeParse(input);
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(rateCardFieldErrors(result.error, input)).toEqual({
+          exclusiveMultiplierBps: message,
+        });
+      }
+    },
+  );
+
+  it("names a group with nothing on even when the premium doesn't read as a number", () => {
+    const input = {
+      ...defaultRateCardInput("cad"),
+      exclusiveMultiplierBps: Number.NaN,
+      options: defaults().map((o) =>
+        o.dimension === "term" ? { ...o, enabled: false } : o,
+      ),
+    };
+    const result = schema.safeParse(input);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(rateCardFieldErrors(result.error, input)).toEqual({
+        exclusiveMultiplierBps: "Use steps of 0.05.",
+        term: "Keep at least one term.",
+      });
+    }
+  });
+});
+
+describe("defaultRateCardInput (07 D109, owner answer Q-165)", () => {
+  it("is exclusive off at ×3.00, and passes its own schema", () => {
+    const input = defaultRateCardInput("cad");
+    expect(input.exclusiveEnabled).toBe(false);
+    expect(input.exclusiveMultiplierBps).toBe(30000);
+    expect(rateCardInputSchema("cad").safeParse(input).success).toBe(true);
+  });
+});
+
+describe("ExclusiveMultiplierBpsSchema (07 D109)", () => {
+  it("is every multiplier's schema", () => {
+    expect(ExclusiveMultiplierBpsSchema).toBe(MultiplierBpsSchema);
+  });
+
+  it.each([10000, 30000, 100000])("accepts %i", (bps) => {
+    expect(ExclusiveMultiplierBpsSchema.safeParse(bps).success).toBe(true);
+  });
+});
+
+describe("VideoExclusiveOfferInputSchema (07 D109, D127)", () => {
+  const VIDEO_ID = "6f1c9a1e-2b3d-4c5e-8f70-112233445566";
+  const parse = (mode: string, multiplierBps: number | null) =>
+    VideoExclusiveOfferInputSchema.safeParse({
+      videoId: VIDEO_ID,
+      mode,
+      multiplierBps,
+    });
+
+  it.each([
+    ["on", null],
+    ["on", 30000],
+    ["off", null],
+    ["rate_card", null],
+  ])("accepts %s with %s", (mode, multiplierBps) => {
+    expect(parse(mode, multiplierBps).success).toBe(true);
+  });
+
+  it.each(["off", "rate_card"])(
+    "refuses a premium with %s, as the generic error on no field",
+    (mode) => {
+      const result = parse(mode, 40000);
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues).toHaveLength(1);
+        expect(result.error.issues[0]?.path).toEqual([]);
+        expect(result.error.issues[0]?.message).toBe(GENERIC_ERROR_MESSAGE);
+      }
+    },
+  );
+
+  it("refuses a mode it doesn't know", () => {
+    expect(parse("maybe", null).success).toBe(false);
+  });
+
+  it("names the premium when it is out of bounds", () => {
+    const result = parse("on", 100500);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues[0]?.path).toEqual(["multiplierBps"]);
+      expect(result.error.issues[0]?.message).toBe("Maximum is ×10.00.");
     }
   });
 });

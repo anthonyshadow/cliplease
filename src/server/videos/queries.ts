@@ -33,7 +33,11 @@ import { offersShareLink } from "../../lib/videos/video-page";
 import { type Actor, requireCreatorActor } from "../auth/actor";
 import { postThumbnail } from "../library/queries";
 import { ownerPostingsByVideo } from "../postings/queries";
-import { getRateCard, videoFromPrice } from "../pricing/rate-card";
+import {
+  getRateCard,
+  VIDEO_PRICING_COLUMNS,
+  videoFromPrice,
+} from "../pricing/rate-card";
 import { lockedBy, lockFlags } from "../storage/uploads";
 import { ownedVideo } from "./scope";
 import { posterSrc, shareUrl } from "./visibility";
@@ -325,8 +329,7 @@ export async function listCreatorVideos(
         posterObjectKey: video.posterObjectKey,
         width: video.width,
         height: video.height,
-        disabledUses: video.disabledUses,
-        basePriceOverrideCents: video.basePriceOverrideCents,
+        ...VIDEO_PRICING_COLUMNS,
         ...requestCounts,
       })
       .from(video)

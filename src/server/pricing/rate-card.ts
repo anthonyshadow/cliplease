@@ -1,7 +1,7 @@
 import "server-only";
 import { and, asc, eq } from "drizzle-orm";
 import { db } from "@/db/client";
-import { creatorProfile, rateCard, rateOption } from "@/db/schema";
+import { creatorProfile, rateCard, rateOption, video } from "@/db/schema";
 import {
   type Currency,
   isOneOf,
@@ -12,10 +12,16 @@ import {
   type UseKey,
 } from "@/lib/domain/values";
 import {
+  enabledKeys,
   type RateChoice,
   type RateChoices,
   rateChoices,
 } from "@/lib/pricing/choices";
+import {
+  type ExclusiveOffer,
+  resolveExclusiveOffer,
+  type VideoExclusiveColumns,
+} from "@/lib/pricing/exclusive";
 import { fromPriceCents } from "@/lib/pricing/from-price";
 import {
   type RateCardInput,
@@ -26,7 +32,7 @@ import { type Actor, requireCreatorActor } from "@/server/auth/actor";
 import { env } from "@/server/env";
 
 // The creator's rate card (02 §5.5, 03 §3.4; J4): one base price in the creator's payout_currency (rate_card has no
-// currency column, 07 D94) and the 10 options of 03 §8.1. P19e adds the exclusive fields (07 D109).
+// currency column, 07 D94), the 10 options of 03 §8.1, and the exclusive offer (07 D109).
 
 export type RateCardOption = {
   dimension: RateDimension;
@@ -40,6 +46,9 @@ export type RateCardDTO = {
   /** The creator's payout_currency (07 D94, D97). */
   currency: Currency;
   basePriceCents: number;
+  /** Exclusive offer for all the creator's videos (07 D109). */
+  exclusiveEnabled: boolean;
+  exclusiveMultiplierBps: number;
   /** Use, then Term, then Territory, each in its sort order. */
   options: RateCardOption[];
 };
@@ -64,11 +73,15 @@ export async function getRateCard(
     .select({
       currency: creatorProfile.payoutCurrency,
       basePriceCents: rateCard.basePriceCents,
-      dimension: rateOption.dimension,
-      key: rateOption.optionKey,
-      enabled: rateOption.enabled,
-      multiplierBps: rateOption.multiplierBps,
-      sortOrder: rateOption.sortOrder,
+      exclusiveEnabled: rateCard.exclusiveEnabled,
+      exclusiveMultiplierBps: rateCard.exclusiveMultiplierBps,
+      option: {
+        dimension: rateOption.dimension,
+        key: rateOption.optionKey,
+        enabled: rateOption.enabled,
+        multiplierBps: rateOption.multiplierBps,
+        sortOrder: rateOption.sortOrder,
+      },
     })
     .from(rateCard)
     .innerJoin(creatorProfile, eq(creatorProfile.id, rateCard.creatorId))
@@ -78,18 +91,13 @@ export async function getRateCard(
     .orderBy(asc(rateOption.dimension), asc(rateOption.sortOrder));
   const [first] = rows;
   if (!first) throw new Error(`Creator ${creatorId} has no rate card`);
-  return {
-    currency: first.currency,
-    basePriceCents: first.basePriceCents,
-    options: rows.map(
-      ({ currency: _c, basePriceCents: _b, ...option }) => option,
-    ),
-  };
+  const { option: _, ...card } = first;
+  return { ...card, options: rows.map((row) => row.option) };
 }
 
 /**
- * Replaces the actor's card in one transaction: the base, then each option's switch and multiplier by
- * (rate_card_id, option_key). A full replace, so a retry is idempotent. Re-parsed here with the payout_currency read in
+ * Replaces the actor's card in one transaction: the base and the exclusive offer, then each option's switch and
+ * multiplier by (rate_card_id, option_key). A full replace, so a retry is idempotent. Re-parsed here with the payout_currency read in
  * the transaction, the authority over the action's own parse. New requests only: a request keeps its snapshot (J4.7).
  */
 export async function saveRateCard(
@@ -111,7 +119,11 @@ export async function saveRateCard(
     }
     await tx
       .update(rateCard)
-      .set({ basePriceCents: parsed.data.basePriceCents })
+      .set({
+        basePriceCents: parsed.data.basePriceCents,
+        exclusiveEnabled: parsed.data.exclusiveEnabled,
+        exclusiveMultiplierBps: parsed.data.exclusiveMultiplierBps,
+      })
       .where(eq(rateCard.id, card.id));
     let updated = 0;
     for (const option of parsed.data.options) {
@@ -133,19 +145,37 @@ export async function saveRateCard(
   });
 }
 
-/** What a video changes about its creator's card (07 D82); the pricing page passes no changes. */
-export type VideoPricing = {
+/**
+ * What a video changes about its creator's card (07 D82, D109): its disabled uses, its base override and its exclusive
+ * offer.
+ */
+export type VideoPricing = VideoExclusiveColumns & {
   disabledUses: readonly UseKey[];
   basePriceOverrideCents: number | null;
 };
 
-/** A video row's VideoPricing: its disabled uses (only use keys count) and its base override (07 D82). */
-export const videoPricingOf = (row: {
+/** The video's columns VideoPricing comes from: spread them into a select that goes on to videoPricingOf. */
+export const VIDEO_PRICING_COLUMNS = {
+  disabledUses: video.disabledUses,
+  basePriceOverrideCents: video.basePriceOverrideCents,
+  exclusiveEnabled: video.exclusiveEnabled,
+  exclusiveMultiplierBps: video.exclusiveMultiplierBps,
+};
+
+/** Those columns as a select returns them. */
+export type VideoPricingRow = Omit<VideoPricing, "disabledUses"> & {
   disabledUses: readonly RateOptionKey[];
-  basePriceOverrideCents: number | null;
-}): VideoPricing => ({
+};
+
+/**
+ * A video row's VideoPricing: its disabled uses (only use keys count), its base override and its exclusive offer as
+ * stored (07 D82, D109).
+ */
+export const videoPricingOf = (row: VideoPricingRow): VideoPricing => ({
   disabledUses: row.disabledUses.filter((key) => isOneOf(USE_KEYS, key)),
   basePriceOverrideCents: row.basePriceOverrideCents,
+  exclusiveEnabled: row.exclusiveEnabled,
+  exclusiveMultiplierBps: row.exclusiveMultiplierBps,
 });
 
 export type EffectiveOptions = Omit<RateChoices, "use"> & {
@@ -153,12 +183,14 @@ export type EffectiveOptions = Omit<RateChoices, "use"> & {
   basePriceCents: number;
   basePriceSource: "rate_card" | "video";
   use: Array<RateChoice<UseKey> & { disabledReason?: "music" | "creator" }>;
+  exclusive: ExclusiveOffer; // { offered, multiplierBps, source } (02 §5.5, 07 D109)
 };
 
 /**
  * The options a buyer can pick for one video (02 §5.5, 07 D82): the video's base override, else the card's; a use is on
  * when it is on in the card and not in `disabledUses` (only the music rule puts paid_social and broadcast there, P13).
- * A use off in the card says 'creator', which wins over 'music'. Term and territory follow the card alone.
+ * A use off in the card says 'creator', which wins over 'music'. Term and territory follow the card alone. `exclusive`:
+ * offered when the video's or the card's switch is on and a 30-day, 6-month or 1-year term is on (07 D109).
  */
 export function effectiveOptions(
   rateCard: RateCardDTO,
@@ -179,6 +211,7 @@ export function effectiveOptions(
     }),
     term,
     territory,
+    exclusive: resolveExclusiveOffer(rateCard, video, enabledKeys(term)),
   };
 }
 
@@ -188,7 +221,7 @@ export function effectiveOptions(
  */
 export function videoFromPrice(
   rateCard: RateCardDTO,
-  video: Parameters<typeof videoPricingOf>[0],
+  video: VideoPricingRow,
 ): { fromPriceCents: number | null; currency: Currency } {
   return {
     fromPriceCents: fromPriceCents(

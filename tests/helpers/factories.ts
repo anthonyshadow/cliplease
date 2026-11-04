@@ -31,6 +31,7 @@ import type {
   NewSocialPostRow,
   NewVideo,
   NewVideoPosting,
+  RateCard,
   SocialAccount,
   SocialPostRow,
   User,
@@ -290,6 +291,16 @@ export async function requestRow(id: string): Promise<LicenseRequest> {
     .from(licenseRequest)
     .where(eq(licenseRequest.id, id));
   if (!row) throw new Error("no request");
+  return row;
+}
+
+/** The creator's rate card row as stored, failing the setup when there is none. */
+export async function rateCardRow(creatorId: string): Promise<RateCard> {
+  const [row] = await db
+    .select()
+    .from(rateCard)
+    .where(eq(rateCard.creatorId, creatorId));
+  if (!row) throw new Error("no rate card");
   return row;
 }
 

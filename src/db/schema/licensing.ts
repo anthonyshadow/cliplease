@@ -43,7 +43,7 @@ export const licenseRequest = pgTable(
     // Buyer (licensee_name is public on /verify; the rest is private)
     licenseeName: text("licensee_name").notNull(),
     contactName: text("contact_name").notNull(),
-    buyerEmail: text("buyer_email").notNull(), // normalizeEmail (trim + lowercase) from P16a; CHECK in 0002 (DB22)
+    buyerEmail: text("buyer_email").notNull(), // normalizeEmail (trim + lowercase) from P16a; CHECK in 0003_buyer_licenses (DB22)
     intendedUse: text("intended_use"),
     buyerTimeZone: text("buyer_time_zone").notNull().default("UTC"), // IANA zone from the buyer's device at checkout (normalizeTimeZone); emails only (07 D84)
     buyerTokenHash: text("buyer_token_hash").notNull(), // sha256(token) lowercase hex; raw token never stored in plaintext (DB7)
@@ -64,6 +64,11 @@ export const licenseRequest = pgTable(
     licensePriceCents: integer("license_price_cents").notNull(),
     platformFeeCents: integer("platform_fee_cents").notNull(),
     amountTotalCents: integer("amount_total_cents").notNull(),
+    // 07 D109, D111: snapshotted at T1; NON_EXCLUSIVE_BPS unless exclusive
+    exclusive: boolean("exclusive").notNull().default(false), // CORE · 0002_exclusive_licenses (P19e)
+    exclusiveMultiplierBps: integer("exclusive_multiplier_bps")
+      .notNull()
+      .default(10000), // CORE · 0002_exclusive_licenses (P19e)
     // Terms acceptance evidence
     termsVersion: text("terms_version").notNull(), // "v1"
     termsAcceptedAt: tstz("terms_accepted_at").notNull(),
@@ -134,7 +139,7 @@ export const licenseRequest = pgTable(
     index("license_request_checkout_due_idx")
       .on(t.checkoutExpiresAt)
       .where(sql`${t.status} = 'checkout_pending'`),
-    // CHECK tiers per 07 D60: CORE = in a CORE migration (0000_init unless tagged 0001/0002/0003); [H1] = hardening migration H1.
+    // CHECK tiers per 07 D60: CORE = in a CORE migration (0000_init unless tagged with a later CORE migration); [H1] = hardening migration H1.
     // Scope
     check(
       "license_request_use_key",
@@ -184,6 +189,12 @@ export const licenseRequest = pgTable(
       sql`${t.amountTotalCents} = ${t.licensePriceCents} + ${t.platformFeeCents}
     and ${t.amountTotalCents} between 50 and 99999999`,
     ), // CORE · 02 MAX_TOTAL_CENTS[currency] (Stripe's 8-digit limit for CAD and USD, 07 D97)
+    check(
+      "license_request_exclusive_fields",
+      sql`
+    (${t.exclusive} and ${t.exclusiveMultiplierBps} between 10000 and 100000 and ${t.termKey} in ('d30','m6','y1'))
+    or (not ${t.exclusive} and ${t.exclusiveMultiplierBps} = 10000)`,
+    ), // CORE · 0002_exclusive_licenses (P19e) · exclusive ⇒ ≤ 1 year (I35)
     // Buyer + evidence
     check(
       "license_request_text_lengths",
@@ -240,6 +251,7 @@ export const license = pgTable(
     startsAt: tstz("starts_at").notNull(), // = approved_at = payment_action_at of the capture claim (07 D33); a renewal term:
     //   the renewed term's ends_at (auto, manual) or payment time during a reservation (07 D120, D122)
     endsAt: tstz("ends_at"), // null = perpetual (never exclusive); UTC computeEndsAt; renewal terms computeEndsAt(startsAt, the chain's term_key) (07 D133)
+    exclusive: boolean("exclusive").notNull().default(false), // CORE · 0002_exclusive_licenses (P19e) · issueLicense copies it from P19g (07 D111)
     snapshot: jsonb("snapshot").$type<LicenseSnapshotV1>().notNull(), // immutable; PDF, /l and /verify render only from this
     originalObjectKey: text("original_object_key").notNull(), // DB13: copied from video at issue
     originalBytes: bigint("original_bytes", { mode: "number" }).notNull(),

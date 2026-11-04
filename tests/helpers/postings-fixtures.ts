@@ -13,6 +13,7 @@ vi.mock("@/app/(dashboard)/dashboard/videos/[id]/actions", () => ({
   deleteDraftVideo: vi.fn(),
   setVideoBasePrice: vi.fn(),
   setVideoUseEnabled: vi.fn(),
+  setVideoExclusiveOffer: vi.fn(),
 }));
 vi.mock("@/app/(dashboard)/dashboard/_actions/social", () => ({
   syncAccount: vi.fn(),

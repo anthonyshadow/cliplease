@@ -5,6 +5,7 @@ import {
   type TestInfo,
   test,
 } from "@playwright/test";
+import { BARE_DOLLAR } from "../../helpers/money";
 
 // The four layout tiers (07 D144, 04 §5.2): the width in px where each one starts.
 export const TIERS = {
@@ -43,6 +44,11 @@ export async function expectNoHorizontalScroll(page: Page) {
       document.documentElement.clientWidth,
   );
   expect(overflow).toBeLessThanOrEqual(0);
+}
+
+/** 07 D98: an amount in <main> always carries its currency's prefix. */
+export async function expectNoBareDollar(page: Page) {
+  expect(await page.locator("main").innerText()).not.toMatch(BARE_DOLLAR);
 }
 
 /**

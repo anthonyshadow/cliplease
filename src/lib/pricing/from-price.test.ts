@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { rateCardFixture } from "../../../tests/helpers/rate-card-fixtures";
+import {
+  NO_VIDEO,
+  rateCardFixture,
+} from "../../../tests/helpers/rate-card-fixtures";
 import { effectiveOptions } from "../../server/pricing/rate-card";
 import { fromPriceCents } from "./from-price";
 
 const FEE_BPS = 1000;
-const NO_VIDEO = { disabledUses: [], basePriceOverrideCents: null };
 
 describe("fromPriceCents (04 §9.27; 07 D82, D97)", () => {
   it("is the base price on the default card, with music, and the video's own base when it has one", () => {
@@ -14,8 +16,8 @@ describe("fromPriceCents (04 §9.27; 07 D82, D97)", () => {
     expect(
       fromPriceCents(
         effectiveOptions(rateCardFixture(), {
+          ...NO_VIDEO,
           disabledUses: ["paid_social", "broadcast"],
-          basePriceOverrideCents: null,
         }),
         FEE_BPS,
       ),
@@ -23,7 +25,7 @@ describe("fromPriceCents (04 §9.27; 07 D82, D97)", () => {
     expect(
       fromPriceCents(
         effectiveOptions(rateCardFixture(), {
-          disabledUses: [],
+          ...NO_VIDEO,
           basePriceOverrideCents: 20000,
         }),
         FEE_BPS,
@@ -35,7 +37,7 @@ describe("fromPriceCents (04 §9.27; 07 D82, D97)", () => {
     expect(
       fromPriceCents(
         effectiveOptions(rateCardFixture(), {
-          disabledUses: [],
+          ...NO_VIDEO,
           basePriceOverrideCents: base,
         }),
         FEE_BPS,
@@ -60,7 +62,7 @@ describe("fromPriceCents (04 §9.27; 07 D82, D97)", () => {
   it("is null when every combination is over the cap, or a group has nothing on", () => {
     const tooDear = effectiveOptions(
       rateCardFixture(() => ({ multiplierBps: 100000 })),
-      { disabledUses: [], basePriceOverrideCents: 1_000_000 },
+      { ...NO_VIDEO, basePriceOverrideCents: 1_000_000 },
     );
     expect(fromPriceCents(tooDear, FEE_BPS)).toBeNull();
     const noUse = effectiveOptions(
@@ -70,10 +72,20 @@ describe("fromPriceCents (04 §9.27; 07 D82, D97)", () => {
           : {},
       ),
       {
+        ...NO_VIDEO,
         disabledUses: ["paid_social", "broadcast"],
-        basePriceOverrideCents: null,
       },
     );
     expect(fromPriceCents(noUse, FEE_BPS)).toBeNull();
+  });
+
+  it("stays a standard price with the exclusive offer on at ×10.00 (07 D109)", () => {
+    const card = rateCardFixture(undefined, {
+      exclusiveEnabled: true,
+      exclusiveMultiplierBps: 100000,
+    });
+    expect(fromPriceCents(effectiveOptions(card, NO_VIDEO), FEE_BPS)).toBe(
+      15000,
+    );
   });
 });

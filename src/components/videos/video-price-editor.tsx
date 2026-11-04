@@ -1,13 +1,6 @@
 "use client";
 
-import {
-  type FormEvent,
-  Fragment,
-  useEffect,
-  useId,
-  useRef,
-  useState,
-} from "react";
+import { Fragment, useEffect, useId, useRef, useState } from "react";
 import {
   setVideoBasePrice,
   setVideoUseEnabled,
@@ -15,11 +8,8 @@ import {
 import { OptionGroup, OptionTile } from "@/components/license/option-group";
 import { RefusalAlert, useRefusal } from "@/components/ui/refusal-alert";
 import { Switch } from "@/components/ui/switch";
-import { TextField } from "@/components/ui/text-field";
 import { toast } from "@/components/ui/toast";
 import { usePendingAction } from "@/components/ui/use-pending-action";
-import { useRefocusOnSwap } from "@/components/ui/use-refocus-on-swap";
-import { useUnsavedChangesGuard } from "@/components/ui/use-unsaved-changes-guard";
 import { formatMoney } from "@/lib/format";
 import { CURRENCY_DISPLAY } from "@/lib/money/currency";
 import { REQUESTS_SETTINGS_COPY } from "@/lib/payouts";
@@ -27,7 +17,6 @@ import {
   parseWholeDollars,
   wholeDollarsFieldValue,
 } from "@/lib/pricing/multiplier";
-import { GENERIC_ERROR_MESSAGE } from "@/lib/result";
 import { basePriceCentsSchema } from "@/lib/validation/pricing";
 import { MUSIC_USE_FIELD, type MusicUseKey } from "@/lib/videos/rights";
 import { VIDEO_PAGE_COPY } from "@/lib/videos/video-page";
@@ -37,8 +26,8 @@ import {
   VIDEO_PRICE_COPY,
 } from "@/lib/videos/video-price";
 import type { EffectiveOptions, RateCardDTO } from "@/server/pricing/rate-card";
+import { ChoiceDraftForm, useChoiceDraft } from "./choice-draft";
 import { usePriceDraft } from "./price-draft";
-import { SaveCancelButtons } from "./save-cancel-buttons";
 
 type Choice = "rate_card" | "video";
 
@@ -47,8 +36,6 @@ type Price = { choice: Choice; text: string };
 
 const samePrice = (a: Price, b: Price) =>
   a.choice === b.choice && (a.choice === "rate_card" || a.text === b.text);
-
-const CHECKED = 'input[name="basePrice"]:checked';
 
 /**
  * 04 §9.29 VideoPriceEditor, the Prices of Review and the video page (05 §6.5 callout 47, §6.7 callouts 8 and 11; 07
@@ -76,112 +63,37 @@ export function VideoPriceEditor({
   containsMusic: boolean | null;
 }) {
   const { currency } = options;
-  const stored: Price = {
-    choice: options.basePriceSource,
-    text: wholeDollarsFieldValue(options.basePriceCents),
-  };
-  const [choice, setChoice] = useState(stored.choice);
-  const [text, setText] = useState(stored.text);
-  // The field's last amount within the bounds: the preview's while the field is chosen.
-  const [lastValid, setLastValid] = useState(options.basePriceCents);
-  const [seen, setSeen] = useState(stored);
-  // A refusal, numbered so each one is announced and takes the focus once it has rendered.
-  const [refusal, refuse, clearRefusal] = useRefusal();
-  const [saving, run] = usePendingAction();
-  const { setBaseCents } = usePriceDraft();
-  const field = useRef<HTMLInputElement>(null);
-  const dirty = !samePrice({ choice, text }, stored);
   const switches = containsMusic === true ? musicSwitches(options, true) : [];
-  // Save and Cancel going away, or a Switch (a refusal's refresh found no music): the focus moves to the checked choice.
-  const refocus = useRefocusOnSwap<HTMLDivElement>(
-    `${dirty ? "dirty" : "clean"}:${switches.map((s) => s.key).join(",")}`,
-    [CHECKED],
-  );
+  const draft = useChoiceDraft({
+    stored: {
+      choice: options.basePriceSource,
+      text: wholeDollarsFieldValue(options.basePriceCents),
+    },
+    storedValue: options.basePriceCents,
+    fieldChoice: "video",
+    same: samePrice,
+    parse: (value) =>
+      basePriceCentsSchema(currency).safeParse(
+        parseWholeDollars(value) ?? Number.NaN,
+      ),
+    toText: wholeDollarsFieldValue,
+    radioName: "basePrice",
+    // A Switch going away (a refusal's refresh found no music) drops the focus too.
+    refocusKey: switches.map((s) => s.key).join(","),
+    submit: (_, basePriceCents) =>
+      setVideoBasePrice({ videoId, basePriceCents }),
+    savedToast: VIDEO_PAGE_COPY.saved,
+  });
+  const { setBaseCents } = usePriceDraft();
 
-  // A price stored elsewhere (another tab, the rate card's base): a clean editor follows it, an edit in progress stays.
-  // A save's own refresh finds the editor showing what it stored, and takes its amount too (the card's base, after "Use
-  // my rate card", so the field starts from it again).
-  if (seen.choice !== stored.choice || seen.text !== stored.text) {
-    setSeen(stored);
-    if (
-      samePrice({ choice, text }, seen) ||
-      samePrice({ choice, text }, stored)
-    ) {
-      setChoice(stored.choice);
-      setText(stored.text);
-      setLastValid(options.basePriceCents);
-    }
-  }
-
-  const draftCents = !dirty
+  const draftCents = !draft.dirty
     ? null
-    : choice === "rate_card"
+    : draft.choice === "rate_card"
       ? rateCard.basePriceCents
-      : lastValid;
+      : draft.lastValid;
   useEffect(() => {
     setBaseCents(draftCents);
   }, [draftCents, setBaseCents]);
-  useEffect(() => {
-    if (!refusal) return;
-    const target =
-      field.current ?? refocus.ref.current?.querySelector<HTMLElement>(CHECKED);
-    target?.focus();
-  }, [refusal, refocus.ref]);
-  useUnsavedChangesGuard(dirty);
-
-  const parse = (value: string) =>
-    basePriceCentsSchema(currency).safeParse(
-      parseWholeDollars(value) ?? Number.NaN,
-    );
-
-  function choose(next: Choice) {
-    setChoice(next);
-    clearRefusal();
-  }
-
-  function edit(value: string) {
-    setText(value);
-    clearRefusal();
-    const parsed = parse(value);
-    if (parsed.success) setLastValid(parsed.data);
-  }
-
-  function cancel() {
-    setChoice(stored.choice);
-    setText(stored.text);
-    setLastValid(options.basePriceCents);
-    clearRefusal();
-  }
-
-  async function save(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    // Enter in an unchanged field saves nothing (owner answer Q-161).
-    if (saving || !dirty) return;
-    let basePriceCents: number | null = null;
-    if (choice === "video") {
-      const parsed = parse(text);
-      if (!parsed.success) {
-        refuse(parsed.error.issues[0]?.message ?? GENERIC_ERROR_MESSAGE);
-        return;
-      }
-      basePriceCents = parsed.data;
-    }
-    clearRefusal();
-    const result = await run(() =>
-      setVideoBasePrice({ videoId, basePriceCents }),
-    );
-    if (result === null) return;
-    if (result.ok) {
-      // "1,000" saved shows as the refreshed page will ("1000"), unless the field was edited meanwhile.
-      if (basePriceCents !== null) {
-        const savedText = wholeDollarsFieldValue(basePriceCents);
-        setText((current) => (current === text ? savedText : current));
-      }
-      toast(VIDEO_PAGE_COPY.saved);
-      return;
-    }
-    refuse(result.error.fields?.basePriceCents?.[0] ?? result.error.message);
-  }
 
   const base = formatMoney(rateCard.basePriceCents, currency, {
     wholeDollars: true,
@@ -190,12 +102,12 @@ export function VideoPriceEditor({
     <div
       data-video-price-editor
       className="flex min-w-0 flex-col gap-4"
-      {...refocus}
+      {...draft.refocus}
     >
       <OptionGroup
         legend={legend}
         hideLegend
-        error={choice === "rate_card" ? refusal?.message : undefined}
+        error={draft.showField ? undefined : draft.refusal?.message}
       >
         <div className="grid grid-cols-1 gap-3">
           <OptionTile
@@ -206,49 +118,26 @@ export function VideoPriceEditor({
                 {VIDEO_PRICE_COPY.useRateCard(base)}
               </span>
             }
-            checked={choice === "rate_card"}
-            onChange={() => choose("rate_card")}
-            disabled={saving}
+            checked={draft.choice === "rate_card"}
+            onChange={() => draft.choose("rate_card")}
+            disabled={draft.saving}
           />
           <OptionTile
             name="basePrice"
             value="video"
             title={VIDEO_PRICE_COPY.setOwn}
-            checked={choice === "video"}
-            onChange={() => choose("video")}
-            disabled={saving}
+            checked={draft.choice === "video"}
+            onChange={() => draft.choose("video")}
+            disabled={draft.saving}
           />
         </div>
       </OptionGroup>
-      {choice === "video" || dirty ? (
-        <form
-          noValidate
-          onSubmit={save}
-          onKeyDown={(event) => {
-            // A save in flight finishes first.
-            if (event.key === "Escape" && !saving) cancel();
-          }}
-          className="flex flex-col gap-2"
-        >
-          {choice === "video" ? (
-            <TextField
-              ref={field}
-              label={VIDEO_PRICE_COPY.field}
-              prefix={CURRENCY_DISPLAY[currency].prefix}
-              inputMode="decimal"
-              autoComplete="off"
-              helper={REQUESTS_SETTINGS_COPY.newRequestsOnly}
-              value={text}
-              onChange={(event) => edit(event.target.value)}
-              error={refusal?.message}
-            />
-          ) : null}
-          {dirty ? (
-            <SaveCancelButtons saving={saving} onCancel={cancel} />
-          ) : null}
-          <RefusalAlert refusal={refusal} />
-        </form>
-      ) : null}
+      <ChoiceDraftForm
+        draft={draft}
+        label={VIDEO_PRICE_COPY.field}
+        prefix={CURRENCY_DISPLAY[currency].prefix}
+        helper={REQUESTS_SETTINGS_COPY.newRequestsOnly}
+      />
       <MusicUseSwitches mode="live" videoId={videoId} switches={switches} />
     </div>
   );

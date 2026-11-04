@@ -6,23 +6,32 @@ import {
   type Locator,
   type Page,
 } from "@playwright/test";
+import { POSTINGS_COPY } from "../../../src/lib/postings/copy";
 import { PUBLISHED_COPY, REVIEW_COPY } from "../../../src/lib/videos/review";
 import { VIDEO_MENU_COPY } from "../../../src/lib/videos/video-page";
-import { type LicenseChoice, requestLicense } from "./buyer";
+import { BUYER_PHONE, type LicenseChoice, requestLicense } from "./buyer";
 import { signUpCreator } from "./creator";
 import { LIBRARY, libraryPostId, POST_01, tiles } from "./library";
 import {
   isServerAction,
+  pressAndSettle,
   pressButton,
   pressLocator,
   requestEnded,
 } from "./press";
+import {
+  basePrice,
+  PRICING,
+  pricesSavedToast,
+  setExclusiveSwitch,
+} from "./pricing";
 import {
   answerRights,
   attachSample,
   continueToPostings,
   continueToReview,
   continueToRights,
+  createDraft,
   makeLicensable,
   sameVideoTick,
 } from "./videos";
@@ -126,6 +135,37 @@ export async function publishDemoVideo(
 }
 
 /**
+ * The signed-in creator offers exclusive licenses on the rate card at the default ×3.00 (P19e; 07 D109) and stays on
+ * Pricing, its toast still showing.
+ */
+export async function offerExclusive(page: Page) {
+  await page.goto(PRICING);
+  await expect(basePrice(page)).toBeVisible();
+  await setExclusiveSwitch(page, true);
+  await pressAndSettle(page, "Save prices");
+  await expect(pricesSavedToast(page)).toBeVisible();
+}
+
+/**
+ * A fresh creator with no payouts and no Demo takes a plain upload to its Review (File with sample.mp4 → Where posted's
+ * "not posted" → Rights, No to both questions → Review) and stays there, unpublished.
+ */
+export async function reviewPlainUpload(page: Page) {
+  await signUpCreator(page, { payouts: false });
+  const videoId = await createDraft(page);
+  await attachSample(page);
+  await continueToPostings(page, videoId);
+  const notPosted = page
+    .locator("main")
+    .getByLabel(POSTINGS_COPY.notPosted, { exact: true });
+  await notPosted.focus();
+  await notPosted.press("Space");
+  await continueToRights(page, videoId);
+  await answerRights(page);
+  await continueToReview(page, videoId);
+}
+
+/**
  * A buyer licenses the video at `url` (a share link) in a fresh logged-out 390 × 844 context: requestLicense with
  * `email` run-unique unless given, then Pay on the fake checkout, ending on /r `landing` (default 'Waiting for @…'; an
  * auto-approve creator's /r reads Processing… or Approved). Returns the request's id, its buyer link as the email sends
@@ -145,9 +185,7 @@ export async function buyLicense(
   context: BrowserContext;
   email: string;
 }> {
-  const context = await browser.newContext({
-    viewport: { width: 390, height: 844 },
-  });
+  const context = await browser.newContext({ viewport: BUYER_PHONE });
   const page = await context.newPage();
   const requestId = await requestLicense(page, url, { ...choice, email });
   const paid = requestEnded(page, isServerAction);

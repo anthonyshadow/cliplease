@@ -57,6 +57,9 @@ export const video = pgTable(
       .notNull()
       .default(sql`'{}'`), // music → paid_social, broadcast;
     //   setVideoUseEnabled re-enables either (07 D82)
+    // Exclusive offer for this video (07 D109): setVideoExclusiveOffer only; new requests only
+    exclusiveEnabled: boolean("exclusive_enabled"), // CORE · 0002_exclusive_licenses (P19e) · null = follow the rate card
+    exclusiveMultiplierBps: integer("exclusive_multiplier_bps"), // CORE · 0002_exclusive_licenses (P19e) · null = the rate card's premium
     // Original file (private bucket; keys only; always the creator's upload, never imported — 07 D64)
     originalStatus: originalFileStatusEnum("original_status")
       .notNull()
@@ -105,6 +108,11 @@ export const video = pgTable(
       "video_disabled_uses_subset",
       sql`${t.disabledUses} <@ array['organic_social','paid_social','broadcast']::rate_option_key[]`,
     ), // CORE
+    check(
+      "video_exclusive_multiplier_range",
+      sql`${t.exclusiveMultiplierBps} is null
+    or ${t.exclusiveMultiplierBps} between 10000 and 100000`,
+    ), // CORE · 0002_exclusive_licenses (P19e)
     check(
       "video_object_keys",
       sql`

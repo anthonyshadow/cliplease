@@ -27,9 +27,18 @@ import type { MusicUseKey } from "@/lib/videos/rights";
 import { VIDEO_PAGE_COPY } from "@/lib/videos/video-page";
 import { VIDEO_PRICE_COPY } from "@/lib/videos/video-price";
 import { effectiveOptions, type RateCardDTO } from "@/server/pricing/rate-card";
-import { description } from "../../../tests/helpers/a11y";
+import {
+  button,
+  description,
+  noButton,
+  pressFocused,
+  unloadPrevented,
+} from "../../../tests/helpers/a11y";
 import { VIDEO_ID } from "../../../tests/helpers/postings-fixtures";
-import { rateCardFixture } from "../../../tests/helpers/rate-card-fixtures";
+import {
+  NO_VIDEO,
+  rateCardFixture,
+} from "../../../tests/helpers/rate-card-fixtures";
 import { DraftPricePreview, PriceDraftProvider } from "./price-draft";
 import { MusicUseSwitches, VideoPriceEditor } from "./video-price-editor";
 
@@ -54,7 +63,12 @@ const optionsOf = ({
   disabledUses?: MusicUseKey[];
   basePriceOverrideCents?: number | null;
   rateCard?: RateCardDTO;
-} = {}) => effectiveOptions(rateCard, { disabledUses, basePriceOverrideCents });
+} = {}) =>
+  effectiveOptions(rateCard, {
+    ...NO_VIDEO,
+    disabledUses,
+    basePriceOverrideCents,
+  });
 
 type EditorProps = ComponentProps<typeof VideoPriceEditor>;
 
@@ -95,8 +109,6 @@ const field = () =>
   });
 const noField = () =>
   screen.queryByRole("textbox", { name: VIDEO_PRICE_COPY.field });
-const button = (name: string) => screen.getByRole("button", { name });
-const noButton = (name: string) => screen.queryByRole("button", { name });
 const preview = () =>
   document.querySelector("[data-price-preview]")?.textContent ?? "";
 const switchOf = (name: string) => screen.getByRole("switch", { name });
@@ -108,12 +120,7 @@ const savedToasts = () => screen.queryAllByText(VIDEO_PAGE_COPY.saved).length;
 const type = (value: string) =>
   fireEvent.change(field(), { target: { value } });
 
-/** Save, focused first as a press would (jsdom's click doesn't focus). */
-function pressSave() {
-  const save = button(REVIEW_COPY.save);
-  act(() => save.focus());
-  fireEvent.click(save);
-}
+const pressSave = () => pressFocused(REVIEW_COPY.save);
 
 describe("VideoPriceEditor (04 §9.29; 07 D82; owner answers Q-161, Q-162)", () => {
   it("starts on the rate card, named by the section, with no field and nothing to save", () => {
@@ -141,9 +148,7 @@ describe("VideoPriceEditor (04 §9.29; 07 D82; owner answers Q-161, Q-162)", () 
     expect(button(REVIEW_COPY.save)).toBeTruthy();
     expect(button(REVIEW_COPY.cancel)).toBeTruthy();
     expect(saveBase).not.toHaveBeenCalled();
-    const unload = new Event("beforeunload", { cancelable: true });
-    window.dispatchEvent(unload);
-    expect(unload.defaultPrevented).toBe(true);
+    expect(unloadPrevented()).toBe(true);
   });
 
   it("prices the preview from the typed amount, and Cancel puts back the stored choice and focuses it", () => {
@@ -156,9 +161,7 @@ describe("VideoPriceEditor (04 §9.29; 07 D82; owner answers Q-161, Q-162)", () 
     // An amount the field refuses leaves the last good one.
     type("9");
     expect(preview()).toContain("License CA$2,100.00");
-    const cancel = button(REVIEW_COPY.cancel);
-    act(() => cancel.focus());
-    fireEvent.click(cancel);
+    pressFocused(REVIEW_COPY.cancel);
     expect(rateCardRadio().checked).toBe(true);
     expect(noField()).toBeNull();
     expect(noButton(REVIEW_COPY.save)).toBeNull();

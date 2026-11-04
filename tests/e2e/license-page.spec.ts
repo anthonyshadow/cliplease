@@ -1,14 +1,16 @@
 import { expect, test } from "@playwright/test";
 import { APP_NAME } from "../../src/lib/app-name";
-import { formatDeadline, formatDelta, formatMoney } from "../../src/lib/format";
+import { formatDeadline, formatDelta } from "../../src/lib/format";
 import { CHECKOUT_COPY } from "../../src/lib/licensing/checkout-copy";
 import { DETAILS_COPY } from "../../src/lib/licensing/details";
 import { LICENSE_PAGE_COPY } from "../../src/lib/licensing/license-page";
 import { REQUEST_STATUS_COPY } from "../../src/lib/licensing/request-status";
 import { HOUR_MS } from "../../src/lib/time";
 import { BADGE_COPY } from "../../src/lib/videos/ownership";
+import { cad } from "../helpers/money";
 import { OBJECT_KEY } from "../helpers/object-key";
 import {
+  BUYER_PHONE,
   chooseDemoSelection,
   FAKE_CHECKOUT_URL,
   fillDetails,
@@ -42,7 +44,6 @@ import { cleanCreatedVideos } from "./helpers/videos";
 test.use({ reducedMotion: "reduce" });
 test.afterEach(cleanCreatedVideos);
 
-const cad = (cents: number) => formatMoney(cents, "cad");
 const REL = "nofollow ugc noopener noreferrer";
 
 test("J6.4, J7.1–J7.6, J7.20, J7.21: a logged-out buyer sees the video, who owns it and where it was posted, and the live price", async ({
@@ -56,7 +57,7 @@ test("J6.4, J7.1–J7.6, J7.20, J7.21: a logged-out buyer sees the video, who ow
   const timezoneId = "America/Toronto";
   const context = await browser.newContext({
     baseURL,
-    viewport: { width: 390, height: 844 },
+    viewport: BUYER_PHONE,
     timezoneId,
   });
   const buyer = await context.newPage();
@@ -356,7 +357,7 @@ test("J7.7–J7.13: Request license validates on press, prices on the server, op
   const { handle, slug, shareUrl } = await publishDemoVideo(page);
   const context = await browser.newContext({
     baseURL,
-    viewport: { width: 390, height: 844 },
+    viewport: BUYER_PHONE,
   });
   const buyer = await context.newPage();
   const expected: ExpectedFailure[] = [];
@@ -489,7 +490,7 @@ test("J7.8, J7.13, J7.14: Pay holds the card and /r waits for the creator, also 
   const timezoneId = "America/Toronto";
   const context = await browser.newContext({
     baseURL,
-    viewport: { width: 390, height: 844 },
+    viewport: BUYER_PHONE,
     timezoneId,
   });
   const buyer = await context.newPage();

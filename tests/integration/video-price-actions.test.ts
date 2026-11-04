@@ -3,6 +3,7 @@ import { refresh } from "next/cache";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   setVideoBasePrice as setVideoBasePriceAction,
+  setVideoExclusiveOffer as setVideoExclusiveOfferAction,
   setVideoUseEnabled as setVideoUseEnabledAction,
 } from "../../src/app/(dashboard)/dashboard/videos/[id]/actions";
 import { attestRights as attestRightsAction } from "../../src/app/(dashboard)/dashboard/videos/[id]/review-actions";
@@ -21,18 +22,21 @@ import {
 } from "../helpers/factories";
 import { readyUpload } from "../helpers/ready-videos";
 import {
+  anyAuditsOf,
   auditsInOrder,
+  exclusiveSet,
   MUSIC_YES,
   priceSet,
   toggled,
 } from "../helpers/video-price-fixtures";
 
-// The Prices section's Server Actions and the Rights step's music Switches (P19d; 02 §6.1; 07 D82, D97; owner answers
-// Q-158, Q-159, Q-161; AD-01, AD-06, AD-07) against the test database: setVideoBasePrice's bounds as the field's error,
-// setVideoUseEnabled's music rule, the generic refusals that refresh() and the 404s that don't, and attestRights reading
-// allowPaidSocial / allowBroadcast into its own transaction (on a video already stored music Yes, each music use that
-// flips is audited, a No included). The domain's own cases are in video-price.test.ts. Outside a request refresh() has
-// no router to refresh, so it is a spy here.
+// The Prices section's Server Actions and the Rights step's music Switches (P19d, P19e; 02 §6.1; 07 D82, D97, D109; owner
+// answers Q-158, Q-159, Q-161, Q-163; AD-01, AD-06, AD-07, AD-40) against the test database: setVideoBasePrice's bounds
+// as the field's error, setVideoUseEnabled's music rule, setVideoExclusiveOffer's premium bound as the field's error and
+// its crafted input as the generic one, the generic refusals that refresh() and the 404s that don't, and attestRights
+// reading allowPaidSocial / allowBroadcast into its own transaction (on a video already stored music Yes, each music use
+// that flips is audited, a No included). The domain's own cases are in video-price.test.ts and exclusive-pricing.test.ts.
+// Outside a request refresh() has no router to refresh, so it is a spy here.
 vi.mock("next/headers", () => import("../helpers/next-headers"));
 vi.mock("next/cache", () => ({ refresh: vi.fn() }));
 
@@ -46,6 +50,10 @@ const disabledVideo = (creatorId: string) =>
     { id: creatorId },
     { status: "disabled", disabledReason: "other", ...MUSIC_YES },
   );
+
+/** The action's save of the video's own offer at ×4.00. */
+const offerAt4 = (videoId: string) =>
+  setVideoExclusiveOfferAction({ videoId, mode: "on", multiplierBps: 40000 });
 
 describe("setVideoBasePrice (the action; 07 D82, D97; owner answer Q-161)", () => {
   it("sends a signed-out visitor to sign in, back to the video; a bad id is the 404", async () => {
@@ -227,6 +235,93 @@ describe("setVideoUseEnabled (the action; 07 D82; owner answer Q-159)", () => {
     }
     for (const id of [noMusic.id, unanswered.id, disabled.id, theirs.id]) {
       expect(await auditsInOrder(id, "video.use_toggled")).toEqual([]);
+    }
+  });
+});
+
+describe("setVideoExclusiveOffer (the action; 07 D109; owner answers Q-159, Q-163)", () => {
+  it("sends a signed-out visitor to sign in, back to the video; a bad id is the 404", async () => {
+    const id = randomUUID();
+    await expect(offerAt4(id)).rejects.toMatchObject(
+      redirectTo(signInPath(videoHref(id))),
+    );
+    await expect(offerAt4("x")).rejects.toMatchObject(NOT_FOUND);
+  });
+
+  it("names the field for a premium it refuses, writing nothing and not refreshing", async () => {
+    const owner = await signedInCreator();
+    const draft = await insertUploadVideo({ id: owner.creatorId });
+    expect(
+      await setVideoExclusiveOfferAction({
+        videoId: draft.id,
+        mode: "on",
+        multiplierBps: 100500,
+      }),
+    ).toEqual({
+      ok: false,
+      error: {
+        code: "invalid_input",
+        message: "Maximum is ×10.00.",
+        fields: { multiplierBps: ["Maximum is ×10.00."] },
+      },
+    });
+    expect(await videoRow(draft.id)).toEqual(draft);
+    expect(await anyAuditsOf(draft.id)).toEqual([]);
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it("gives crafted input the generic message and no field: a premium with 'off', a mode that doesn't exist", async () => {
+    const owner = await signedInCreator();
+    const draft = await insertUploadVideo({ id: owner.creatorId });
+    for (const crafted of [
+      { mode: "off", multiplierBps: 40000 },
+      { mode: "maybe", multiplierBps: null },
+    ]) {
+      expect(
+        await setVideoExclusiveOfferAction({
+          videoId: draft.id,
+          ...crafted,
+        } as unknown as Parameters<typeof setVideoExclusiveOfferAction>[0]),
+      ).toEqual({
+        ok: false,
+        error: { code: "invalid_input", message: GENERIC_ERROR_MESSAGE },
+      });
+    }
+    expect(await videoRow(draft.id)).toEqual(draft);
+    expect(await anyAuditsOf(draft.id)).toEqual([]);
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it("saves the video's own offer as the session's creator and refreshes once", async () => {
+    const owner = await signedInCreator();
+    const draft = await insertUploadVideo({ id: owner.creatorId });
+    expect(await offerAt4(draft.id)).toEqual({ ok: true, data: undefined });
+    expect(await videoRow(draft.id)).toMatchObject({
+      exclusiveEnabled: true,
+      exclusiveMultiplierBps: 40000,
+    });
+    expect(refresh).toHaveBeenCalledOnce();
+    expect(await auditsInOrder(draft.id, "video.exclusive_set")).toEqual([
+      exclusiveSet("rate_card", null, "on", 40000),
+    ]);
+  });
+
+  it("refuses a disabled video with the generic message and refreshes; another creator's video is the 404", async () => {
+    const owner = await signedInCreator();
+    const disabled = await disabledVideo(owner.creatorId);
+    expect(await offerAt4(disabled.id)).toEqual({
+      ok: false,
+      error: { code: "video_disabled", message: GENERIC_ERROR_MESSAGE },
+    });
+    expect(refresh).toHaveBeenCalledOnce();
+
+    const theirs = await insertUploadVideo(await insertCreator());
+    await expect(offerAt4(theirs.id)).rejects.toMatchObject(NOT_FOUND);
+    expect(refresh).toHaveBeenCalledOnce();
+
+    for (const v of [disabled, theirs]) {
+      expect(await videoRow(v.id)).toEqual(v);
+      expect(await anyAuditsOf(v.id)).toEqual([]);
     }
   });
 });

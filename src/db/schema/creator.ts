@@ -49,7 +49,7 @@ export const creatorProfile = pgTable(
     uniqueIndex("creator_profile_user_id_uidx").on(t.userId),
     uniqueIndex("creator_profile_handle_uidx").on(t.handle),
     uniqueIndex("creator_profile_stripe_account_id_uidx").on(t.stripeAccountId), // NULLs are distinct
-    // CHECK tiers per 07 D60: CORE = in a CORE migration (0000_init unless tagged 0001/0002/0003); [H1] = hardening migration H1.
+    // CHECK tiers per 07 D60: CORE = in a CORE migration (0000_init unless tagged with a later CORE migration); [H1] = hardening migration H1.
     check(
       "creator_profile_handle_format",
       sql`char_length(${t.handle}) between 3 and 30
@@ -82,6 +82,11 @@ export const rateCard = pgTable(
       .notNull()
       .references(() => creatorProfile.id, { onDelete: "cascade" }),
     basePriceCents: integer("base_price_cents").notNull().default(15000), // CA$150 default, in the creator's payout_currency (DEFAULT_BASE_PRICE_CENTS[currency], 07 D97)
+    // Exclusive offer for all my videos (07 D109): off by default; saveRateCard writes both; new requests only
+    exclusiveEnabled: boolean("exclusive_enabled").notNull().default(false), // CORE · 0002_exclusive_licenses (P19e)
+    exclusiveMultiplierBps: integer("exclusive_multiplier_bps")
+      .notNull()
+      .default(30000), // CORE · 0002_exclusive_licenses (P19e) · ×3.00 (DEFAULT_EXCLUSIVE_MULTIPLIER_BPS)
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -91,6 +96,10 @@ export const rateCard = pgTable(
       "rate_card_base_price_range",
       sql`${t.basePriceCents} between 1000 and 1000000`,
     ), // CORE · CA$10 … CA$10,000 (equal in USD, 07 D97)
+    check(
+      "rate_card_exclusive_multiplier_range",
+      sql`${t.exclusiveMultiplierBps} between 10000 and 100000`,
+    ), // CORE · 0002_exclusive_licenses (P19e)
   ],
 );
 

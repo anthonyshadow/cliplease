@@ -1,22 +1,15 @@
-import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ZodError } from "zod";
 import { db } from "../../src/db/client";
-import { auditEvent, licenseRequest, video } from "../../src/db/schema";
-import type {
-  LicenseRequest,
-  NewCreatorProfile,
-  NewVideo,
-} from "../../src/db/schema/types";
+import { licenseRequest, video } from "../../src/db/schema";
+import type { NewCreatorProfile } from "../../src/db/schema/types";
 import { LicenseSnapshotV1Schema } from "../../src/lib/licensing/snapshot";
-import { StartCheckoutSchema } from "../../src/lib/validation/checkout";
 import {
   MUSIC_DISABLED_USES,
   type MusicUseKey,
 } from "../../src/lib/videos/rights";
-import { type Actor, WEBHOOK } from "../../src/server/auth/actor";
-import { approveLicenseRequest } from "../../src/server/licensing/approve";
+import { WEBHOOK } from "../../src/server/auth/actor";
 import {
   createLicenseRequest,
   markAuthorized,
@@ -25,7 +18,6 @@ import {
   setVideoBasePrice,
   setVideoUseEnabled,
 } from "../../src/server/pricing/video-overrides";
-import type { RequestContext } from "../../src/server/request-context";
 import { attestRights } from "../../src/server/videos/edit";
 import {
   NoMusicError,
@@ -40,7 +32,6 @@ import { getPublishBlockers } from "../../src/server/videos/publish";
 import { listCreatorVideos } from "../../src/server/videos/queries";
 import { flushAfter } from "../helpers/after";
 import { approvingCreatorWithVideo } from "../helpers/approval-fixtures";
-import { DEMO_REQUEST } from "../helpers/checkout-fixtures";
 import { expectDbError, PG_ERROR, waitForLockWaiter } from "../helpers/db";
 import {
   insertUploadVideo,
@@ -49,7 +40,21 @@ import {
   videoRow,
 } from "../helpers/factories";
 import { AFTER_FAILED, recordStderr } from "../helpers/logs";
-import { pricedCreator, readyUpload } from "../helpers/ready-videos";
+import {
+  pricedCreator,
+  pricedLiveVideo,
+  readyUpload,
+} from "../helpers/ready-videos";
+import {
+  approve,
+  authorize,
+  checkoutInput,
+  quoted,
+  RATE_CARD_AMOUNTS,
+  REQUEST_CTX,
+  requested,
+  settled,
+} from "../helpers/request-flow";
 import { onlyLicense } from "../helpers/request-outcomes";
 import type { ScriptedPayments } from "../helpers/scripted-payments";
 import {
@@ -57,6 +62,7 @@ import {
   installScriptedPayments,
 } from "../helpers/scripted-suite";
 import {
+  anyAuditsOf,
   auditsInOrder,
   MUSIC_YES,
   priceSet,
@@ -91,29 +97,10 @@ beforeEach(() => {
 });
 afterEach(finishScriptedTest);
 
-const CTX: RequestContext = {
-  ip: "203.0.113.7",
-  userAgent: "Mozilla/5.0 (test)",
-};
-
 /** The Rights answers besides music: the rights are the creator's, no identifiable people. */
 const NO_PEOPLE = { ownsRights: true, identifiablePeople: false } as const;
 
-/** The J4.7 quote at the rate card's CA$150: CA$1,575.00 + CA$157.50 = CA$1,732.50. */
-const RATE_CARD_AMOUNTS = {
-  licensePriceCents: 157500,
-  platformFeeCents: 15750,
-  amountTotalCents: 173250,
-} as const;
-
 const OPTION_DISABLED = { ok: false, reason: "option_disabled" } as const;
-
-/** A published upload (no postings) of a creator with onboarding's rate card, `extra` on top: no payment runs on it. */
-async function pricedVideo(extra: Partial<NewVideo> = {}) {
-  const owner = await pricedCreator();
-  const live = await publishVideo(await readyUpload(owner.creator.id), extra);
-  return { ...owner, live };
-}
 
 /**
  * A creator who can approve (`creator` overrides the profile) and their published video, then music Yes on its Rights
@@ -129,74 +116,15 @@ async function musicVideo(creator: Partial<NewCreatorProfile> = {}) {
   return approver;
 }
 
-/** The demo request (Paid social ads · 1 year · Worldwide at CA$1,732.50) for `videoId`, as the action parses it. */
-const checkoutInput = (videoId: string, change: Record<string, unknown> = {}) =>
-  StartCheckoutSchema.parse({
-    ...DEMO_REQUEST,
-    videoId,
-    submissionId: randomUUID(),
-    ...change,
-  });
-
-/** checkoutInput's request, which the server must take: the checkout_pending row it saved. */
-async function requested(
-  videoId: string,
-  change: Record<string, unknown> = {},
-): Promise<LicenseRequest> {
-  const input = checkoutInput(videoId, change);
-  const result = await createLicenseRequest(input, CTX);
-  if (!result.ok) throw new Error(`refused: ${result.reason}`);
-  const [row] = await db
-    .select()
-    .from(licenseRequest)
-    .where(eq(licenseRequest.checkoutSubmissionId, input.submissionId));
-  if (!row) throw new Error("no request");
-  return row;
-}
-
-/** T2 as Stripe's webhook brings it (markAuthorized): the request now waits for the creator. */
-async function authorize(id: string): Promise<LicenseRequest> {
-  await markAuthorized(id, WEBHOOK);
-  const row = await requestRow(id);
-  expect(row.status).toBe("awaiting_approval");
-  return row;
-}
-
-/** The creator's Approve, which must succeed. */
-async function approve(id: string, actor: Actor): Promise<void> {
-  const result = await approveLicenseRequest(id, actor);
-  if (!result.ok) throw new Error(`refused: ${result.reason}`);
-}
-
 /** The request's one license's snapshot, parsed. */
 const snapshotOf = async (requestId: string) =>
   LicenseSnapshotV1Schema.parse((await onlyLicense(requestId)).snapshot);
-
-/** What a request was quoted and stores: the base, the multipliers, the fee's terms and the three amounts. */
-const quoted = (r: LicenseRequest) => ({
-  basePriceCents: r.basePriceCents,
-  useMultiplierBps: r.useMultiplierBps,
-  termMultiplierBps: r.termMultiplierBps,
-  territoryMultiplierBps: r.territoryMultiplierBps,
-  platformFeeBps: r.platformFeeBps,
-  platformFeeMinCents: r.platformFeeMinCents,
-  licensePriceCents: r.licensePriceCents,
-  platformFeeCents: r.platformFeeCents,
-  amountTotalCents: r.amountTotalCents,
-});
 
 const requestsOf = (videoId: string) =>
   db
     .select({ id: licenseRequest.id })
     .from(licenseRequest)
     .where(eq(licenseRequest.videoId, videoId));
-
-/** Every audit row on the video, any action. */
-const anyAuditsOf = (videoId: string) =>
-  db
-    .select({ action: auditEvent.action })
-    .from(auditEvent)
-    .where(eq(auditEvent.entityId, videoId));
 
 /** Each card's From price by video id. */
 const fromPrices = (
@@ -209,16 +137,9 @@ const usesOn = async (handle: string, slug: string) =>
     ({ key, enabled, disabledReason }) => ({ key, enabled, disabledReason }),
   ) ?? null;
 
-/** `p` settled: null once it resolves, else what it threw, so a race's loser is never an unhandled rejection. */
-const settled = (p: Promise<unknown>) =>
-  p.then(
-    () => null,
-    (error: unknown) => error,
-  );
-
 describe("setVideoBasePrice: new requests only (02 §5.5; 07 D82, D97; 01 J4.8)", () => {
   it("J4.8: the video's own base prices the license page, the Review and a new request; the old total is refused", async () => {
-    const { creator, actor, live } = await pricedVideo();
+    const { creator, actor, live } = await pricedLiveVideo();
     await setVideoBasePrice(actor, { videoId: live.id, basePriceCents: 30000 });
 
     expect(
@@ -240,7 +161,9 @@ describe("setVideoBasePrice: new requests only (02 §5.5; 07 D82, D97; 01 J4.8)"
       platformFeeCents: 31500,
       amountTotalCents: 346500,
     });
-    expect(await createLicenseRequest(checkoutInput(live.id), CTX)).toEqual({
+    expect(
+      await createLicenseRequest(checkoutInput(live.id), REQUEST_CTX),
+    ).toEqual({
       ok: false,
       reason: "price_changed",
       totalCents: 346500,
@@ -249,7 +172,7 @@ describe("setVideoBasePrice: new requests only (02 §5.5; 07 D82, D97; 01 J4.8)"
   });
 
   it("charges the CA$2.00 fee floor on a CA$10 video: Organic · 30 days · One country", async () => {
-    const { actor, live } = await pricedVideo();
+    const { actor, live } = await pricedLiveVideo();
     await setVideoBasePrice(actor, { videoId: live.id, basePriceCents: 1000 });
     expect(
       await requested(live.id, {
@@ -268,7 +191,7 @@ describe("setVideoBasePrice: new requests only (02 §5.5; 07 D82, D97; 01 J4.8)"
   });
 
   it("cleared, the video follows the rate card again", async () => {
-    const { creator, actor, live } = await pricedVideo();
+    const { creator, actor, live } = await pricedLiveVideo();
     await setVideoBasePrice(actor, { videoId: live.id, basePriceCents: 30000 });
     await setVideoBasePrice(actor, { videoId: live.id, basePriceCents: null });
     expect((await videoRow(live.id)).basePriceOverrideCents).toBeNull();
@@ -282,7 +205,7 @@ describe("setVideoBasePrice: new requests only (02 §5.5; 07 D82, D97; 01 J4.8)"
   });
 
   it("changes that video's From price alone, on the creator's cards and the public grid", async () => {
-    const { creator, actor, live: a } = await pricedVideo();
+    const { creator, actor, live: a } = await pricedLiveVideo();
     const b = await publishVideo(await readyUpload(creator.id));
     await setVideoBasePrice(actor, { videoId: a.id, basePriceCents: 30000 });
     const want = { [a.id]: 30000, [b.id]: 15000 };
@@ -321,9 +244,9 @@ describe("setVideoUseEnabled: a music use back on (07 D82; 01 J5.14, J7.4; AD-22
       "broadcast",
     ]);
     expect(await auditsInOrder(live.id, "video.use_toggled")).toEqual([]);
-    expect(await createLicenseRequest(checkoutInput(live.id), CTX)).toEqual(
-      OPTION_DISABLED,
-    );
+    expect(
+      await createLicenseRequest(checkoutInput(live.id), REQUEST_CTX),
+    ).toEqual(OPTION_DISABLED);
 
     await setVideoUseEnabled(actor, {
       videoId: live.id,
@@ -349,7 +272,7 @@ describe("setVideoUseEnabled: a music use back on (07 D82; 01 J5.14, J7.4; AD-22
           useKey: "broadcast",
           expectedTotalCents: 288750,
         }),
-        CTX,
+        REQUEST_CTX,
       ),
     ).toEqual(OPTION_DISABLED);
 
@@ -363,9 +286,9 @@ describe("setVideoUseEnabled: a music use back on (07 D82; 01 J5.14, J7.4; AD-22
       "paid_social",
       "broadcast",
     ]);
-    expect(await createLicenseRequest(checkoutInput(live.id), CTX)).toEqual(
-      OPTION_DISABLED,
-    );
+    expect(
+      await createLicenseRequest(checkoutInput(live.id), REQUEST_CTX),
+    ).toEqual(OPTION_DISABLED);
   });
 
   it("a request made before the Switch goes off keeps its use: authorized, approved and licensed with music excluded", async () => {
@@ -507,7 +430,7 @@ describe("refusals: nothing written, nothing audited (AD-02, AD-03)", () => {
   });
 
   it("both refuse a disabled video, another creator's actor and an id that isn't a uuid", async () => {
-    const { creator, actor, live } = await pricedVideo(MUSIC_YES);
+    const { creator, actor, live } = await pricedLiveVideo([], MUSIC_YES);
     // Music not answered: VideoDisabledError comes before NoMusicError.
     const disabled = await insertUploadVideo(creator, {
       status: "disabled",
@@ -545,7 +468,7 @@ describe("refusals: nothing written, nothing audited (AD-02, AD-03)", () => {
   });
 
   it("setVideoBasePrice refuses a price outside the bounds or not in whole dollars, and the CHECK backs it", async () => {
-    const { actor, live } = await pricedVideo();
+    const { actor, live } = await pricedLiveVideo();
     await setVideoBasePrice(actor, { videoId: live.id, basePriceCents: 30000 });
     for (const [basePriceCents, message] of [
       [999, "Minimum is CA$10."],
@@ -577,7 +500,7 @@ describe("refusals: nothing written, nothing audited (AD-02, AD-03)", () => {
 
 describe("audits (07 §7.2; AD-05)", () => {
   it("video.price_set { fromCents, toCents, currency } and video.use_toggled { useKey, enabled } on a change; the same value again writes nothing", async () => {
-    const { actor, live } = await pricedVideo(MUSIC_YES);
+    const { actor, live } = await pricedLiveVideo([], MUSIC_YES);
     await setVideoBasePrice(actor, { videoId: live.id, basePriceCents: 30000 });
     const saved = await videoRow(live.id);
     await setVideoBasePrice(actor, { videoId: live.id, basePriceCents: 30000 });
@@ -657,7 +580,7 @@ describe("what a Switch changes for Publish and for buyers (07 §8.2, D82; AD-21
 
 describe("the video row lock (AD-02)", () => {
   it("two Switches saved at once both land: the second waits for the row and builds on the first's write", async () => {
-    const { actor, live } = await pricedVideo(MUSIC_YES);
+    const { actor, live } = await pricedLiveVideo([], MUSIC_YES);
     const attempts: Promise<unknown>[] = [];
     // Another transaction holds the video row (a licensing one, or a Rights save) while both Switches arrive.
     await db.transaction(async (tx) => {
@@ -692,7 +615,7 @@ describe("the video row lock (AD-02)", () => {
   });
 
   it("a Switch that waited sees the music No committed before it, and is refused", async () => {
-    const { actor, live } = await pricedVideo(MUSIC_YES);
+    const { actor, live } = await pricedLiveVideo([], MUSIC_YES);
     let attempt: Promise<unknown> = Promise.resolve();
     await db.transaction(async (tx) => {
       await tx

@@ -1,21 +1,26 @@
-import { readFileSync } from "node:fs";
+import { getTableConfig } from "drizzle-orm/pg-core";
 import { describe, expect, it } from "vitest";
+import { allMigrationsSql } from "../../../tests/helpers/migrations";
+import { licenseRequest, rateCard } from "../../db/schema";
 import { CURRENCIES, RATE_OPTION_KEYS } from "../domain/values";
 import {
   BASE_PRICE_MAX_CENTS,
   BASE_PRICE_MIN_CENTS,
   DEFAULT_BASE_PRICE_CENTS,
+  DEFAULT_EXCLUSIVE_MULTIPLIER_BPS,
   DEFAULT_OPTIONS,
   defaultRateOptions,
   MAX_TOTAL_CENTS,
   MULTIPLIER_MAX_BPS,
   MULTIPLIER_MIN_BPS,
   MULTIPLIER_STEP_BPS,
+  NON_EXCLUSIVE_BPS,
   PLATFORM_FEE_MIN_CENTS,
 } from "./presets";
 
-// The CHECK literals the money maps must equal (07 D97), read from the migration, so a divergence fails here first.
-const migration = readFileSync("drizzle/0000_init.sql", "utf8");
+// The CHECK literals the money maps must equal (07 D97), read from the migrations in journal order, so a divergence fails
+// here first.
+const migration = allMigrationsSql();
 function checkRange(name: string): [number, number] {
   const match = new RegExp(
     `"${name}" CHECK \\([^)]*?between (\\d+) and (\\d+)`,
@@ -73,7 +78,7 @@ describe("presets (02 §5.5, brief §5, 07 D97)", () => {
     ]);
   });
 
-  it("cover every currency, with the CHECK literals of 0000_init", () => {
+  it("cover every currency, with the CHECK literals of the migrations", () => {
     const [baseMin, baseMax] = checkRange("rate_card_base_price_range");
     const [, totalMax] = checkRange("license_request_total");
     const [feeMinLow, feeMinHigh] = checkRange("license_request_fee_min_range");
@@ -95,5 +100,31 @@ describe("presets (02 §5.5, brief §5, 07 D97)", () => {
       baseMin,
       baseMax,
     ]);
+  });
+
+  it("keep the exclusive constants in bounds and on a step, the standard factor at ×1.00 (07 D109)", () => {
+    for (const bps of [DEFAULT_EXCLUSIVE_MULTIPLIER_BPS, NON_EXCLUSIVE_BPS]) {
+      expect(bps).toBeGreaterThanOrEqual(MULTIPLIER_MIN_BPS);
+      expect(bps).toBeLessThanOrEqual(MULTIPLIER_MAX_BPS);
+      expect(bps % MULTIPLIER_STEP_BPS).toBe(0);
+    }
+    expect(NON_EXCLUSIVE_BPS).toBe(MULTIPLIER_MIN_BPS);
+  });
+
+  it("are the schema's exclusive defaults (a divergence fails before db:generate)", () => {
+    const columnDefault = (table: Parameters<typeof getTableConfig>[0]) =>
+      getTableConfig(table).columns.find(
+        (c) => c.name === "exclusive_multiplier_bps",
+      )?.default;
+    expect(columnDefault(rateCard)).toBe(DEFAULT_EXCLUSIVE_MULTIPLIER_BPS);
+    expect(columnDefault(licenseRequest)).toBe(NON_EXCLUSIVE_BPS);
+  });
+
+  it.each([
+    "rate_card_exclusive_multiplier_range",
+    "video_exclusive_multiplier_range",
+    "license_request_exclusive_fields",
+  ])("bound %s with the CHECK literals", (name) => {
+    expect(checkRange(name)).toEqual([MULTIPLIER_MIN_BPS, MULTIPLIER_MAX_BPS]);
   });
 });

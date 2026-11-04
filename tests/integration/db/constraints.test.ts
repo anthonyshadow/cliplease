@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { db } from "../../../src/db/client";
 import {
   licenseRequest,
+  rateCard,
   socialAccount,
   socialPost,
   video,
@@ -15,12 +16,14 @@ import {
   insertLicense,
   insertLicenseRequest,
   insertMoneyMovement,
+  insertRateCard,
   insertSocialAccount,
   insertSocialPost,
   insertUploadVideo,
   insertVideoPosting,
   instagramReelUrl,
   randomHex,
+  rateCardRow,
 } from "../../helpers/factories";
 
 /** A creator with a connected Instagram account and a post whose link_key is `linkKey`. */
@@ -265,5 +268,86 @@ describe("CORE constraints (P03 smoke cases)", () => {
       provider: "instagram",
       providerAccountId,
     });
+  });
+});
+
+describe("exclusive licenses (0002)", () => {
+  it("rate card: off at ×3.00 by default; the premium stays within ×1.00 to ×10.00", async () => {
+    const creator = await insertCreator();
+    await insertRateCard(creator);
+    expect(await rateCardRow(creator.id)).toMatchObject({
+      exclusiveEnabled: false,
+      exclusiveMultiplierBps: 30000,
+    });
+
+    const setPremium = (exclusiveMultiplierBps: number) =>
+      db
+        .update(rateCard)
+        .set({ exclusiveMultiplierBps })
+        .where(eq(rateCard.creatorId, creator.id));
+    for (const bps of [9999, 100001]) {
+      await expectDbError(setPremium(bps), {
+        code: PG_ERROR.check,
+        constraint: "rate_card_exclusive_multiplier_range",
+      });
+    }
+    for (const bps of [10000, 100000]) await setPremium(bps);
+  });
+
+  it("video: follows the card by default; its own premium stays within ×1.00 to ×10.00", async () => {
+    const creator = await insertCreator();
+    for (const exclusiveMultiplierBps of [9999, 100001]) {
+      await expectDbError(
+        insertUploadVideo(creator, { exclusiveMultiplierBps }),
+        {
+          code: PG_ERROR.check,
+          constraint: "video_exclusive_multiplier_range",
+        },
+      );
+    }
+    for (const exclusiveMultiplierBps of [null, 30000]) {
+      const row = await insertUploadVideo(creator, { exclusiveMultiplierBps });
+      expect(row.exclusiveMultiplierBps).toBe(exclusiveMultiplierBps);
+    }
+    expect(await insertUploadVideo(creator)).toMatchObject({
+      exclusiveEnabled: null,
+      exclusiveMultiplierBps: null,
+    });
+  });
+
+  it("request: exclusive only on a term up to 1 year with a premium in bounds; not exclusive is always ×1.00", async () => {
+    const target = await newUploadVideo();
+    for (const overrides of [
+      { exclusive: true, termKey: "perpetual", exclusiveMultiplierBps: 30000 },
+      { exclusive: false, exclusiveMultiplierBps: 30000 },
+      { exclusive: true, termKey: "y1", exclusiveMultiplierBps: 100500 },
+      { exclusive: true, termKey: "y1", exclusiveMultiplierBps: 9999 },
+    ] as const) {
+      await expectDbError(insertLicenseRequest(target, overrides), {
+        code: PG_ERROR.check,
+        constraint: "license_request_exclusive_fields",
+      });
+    }
+    for (const termKey of ["d30", "m6", "y1"] as const) {
+      await insertLicenseRequest(target, {
+        exclusive: true,
+        termKey,
+        exclusiveMultiplierBps: 30000,
+      });
+    }
+    await insertLicenseRequest(target, {
+      exclusive: true,
+      termKey: "y1",
+      exclusiveMultiplierBps: 10000,
+    });
+  });
+
+  it("request and license: not exclusive by default", async () => {
+    const request = await insertLicenseRequest(await newUploadVideo());
+    expect(request).toMatchObject({
+      exclusive: false,
+      exclusiveMultiplierBps: 10000,
+    });
+    expect((await insertLicense(request)).exclusive).toBe(false);
   });
 });

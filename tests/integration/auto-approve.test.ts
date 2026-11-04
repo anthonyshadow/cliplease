@@ -25,7 +25,6 @@ import {
   createLicenseRequest,
   markAuthorized,
 } from "../../src/server/licensing/requests";
-import type { RequestContext } from "../../src/server/request-context";
 import { redirectTo } from "../helpers/actions";
 import { flushAfter, queueAfter, runQueuedAfter } from "../helpers/after";
 import {
@@ -43,6 +42,7 @@ import { resetDb } from "../helpers/db";
 import { requestRow } from "../helpers/factories";
 import { AFTER_FAILED, captureLogEvents, recordStderr } from "../helpers/logs";
 import { readLatestEmail } from "../helpers/read-latest-email";
+import { REQUEST_CTX } from "../helpers/request-flow";
 import {
   emailKeysOf,
   endingsOf,
@@ -90,11 +90,6 @@ beforeEach(() => {
   recordStderr(AFTER_FAILED);
 });
 afterEach(finishScriptedTest);
-
-const CTX: RequestContext = {
-  ip: "203.0.113.7",
-  userAgent: "Mozilla/5.0 (test)",
-};
 
 /**
  * A creator who can approve (`creator` overrides the profile), their published video and one auto_approve request on
@@ -623,7 +618,7 @@ describe("approval windows (07 D81, §2.3; 01 J8.11)", () => {
           videoId: live.id,
           submissionId,
         }),
-        CTX,
+        REQUEST_CTX,
       ),
     ).toMatchObject({ ok: true });
     const [next] = await db

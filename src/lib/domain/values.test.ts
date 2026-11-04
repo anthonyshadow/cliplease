@@ -17,6 +17,7 @@ describe("values.ts tuples", () => {
     expect(RENEWABLE_TERM_KEYS).toEqual(EXCLUSIVE_TERM_KEYS);
     expect(EXCLUSIVE_TERM_KEYS).toEqual(["d30", "m6", "y1"]);
     expect(RENEWABLE_TERM_KEYS).not.toContain("perpetual");
+    expect(EXCLUSIVE_TERM_KEYS).not.toContain("perpetual");
     for (const key of EXCLUSIVE_TERM_KEYS) expect(TERM_KEYS).toContain(key);
     expectTypeOf<RenewableTermKey>().toEqualTypeOf<"d30" | "m6" | "y1">();
     expectTypeOf<ExclusiveTermKey>().toEqualTypeOf<RenewableTermKey>();

@@ -5,13 +5,18 @@ import { cleanup, render, screen, within } from "@testing-library/react";
 import type { ComponentProps } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { formatBytes } from "@/lib/format";
+import { FOLLOWS_RATE_CARD } from "@/lib/pricing/exclusive";
+import { EXCLUSIVE_COPY } from "@/lib/pricing/exclusive-copy";
 import type { PublishBlocker } from "@/lib/videos/review";
 import { MUSIC_DISABLED_USES } from "@/lib/videos/rights";
 import { VIDEO_PRICE_COPY } from "@/lib/videos/video-price";
 import { effectiveOptions } from "@/server/pricing/rate-card";
 import { creatorVideoFixture } from "../../../tests/helpers/creator-video-fixture";
 import { savedPosting } from "../../../tests/helpers/postings-fixtures";
-import { rateCardFixture } from "../../../tests/helpers/rate-card-fixtures";
+import {
+  NO_VIDEO,
+  rateCardFixture,
+} from "../../../tests/helpers/rate-card-fixtures";
 import { VideoPageView } from "./video-page";
 
 vi.mock("@/app/(dashboard)/dashboard/videos/[id]/review-actions", () => ({
@@ -45,10 +50,7 @@ const LIVE = creatorVideoFixture({
 });
 const SOURCE = savedPosting({ isSource: true, position: 0 });
 const RATE_CARD = rateCardFixture();
-const OPTIONS = effectiveOptions(RATE_CARD, {
-  disabledUses: [],
-  basePriceOverrideCents: null,
-});
+const OPTIONS = effectiveOptions(RATE_CARD, NO_VIDEO);
 
 type Publish = ComponentProps<typeof VideoPageView>["publish"];
 
@@ -58,6 +60,7 @@ const publishOf = (change: Partial<Publish> = {}): Publish => ({
   reconnectPlatforms: [],
   options: OPTIONS,
   rateCard: RATE_CARD,
+  videoExclusive: FOLLOWS_RATE_CARD,
   disabledReason: null,
   ...change,
 });
@@ -161,7 +164,20 @@ describe("VideoPageView (S19; 05 §6.7)", () => {
       }).checked,
     ).toBe(false);
     expect(within(prices).queryByRole("switch")).toBeNull();
+    const exclusiveRadio = (name: string) =>
+      within(prices).getByRole<HTMLInputElement>("radio", { name });
+    expect(exclusiveRadio("Use my rate card (off)").checked).toBe(true);
+    expect(exclusiveRadio(EXCLUSIVE_COPY.offerOnVideo).checked).toBe(false);
+    expect(exclusiveRadio(EXCLUSIVE_COPY.dontOffer).checked).toBe(false);
     expect(prices.querySelectorAll("[data-price-preview]")).toHaveLength(1);
+    // The exclusive editor, then the preview, in document order (owner answer Q-166).
+    expect(
+      [
+        ...prices.querySelectorAll(
+          "[data-exclusive-offer-editor], [data-price-preview]",
+        ),
+      ].map((el) => el.hasAttribute("data-price-preview")),
+    ).toEqual([false, true]);
     expect(prices.querySelector("[data-from-line]")?.textContent).toBe(
       "From CA$150.00 · Organic social repost · Paid social ads · TV / broadcast",
     );
@@ -183,8 +199,8 @@ describe("VideoPageView (S19; 05 §6.7)", () => {
       video: { ...LIVE, containsMusic: true },
       publish: publishOf({
         options: effectiveOptions(RATE_CARD, {
+          ...NO_VIDEO,
           disabledUses: ["broadcast"],
-          basePriceOverrideCents: null,
         }),
       }),
     });
@@ -261,6 +277,9 @@ describe("VideoPageView (S19; 05 §6.7)", () => {
       screen.queryByRole("region", { name: "Prices for this video" }),
     ).toBeNull();
     expect(
+      screen.queryByRole("group", { name: EXCLUSIVE_COPY.title }),
+    ).toBeNull();
+    expect(
       screen.queryByText(
         "Can't replace while the video is live, or once a request or license exists.",
       ),
@@ -301,10 +320,7 @@ describe("VideoPageView (S19; 05 §6.7)", () => {
       rateCardFixture((o) =>
         o.key === "organic_social" ? { enabled: false } : {},
       ),
-      {
-        disabledUses: [...MUSIC_DISABLED_USES],
-        basePriceOverrideCents: null,
-      },
+      { ...NO_VIDEO, disabledUses: [...MUSIC_DISABLED_USES] },
     );
     page({
       publish: publishOf({ options: noUse }),

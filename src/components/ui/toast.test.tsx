@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { StrictMode } from "react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Toaster, ToastOnMount, toast } from "./toast";
 
 function Page({ message }: { message: string }) {
@@ -27,6 +27,32 @@ describe("ToastOnMount", () => {
     expect(
       screen.getAllByText("That account is already connected."),
     ).toHaveLength(1);
+  });
+});
+
+describe("toast's time on screen (04 §9.23)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it.each([
+    { name: "4 s", message: "Prices saved.", duration: 4000 },
+    {
+      name: "8 s with an action",
+      message: "Deleted.",
+      duration: 8000,
+      action: { label: "Undo", altText: "Undo", onClick: () => {} },
+    },
+  ])("leaves by itself after $name", ({ message, duration, action }) => {
+    render(<Toaster />);
+    act(() => toast(message, { action }));
+    act(() => vi.advanceTimersByTime(duration - 1));
+    expect(screen.queryByText(message)).not.toBeNull();
+    act(() => vi.advanceTimersByTime(1));
+    expect(screen.queryByText(message)).toBeNull();
   });
 });
 

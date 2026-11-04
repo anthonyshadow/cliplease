@@ -1,5 +1,5 @@
 // Rate card presets (02 §5.5, 07 D97): per-currency money maps, currency-free multipliers. The only home of these
-// constants (P19e adds the exclusive ones here); nothing redeclares them.
+// constants; nothing redeclares them.
 import {
   type Currency,
   RATE_DIMENSIONS,
@@ -37,6 +37,8 @@ export const PLATFORM_FEE_MIN_CENTS = {
 export const MULTIPLIER_MIN_BPS = 10000; // ×1.00 (rate_option_multiplier_range)
 export const MULTIPLIER_MAX_BPS = 100000; // ×10.00
 export const MULTIPLIER_STEP_BPS = 500; // ×0.05 steps (07 D21)
+export const DEFAULT_EXCLUSIVE_MULTIPLIER_BPS = 30000; // ×3.00 (OQ-44, 07 D109)
+export const NON_EXCLUSIVE_BPS = 10000; // a standard license's factor: every standard price stays the same (07 D109)
 
 /** Brief §5 presets, in basis points (×1.00 = 10000). */
 export const DEFAULT_OPTIONS = {

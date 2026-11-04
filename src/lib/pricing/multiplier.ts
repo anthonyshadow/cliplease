@@ -26,9 +26,9 @@ export function multiplierFieldValue(bps: number): string {
   return (bps / BPS_PER_UNIT).toFixed(2);
 }
 
-/** 15000 → "× 1.50": a multiplier in read-only text. */
+/** 15000 → "×1.50": a multiplier in read-only text (04 §9.39). */
 export function formatMultiplier(bps: number): string {
-  return `× ${multiplierFieldValue(bps)}`;
+  return `×${multiplierFieldValue(bps)}`;
 }
 
 /** "150" / "1,500" / "150.00" → 15000 / 150000 / 15000 cents; a part of a dollar ("150.50"), or no number, → null. */

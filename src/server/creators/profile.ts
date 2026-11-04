@@ -5,6 +5,7 @@ import { creatorProfile, rateCard, rateOption, user } from "@/db/schema";
 import type { PayoutsStatus } from "@/lib/domain/values";
 import {
   DEFAULT_BASE_PRICE_CENTS,
+  DEFAULT_EXCLUSIVE_MULTIPLIER_BPS,
   defaultRateOptions,
 } from "@/lib/pricing/presets";
 import { MINUTE_MS } from "@/lib/time";
@@ -92,6 +93,8 @@ export async function completeOnboarding(
         .values({
           creatorId: profile.id,
           basePriceCents: DEFAULT_BASE_PRICE_CENTS[profile.payoutCurrency],
+          exclusiveEnabled: false,
+          exclusiveMultiplierBps: DEFAULT_EXCLUSIVE_MULTIPLIER_BPS,
         })
         .returning({ id: rateCard.id });
       await tx

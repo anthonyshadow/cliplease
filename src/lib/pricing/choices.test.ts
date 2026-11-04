@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { examplePriceCents, rateChoices } from "./choices";
+import {
+  examplePriceCents,
+  exclusiveExamplePriceCents,
+  rateChoices,
+} from "./choices";
 import { defaultRateOptions } from "./presets";
 
 const defaults = () =>
@@ -63,5 +67,48 @@ describe("examplePriceCents (04 §9.29)", () => {
     );
     expect(examplePriceCents(15000, noTerms, "use", 30000)).toBeNull();
     expect(examplePriceCents(15000, noTerms, "term", 20000)).toBe(30000);
+  });
+});
+
+describe("exclusiveExamplePriceCents (04 §9.29, 05 §6.9)", () => {
+  const without = (...keys: string[]) =>
+    rateChoices(
+      defaults().map((o) =>
+        keys.includes(o.key) ? { ...o, enabled: false } : o,
+      ),
+    );
+
+  it("pairs the premium with the first of each group, at a CA$150 base", () => {
+    expect(exclusiveExamplePriceCents(15000, without(), 30000)).toBe(45000);
+    expect(exclusiveExamplePriceCents(15000, without(), 40000)).toBe(60000);
+  });
+
+  it("takes the first 30-day, 6-month or 1-year term on", () => {
+    expect(exclusiveExamplePriceCents(15000, without("d30"), 30000)).toBe(
+      67500,
+    );
+  });
+
+  it("gives none with only Perpetual on", () => {
+    expect(
+      exclusiveExamplePriceCents(15000, without("d30", "m6", "y1"), 30000),
+    ).toBeNull();
+  });
+
+  it("gives none while a group has nothing on", () => {
+    expect(
+      exclusiveExamplePriceCents(
+        15000,
+        without("organic_social", "paid_social", "broadcast"),
+        30000,
+      ),
+    ).toBeNull();
+    expect(
+      exclusiveExamplePriceCents(
+        15000,
+        without("country", "region", "worldwide"),
+        30000,
+      ),
+    ).toBeNull();
   });
 });

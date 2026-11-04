@@ -6,6 +6,7 @@ import {
   boxOf,
   expectAbove,
   expectCreatorChrome,
+  expectInside,
   expectLeftOf,
   expectPageFrame,
   expectSheetForm,
@@ -15,15 +16,22 @@ import {
 } from "./helpers/layout";
 import {
   basePrice,
+  exclusiveLine,
+  exclusivePremium,
+  exclusiveSection,
+  exclusiveSwitch,
   optionSwitch,
   PRICING,
   pricePreview,
   rateRow,
+  setExclusiveSwitch,
 } from "./helpers/pricing";
 
-// G.6 for Pricing (S21, 05 §6.9 and §1.6; 04 §9.29; 07 D146, D153, D154) on all four projects: one centered 640 px
-// column below 1024 with the preview after the last row; from 1024 the rows on the left and the preview on the right,
-// sticky clear of the NavBar; the Reset sheet's form per tier.
+// G.6 for Pricing (S21, 05 §6.9 and §1.6; 04 §9.29; 07 D146, D153, D154) on all four projects, with exclusive licenses
+// on (P19e): one centered 640 px column below 1024 with the Exclusive licenses section after the last row and the preview
+// after it; from 1024 the rows and the section on the left and the preview on the right, sticky clear of the NavBar; the
+// section's Switch and premium 44 px targets and the preview's Exclusive line inside it at every tier; the Reset sheet's
+// form per tier.
 test.use({ reducedMotion: "reduce" });
 
 test("G.6: Pricing is one centered 640 px column below 1024 and two columns from 1024, the preview clear of the NavBar", async ({
@@ -34,7 +42,11 @@ test("G.6: Pricing is one centered 640 px column below 1024 and two columns from
   await signUpCreator(page, { payouts: false });
   await page.goto(PRICING);
   await expect(basePrice(page)).toBeVisible();
+  // On and unsaved: nothing here reads the card back.
+  await setExclusiveSwitch(page, true);
   const lastRow = rateRow(page, "Worldwide");
+  const section = exclusiveSection(page);
+  const line = exclusiveLine(page);
   const preview = pricePreview(page);
   const save = page.getByRole("button", { name: "Save prices" });
   const reset = page.getByRole("button", { name: "Reset to defaults" });
@@ -45,17 +57,22 @@ test("G.6: Pricing is one centered 640 px column below 1024 and two columns from
     await expectCreatorChrome(page, width);
     for (const control of [
       optionSwitch(page, "Paid social ads"),
+      exclusiveSwitch(page),
+      exclusivePremium(page),
       save,
       reset,
     ]) {
       await expectTouchTarget(control);
     }
+    await expectInside(line, preview);
     if (width < TIERS.desktop) {
       await expectWithinCap(page.locator("main form"), 640);
-      await expectAbove(lastRow, preview);
+      await expectAbove(lastRow, section);
+      await expectAbove(section, preview);
       await expectAbove(preview, save);
     } else {
       await expectLeftOf(lastRow, preview);
+      await expectLeftOf(section, preview);
       // Scrolled to the end, the sticky preview stays 24 px under the NavBar.
       await page.evaluate(() =>
         window.scrollTo(0, document.documentElement.scrollHeight),

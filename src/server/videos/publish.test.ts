@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { PUBLISH_BLOCKERS, type PublishBlocker } from "@/lib/videos/review";
-import { rateCardFixture } from "../../../tests/helpers/rate-card-fixtures";
+import {
+  NO_VIDEO,
+  rateCardFixture,
+} from "../../../tests/helpers/rate-card-fixtures";
 import { effectiveOptions } from "../pricing/rate-card";
 import { computePublishBlockers, type PublishFacts } from "./publish";
 
-const ALL_ON = effectiveOptions(rateCardFixture(), {
-  disabledUses: [],
-  basePriceOverrideCents: null,
-});
+const ALL_ON = effectiveOptions(rateCardFixture(), NO_VIDEO);
 
 /** A video nothing blocks: original ready, a cover, postings and the tick saved, rights answered, a valid link. */
 const READY: PublishFacts = {
@@ -76,10 +76,7 @@ describe("computePublishBlockers (02 §5.6; 07 §8.2)", () => {
       rateCardFixture((o) =>
         o.key === "organic_social" ? { enabled: false } : {},
       ),
-      {
-        disabledUses: ["paid_social", "broadcast"],
-        basePriceOverrideCents: null,
-      },
+      { ...NO_VIDEO, disabledUses: ["paid_social", "broadcast"] },
     );
     expect(computePublishBlockers({ ...READY, options: musicOnly })).toEqual([
       "no_enabled_option",

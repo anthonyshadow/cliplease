@@ -3,7 +3,7 @@ import { refresh } from "next/cache";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { saveRateCard as saveRateCardAction } from "../../src/app/(dashboard)/dashboard/pricing/actions";
 import { db } from "../../src/db/client";
-import { rateCard, rateOption } from "../../src/db/schema";
+import { rateOption } from "../../src/db/schema";
 import type { RateOptionKey } from "../../src/lib/domain/values";
 import {
   defaultRateCardInput,
@@ -23,12 +23,13 @@ import {
   newCreatorEmail,
   signInWithOtp,
 } from "../helpers/auth";
-import { uniqueTestHandle } from "../helpers/factories";
+import { rateCardRow, uniqueTestHandle } from "../helpers/factories";
 import { rateCardFixture } from "../helpers/rate-card-fixtures";
 
 // The rate card (J4.1, J4.6, J4.9; 02 §5.5, §6.1) against the test database: onboarding's defaults, the save round
-// trip, crafted input the shared schema refuses, and the action's requireCreator. Outside a request refresh() has no
-// router to refresh, so it is a spy here.
+// trip, crafted input the shared schema refuses, and the action's requireCreator. The exclusive offer's domain cases are
+// in exclusive-pricing.test.ts; its action cases are here (P19e). Outside a request refresh() has no router to refresh,
+// so it is a spy here.
 vi.mock("next/headers", () => import("../helpers/next-headers"));
 vi.mock("next/cache", () => ({ refresh: vi.fn() }));
 
@@ -67,10 +68,7 @@ function withOption(
 
 /** Every stored value of the card, updated_at included, so "nothing changed" means nothing was written. */
 async function stored(creatorId: string) {
-  const [card] = await db
-    .select()
-    .from(rateCard)
-    .where(eq(rateCard.creatorId, creatorId));
+  const card = await rateCardRow(creatorId);
   const options = await db
     .select()
     .from(rateOption)
@@ -234,6 +232,42 @@ describe("saveRateCard (the action)", () => {
     });
     expect(vi.mocked(refresh)).not.toHaveBeenCalled();
     expect(await stored(creatorId)).toEqual(before);
+  });
+
+  it.each([
+    [100500, "Maximum is ×10.00."],
+    [9500, "Minimum is ×1.00."],
+  ])(
+    "names the exclusive premium for a crafted %i bps, saves nothing and doesn't refresh",
+    async (exclusiveMultiplierBps, message) => {
+      const { creatorId } = await onboardedCreator();
+      const before = await stored(creatorId);
+      expect(
+        await saveRateCardAction({ ...defaults(), exclusiveMultiplierBps }),
+      ).toEqual({
+        ok: false,
+        error: {
+          code: "invalid_input",
+          message,
+          fields: { exclusiveMultiplierBps: [message] },
+        },
+      });
+      expect(vi.mocked(refresh)).not.toHaveBeenCalled();
+      expect(await stored(creatorId)).toEqual(before);
+    },
+  );
+
+  it("saves the exclusive offer: on at ×2.50 round-trips, and only those two fields change", async () => {
+    const { creatorId } = await onboardedCreator();
+    const offer = { exclusiveEnabled: true, exclusiveMultiplierBps: 25000 };
+    expect(await saveRateCardAction({ ...defaults(), ...offer })).toEqual({
+      ok: true,
+      data: undefined,
+    });
+    expect(vi.mocked(refresh)).toHaveBeenCalledTimes(1);
+    expect(await getRateCard(creatorId)).toEqual(
+      rateCardFixture(undefined, offer),
+    );
   });
 
   it("refuses input that isn't a rate card", async () => {

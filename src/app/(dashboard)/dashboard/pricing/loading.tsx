@@ -26,6 +26,10 @@ export default function PricingLoading() {
             ))}
           </div>
         ))}
+        <div className="flex flex-col gap-4">
+          <Skeleton className="h-6 w-1/4" />
+          <Skeleton className="min-h-11 w-full" />
+        </div>
       </div>
       <div className={TWO_COLUMN.side}>
         <Skeleton className="h-72 w-full rounded-lg" />

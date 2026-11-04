@@ -46,6 +46,7 @@ const NEVER_PG_ENUM = [
   "APPROVAL_WINDOW_HOURS",
   "EXCLUSIVE_TERM_KEYS",
   "RENEWABLE_TERM_KEYS",
+  "VIDEO_EXCLUSIVE_MODES",
   "LICENSE_AVAILABILITY_STATES",
   "RENEWAL_DISPLAY_STATES",
 ];
@@ -96,6 +97,6 @@ describe("pgEnums (03 §2, 07 D116)", () => {
         ...RENEWAL_TUPLES,
       ].sort(),
     ).toEqual([...tupleByName.keys()].sort());
-    expect(tupleByName.size).toBe(47);
+    expect(tupleByName.size).toBe(48);
   });
 });

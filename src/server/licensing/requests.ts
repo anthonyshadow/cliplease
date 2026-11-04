@@ -22,6 +22,7 @@ import {
   HOLD_TOO_SHORT_MS,
 } from "@/lib/payments/expires-at";
 import { computeQuote } from "@/lib/pricing/compute-quote";
+import { NON_EXCLUSIVE_BPS } from "@/lib/pricing/presets";
 import type { StartCheckoutInput } from "@/lib/validation/checkout";
 import { normalizeEmail } from "@/lib/validation/email";
 import { normalizeTimeZone } from "@/lib/validation/time-zone";
@@ -44,6 +45,7 @@ import { CurrencyNotEnabledError } from "../payments/registry";
 import {
   effectiveOptions,
   getRateCard,
+  VIDEO_PRICING_COLUMNS,
   videoPricingOf,
 } from "../pricing/rate-card";
 import type { RequestContext } from "../request-context";
@@ -119,8 +121,7 @@ export async function createLicenseRequest(
       creatorId: video.creatorId,
       title: video.title,
       status: video.status,
-      disabledUses: video.disabledUses,
-      basePriceOverrideCents: video.basePriceOverrideCents,
+      ...VIDEO_PRICING_COLUMNS,
       postingPlatforms: postingPlatformsColumn,
     })
     .from(video)
@@ -145,6 +146,7 @@ export async function createLicenseRequest(
     currency,
     basePriceCents: options.basePriceCents,
     ...multipliers,
+    exclusiveBps: NON_EXCLUSIVE_BPS,
     ...fees,
   });
   if (!result.ok) {
@@ -187,6 +189,8 @@ export async function createLicenseRequest(
     licensePriceCents: quote.licensePriceCents,
     platformFeeCents: quote.platformFeeCents,
     amountTotalCents: quote.totalCents,
+    exclusive: false,
+    exclusiveMultiplierBps: NON_EXCLUSIVE_BPS,
     termsVersion: i.termsVersion,
     termsAcceptedIp: ctx.ip,
     termsAcceptedUserAgent: ctx.userAgent,

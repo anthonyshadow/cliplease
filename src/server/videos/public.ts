@@ -25,6 +25,8 @@ import {
   effectiveOptions,
   getRateCard,
   type RateCardDTO,
+  VIDEO_PRICING_COLUMNS,
+  type VideoPricingRow,
   videoPricingOf,
 } from "../pricing/rate-card";
 import { enabledPlatforms } from "../social/registry";
@@ -54,8 +56,7 @@ const OFFER_COLUMNS = {
   id: video.id,
   status: video.status,
   posterObjectKey: video.posterObjectKey,
-  disabledUses: video.disabledUses,
-  basePriceOverrideCents: video.basePriceOverrideCents,
+  ...VIDEO_PRICING_COLUMNS,
 };
 
 /** The creator's published videos, newest published first: the grid's order. */
@@ -70,7 +71,7 @@ const NEWEST_PUBLISHED = [desc(video.publishedAt), desc(video.id)] as const;
  * the videos it offers (owner answer Q-137 a). Pure.
  */
 function licenseOffer(
-  row: Parameters<typeof videoPricingOf>[0] &
+  row: VideoPricingRow &
     Parameters<typeof posterSrc>[0] & { status: VideoStatus },
   postingPlatforms: readonly PostingPlatform[],
   rateCard: RateCardDTO,

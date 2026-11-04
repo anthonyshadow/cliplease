@@ -1,4 +1,6 @@
 import { expect, type Locator, type Page } from "@playwright/test";
+import type { VideoExclusiveMode } from "../../../src/lib/domain/values";
+import { EXCLUSIVE_COPY } from "../../../src/lib/pricing/exclusive-copy";
 import {
   MUSIC_DISABLED_USES,
   type MusicUseKey,
@@ -6,9 +8,12 @@ import {
 import { VIDEO_PAGE_COPY } from "../../../src/lib/videos/video-page";
 import { VIDEO_PRICE_COPY } from "../../../src/lib/videos/video-price";
 import { radio } from "./buyer";
+import { latestToast } from "./pricing";
 
 // The Prices section's VideoPriceEditor and music Switches (P19d; 04 §9.29; 05 §6.5 callouts 38 and 47, §6.7 callouts 8
-// and 11; 07 D82) on the Review and the video page, and the music Switches of the Rights step.
+// and 11; 07 D82) on the Review and the video page, the music Switches of the Rights step, and the Prices'
+// ExclusiveOfferEditor (P19e; 04 §9.39; 05 §6.5 callout 57, §6.7 callout 13; 07 D109). A Save or Cancel looked up in the
+// whole Prices stays unique only while the other editor is clean: scope it to its editor.
 
 /** The video page's Prices section (05 §6.7 callout 8): its region is named by its heading. */
 export const pricesSection = (page: Page) =>
@@ -28,9 +33,37 @@ export type BasePriceChoice = "rate_card" | "video";
 export const basePriceRadio = (page: Page, choice: BasePriceChoice) =>
   radio(page, "basePrice", choice);
 
-/** A base-price choice's tile label: stretched over the tile, it is the 44 px target. */
+/** A choice's tile label: stretched over the tile, it is the 44 px target. */
+const tileLabel = (input: Locator) => input.locator("xpath=ancestor::label[1]");
+
 export const basePriceTile = (page: Page, choice: BasePriceChoice) =>
-  basePriceRadio(page, choice).locator("xpath=ancestor::label[1]");
+  tileLabel(basePriceRadio(page, choice));
+
+/** An editor's Save or Cancel, by name. */
+export const editorButton = (editor: Locator, name: string) =>
+  editor.getByRole("button", { name, exact: true });
+
+/** The exclusive offer's editor in the Prices of Review and the video page. */
+export const exclusiveEditor = (page: Page) =>
+  page.locator("[data-exclusive-offer-editor]");
+
+/** A choice's radio: "rate_card" (Use my rate card), "on" (Offer on this video) or "off" (Don't offer on this video). */
+export const exclusiveRadio = (page: Page, mode: VideoExclusiveMode) =>
+  radio(page, "exclusiveOffer", mode);
+
+export const exclusiveTile = (page: Page, mode: VideoExclusiveMode) =>
+  tileLabel(exclusiveRadio(page, mode));
+
+/** The optional premium, shown while "Offer on this video" is chosen. */
+export const exclusiveField = (page: Page) =>
+  exclusiveEditor(page).getByRole("textbox", {
+    name: EXCLUSIVE_COPY.videoField,
+    exact: true,
+  });
+
+/** Its Save's toast. */
+export const exclusiveSavedToast = (page: Page) =>
+  latestToast(page, EXCLUSIVE_COPY.saved);
 
 /** One music Switch inside `scope`, by the use it turns back on ("Allow Paid social ads anyway"). */
 export const musicSwitch = (scope: Page | Locator, key: MusicUseKey) =>

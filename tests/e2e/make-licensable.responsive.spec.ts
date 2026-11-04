@@ -1,4 +1,5 @@
 import { expect, type Locator, type Page, test } from "@playwright/test";
+import { VIDEO_EXCLUSIVE_MODES } from "../../src/lib/domain/values";
 import { MUSIC_DISABLED_USES, RIGHTS_COPY } from "../../src/lib/videos/rights";
 import { sourcePageHref } from "../../src/lib/videos/steps";
 import { collectConsoleErrors } from "./helpers/console";
@@ -17,6 +18,7 @@ import {
 import { libraryPostId, POST_01, tiles } from "./helpers/library";
 import {
   basePriceTile,
+  exclusiveTile,
   musicSwitch,
   musicSwitchControls,
 } from "./helpers/video-price";
@@ -50,8 +52,9 @@ import {
 // one centered max-w-reading column below lg (the video summary absent below md, above the step on md) and two columns
 // from lg; the chips wrap and never scroll, and the cover and the post's picture sit on one line from md. Rights and
 // Review (P13) take the same layout: the Yes / No tiles side by side on one line and music Yes's two Switches (P19d),
-// the Review's rows, its price editor (P19d), read-only prices, payouts Notice and Publish inside the step column; every
-// control a 44 px target, the base-price choices and the music Switches among them.
+// the Review's rows, its price editor (P19d), exclusive editor (P19e), read-only prices, payouts Notice and Publish
+// inside the step column; every control a 44 px target, the base-price choices, the exclusive choices and the music
+// Switches among them.
 test.use({ reducedMotion: "reduce" });
 test.afterEach(cleanCreatedVideos);
 
@@ -217,12 +220,14 @@ test("G.6: a Library draft's File step (before and after the upload), Where post
     }
   });
 
-  // Review (P13): its rows, the price editor (P19d), the read-only prices and the payouts Notice fill the step column.
+  // Review (P13): its rows, the price editor (P19d), the exclusive editor (P19e), the read-only prices and the payouts
+  // Notice fill the step column.
   await continueToReview(page, videoId);
   const reviewStep = stepColumn(page, "review");
   const rowParts = [
     reviewStep.locator("dl"),
     reviewStep.locator("[data-video-price-editor]"),
+    reviewStep.locator("[data-exclusive-offer-editor]"),
     reviewStep.locator("[data-price-preview]"),
     page.locator("[data-payouts-notice]"),
   ];
@@ -243,6 +248,7 @@ test("G.6: a Library draft's File step (before and after the upload), Where post
       reviewStep.getByRole("link", { name: "Set up payouts", exact: true }),
       basePriceTile(page, "rate_card"),
       basePriceTile(page, "video"),
+      ...VIDEO_EXCLUSIVE_MODES.map((mode) => exclusiveTile(page, mode)),
       ...MUSIC_DISABLED_USES.map((key) => musicSwitch(reviewStep, key)),
       publish,
     ]) {

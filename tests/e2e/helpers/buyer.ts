@@ -11,6 +11,9 @@ import {
 
 // A buyer on the license page (S01, 05 §4.1): its choices, "Your details" and the PriceBar's button.
 
+/** A buyer's phone, logged out (05 §4.1's frame). */
+export const BUYER_PHONE = { width: 390, height: 844 };
+
 export const radio = (page: Page, group: string, key: string) =>
   page.locator(`input[name="${group}"][value="${key}"]`);
 

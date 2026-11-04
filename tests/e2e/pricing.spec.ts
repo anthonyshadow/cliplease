@@ -101,7 +101,7 @@ test("J4: the default card, the live preview with the CA$2.00 floor, Save, then 
   });
   await expect(
     sheet.getByText(
-      "Your base price goes back to CA$150 and every option to its default, switched on. New requests only.",
+      "Your base price goes back to CA$150, every option to its default, switched on, and exclusive licenses off at ×3.00. New requests only.",
     ),
   ).toBeVisible();
   await sheet.getByRole("button", { name: "Reset prices" }).click();

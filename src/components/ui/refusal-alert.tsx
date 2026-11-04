@@ -3,8 +3,8 @@ import { useState } from "react";
 type Refusal = { message: string; n: number };
 
 /**
- * An in-place editor's refusal (ReviewDetails, VideoPriceEditor and its music Switches): `refuse` numbers each one, so
- * RefusalAlert announces it again even in the same words; `clear` drops it.
+ * An in-place editor's refusal (ReviewDetails, useChoiceDraft, the music Switches, a rate card's Enter): `refuse` numbers
+ * each one, so RefusalAlert announces it again even in the same words; `clear` drops it.
  */
 export function useRefusal() {
   const [refusal, setRefusal] = useState<Refusal | null>(null);
