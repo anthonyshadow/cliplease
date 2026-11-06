@@ -15,10 +15,6 @@ import type {
   ExclusiveOffer,
   VideoExclusiveColumns,
 } from "../../src/lib/pricing/exclusive";
-import {
-  defaultRateCardInput,
-  type RateCardInput,
-} from "../../src/lib/validation/pricing";
 import type { Actor } from "../../src/server/auth/actor";
 import {
   getRateCard,
@@ -48,6 +44,7 @@ import {
   videoRow,
 } from "../helpers/factories";
 import { AFTER_FAILED, recordStderr } from "../helpers/logs";
+import { cardOnWithout, cardWith } from "../helpers/rate-card-fixtures";
 import {
   pricedCreator,
   pricedLiveVideo,
@@ -118,27 +115,6 @@ async function pricedVideo(off: readonly RateOptionKey[] = []) {
   };
   const offerNow = async () => (await pageOptions()).exclusive;
   return { ...owner, pageOptions, offerNow };
-}
-
-/** The default card (CA$150, every option on) with this exclusive offer. */
-const cardWith = (
-  exclusiveEnabled: boolean,
-  exclusiveMultiplierBps: number,
-): RateCardInput => ({
-  ...defaultRateCardInput("cad"),
-  exclusiveEnabled,
-  exclusiveMultiplierBps,
-});
-
-/** The card on at ×3.00 with `off` switched off. */
-function cardOnWithout(off: readonly RateOptionKey[]): RateCardInput {
-  const input = cardWith(true, 30000);
-  return {
-    ...input,
-    options: input.options.map((o) =>
-      off.includes(o.key) ? { ...o, enabled: false } : o,
-    ),
-  };
 }
 
 /** The domain's save of the video's offer, with no premium unless given. */
@@ -318,7 +294,6 @@ describe("when it is offered (07 D109)", () => {
       use: DEMO_REQUEST.useKey,
       term: DEMO_REQUEST.termKey,
       territory: DEMO_REQUEST.territoryKey,
-      territoryCode: DEMO_REQUEST.territoryCode,
     });
     if (!multipliers) throw new Error("the demo selection isn't offered");
     expect(

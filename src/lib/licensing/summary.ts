@@ -22,6 +22,8 @@ export type SummaryInput = {
   identifiablePeople: boolean;
   /** What follows the territory: the page's "for 1 year from approval" by default; P20 passes "until 20 Nov 2027". */
   termPhrase?: string;
+  /** An exclusive license: "You get · Exclusivity" in place of "Not included · Exclusivity" (07 D113). */
+  exclusive?: boolean;
 };
 
 export type FilledSummary = {
@@ -41,10 +43,11 @@ export const termPhrase = (termKey: TermKey) =>
 const FOOTER = /^(.+?\.) (.+): (\/\S+)$/;
 
 /**
- * The summary for a standard license (the exclusive and renewal rows are P19f's and P22c's): rows show when they have
- * no condition, are the standard row, or match the video's music or people flag; a group with no rows is left out.
+ * The summary for a standard or exclusive license (the renewal row is P22c's): rows show when they have no condition,
+ * match the license's kind, or match the video's music or people flag; a group with no rows is left out.
  */
 export function licenseSummary(input: SummaryInput): FilledSummary {
+  const phrase = input.termPhrase ?? termPhrase(input.termKey);
   const values = {
     app_name: APP_NAME,
     use_label: rateOptionLabel(input.useKey),
@@ -53,13 +56,14 @@ export function licenseSummary(input: SummaryInput): FilledSummary {
     territory: territoryInSentence(input.territoryKey, input.territoryCode),
     // The one-liner is a sentence of its own; the row goes on after it.
     use_one_liner: rateOptionOneLiner(input.useKey).replace(/\.$/, ""),
-    term_phrase: input.termPhrase ?? termPhrase(input.termKey),
+    term_phrase: phrase,
+    exclusive_phrase: phrase,
     creator_handle: `@${input.handle}`,
     credit_line: `“${input.creditLine}”`,
   };
   const shown = ({ when }: LicenseSummaryRow) =>
     when === undefined ||
-    when === "standard" ||
+    when === (input.exclusive ? "exclusive" : "standard") ||
     (when === "contains_music" && input.containsMusic) ||
     (when === "identifiable_people" && input.identifiablePeople);
   const fill = (text: string) => fillLicenseV1(text, values);

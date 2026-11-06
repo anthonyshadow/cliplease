@@ -1,5 +1,5 @@
 import type { LicenseRequestStatus } from "@/lib/domain/values";
-import { formatMoney, sentences } from "@/lib/format";
+import { formatMoney, formatPostDate, sentences } from "@/lib/format";
 import { GENERIC_ERROR_MESSAGE } from "@/lib/result";
 import type {
   ApproveResult,
@@ -40,6 +40,11 @@ export const INBOX_COPY = {
     ),
   /** 04 §11.5: an auto-approved History row's footnote. */
   autoApproved: "Auto-approved",
+  /** 04 §11.5 (07 D111): an exclusive request's tag and scope, and what approving it does; `endDate` formatPostDate's. */
+  exclusiveTag: "Exclusive",
+  exclusiveScope: (scope: string) => `Exclusive · ${scope}`,
+  exclusiveLine: (endDate: string) =>
+    `Exclusive request. If you approve, no one else can license this video until ${endDate}.`,
   /** 01 J8.3, 07 D77: while a request waits and payouts aren't active. */
   payoutsWaiting: (deadline: string | null) =>
     sentences(
@@ -53,10 +58,13 @@ export const INBOX_COPY = {
     contact: "Contact",
     plannedUse: "Planned use",
     scope: "Scope",
+    licenseType: "License type",
     youGet: "You get",
     payment: "Payment",
     answerBy: "Answer by",
   },
+  /** `multiplier` as the rate card prints it: "Exclusive (×3.00 premium)". */
+  licenseTypeFact: (multiplier: string) => `Exclusive (${multiplier} premium)`,
   youGetFact: (price: string, total: string) =>
     `${price} (buyer pays ${total} incl. service fee)`,
   paymentFact: "Card on hold. Charged only if you approve.",
@@ -98,6 +106,10 @@ export const INBOX_COPY = {
   originalMissing:
     "The original file for this video is missing, so this request can't be approved yet. Questions?",
 } as const;
+
+/** What approving an exclusive request does, from the DTO's approveEndsAt: a UTC date (AD-64), the same on the server and after mount. */
+export const exclusiveRequestLine = (approveEndsAt: string) =>
+  INBOX_COPY.exclusiveLine(formatPostDate(new Date(approveEndsAt)));
 
 /** A request's pill (04 §9.9, 01 §3.0), or null while it waits on its countdown. */
 export function requestPill(

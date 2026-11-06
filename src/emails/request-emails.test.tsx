@@ -31,6 +31,7 @@ const received: RequestReceivedProps = {
   expiresAt: EXPIRES,
   timeZone: "America/New_York",
   autoApprove: false,
+  exclusive: false,
   url: BUYER_URL,
 };
 const requestNew: RequestNewProps = {
@@ -43,6 +44,7 @@ const requestNew: RequestNewProps = {
   timeZone: "America/New_York",
   payoutsActive: true,
   fellBack: false,
+  exclusiveEndsAt: null,
   url: CREATOR_URL,
 };
 
@@ -97,6 +99,44 @@ describe("request-received (05 §8, to the buyer)", () => {
     const hrefs = [...html.matchAll(/href="([^"]*)"/g)].map((m) => m[1]);
     expect(new Set(hrefs)).toEqual(new Set([BUYER_URL]));
   });
+
+  const EXCLUSIVE_WHILE_DECIDING =
+    "Exclusive request. While @maya decides, no one else can request this video.";
+
+  it("an exclusive request to a manual creator adds the full line straight after the body (owner answer Q-173)", async () => {
+    const { text } = await renderEmail(
+      <RequestReceived {...received} exclusive />,
+    );
+    expectInARow(text, [
+      "Request sent to @maya",
+      "Your card has a hold of CA$1,732.50, not a charge. @maya has until Sat 17 Oct 2026, 2:32 PM EDT (18:32 UTC) to approve. We'll email you either way.",
+      EXCLUSIVE_WHILE_DECIDING,
+      "First snow",
+    ]);
+    expect(text).not.toMatch(BARE_DOLLAR);
+  });
+
+  it("with auto-approve on, an exclusive request says only its kind (owner answer Q-173)", async () => {
+    const { text } = await renderEmail(
+      <RequestReceived {...received} exclusive autoApprove />,
+    );
+    expectInARow(text, [
+      "If it can't be approved automatically, @maya has until Sat 17 Oct 2026, 2:32 PM EDT (18:32 UTC) to approve.",
+      "Exclusive request.",
+      "First snow",
+    ]);
+    expect(text).not.toContain("no one else can request");
+  });
+
+  it.each([false, true])(
+    "a standard request says neither (auto-approve %s)",
+    async (autoApprove) => {
+      const { text } = await renderEmail(
+        <RequestReceived {...received} autoApprove={autoApprove} />,
+      );
+      expect(text).not.toContain("Exclusive");
+    },
+  );
 
   it("has a subject with no link and no key", () => {
     const subject = requestReceivedSubject("maya");
@@ -172,6 +212,51 @@ describe("request-new (05 §8, to the creator)", () => {
     expect(text).toContain(
       "Answer by Sun 18 Oct 2026, 12:02 AM GMT+5:30 (Sat 17 Oct, 18:32 UTC).",
     );
+  });
+
+  describe("for an exclusive request (07 D111; 04 §11.5)", () => {
+    const EXCLUSIVE_SCOPE = `Exclusive · ${SCOPE}`;
+    const ENDS_AT = new Date("2027-11-20T15:00:00Z");
+    const LINE =
+      "Exclusive request. If you approve, no one else can license this video until 20 Nov 2027.";
+    const EXCLUSIVE_BODY = `${EXCLUSIVE_SCOPE}. You get CA$1,575.00. Answer by Sat 17 Oct 2026, 2:32 PM EDT (18:32 UTC). If you don't answer, the hold is released.`;
+    const exclusive = {
+      ...requestNew,
+      scope: EXCLUSIVE_SCOPE,
+      exclusiveEndsAt: ENDS_AT,
+    };
+
+    it("prefixes the scope in the body and the context, and adds the line straight after the body", async () => {
+      const { text } = await renderEmail(<RequestNew {...exclusive} />);
+      expectInARow(text, [
+        NEW_HEADLINE,
+        EXCLUSIVE_BODY,
+        LINE,
+        "First snow",
+        EXCLUSIVE_SCOPE,
+      ]);
+      expect(text).not.toMatch(BARE_DOLLAR);
+    });
+
+    it("orders the fallback, the body, the line, then the payouts line", async () => {
+      const { text } = await renderEmail(
+        <RequestNew {...exclusive} fellBack payoutsActive={false} />,
+      );
+      expectInARow(text, [
+        NEW_HEADLINE,
+        FELL_BACK,
+        EXCLUSIVE_BODY,
+        LINE,
+        "Set up payouts to approve before Sat 17 Oct 2026, 2:32 PM EDT (18:32 UTC).",
+        "First snow",
+      ]);
+    });
+
+    it("says neither for a standard request", async () => {
+      const { text } = await renderEmail(<RequestNew {...requestNew} />);
+      expect(text).not.toContain("Exclusive");
+      expect(text).not.toContain("If you approve");
+    });
   });
 
   it("has a subject with curly quotes and no link", () => {

@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
 import { cache } from "react";
 import { db } from "../../db/client";
 import {
@@ -21,6 +21,11 @@ import type {
   VideoStatus,
 } from "../../lib/domain/values";
 import type { LibraryPostDTO } from "../../lib/library/post";
+import {
+  availabilityDisplayFromFacts,
+  type CreatorVideoAvailability,
+  type VideoPageAvailability,
+} from "../../lib/licensing/availability";
 import { isUuid } from "../../lib/validation/uuid";
 import { type BadgeInput, ownerBadge } from "../../lib/videos/ownership";
 import { type RightsLock, rightsLockOf } from "../../lib/videos/rights";
@@ -32,6 +37,10 @@ import {
 import { offersShareLink } from "../../lib/videos/video-page";
 import { type Actor, requireCreatorActor } from "../auth/actor";
 import { postThumbnail } from "../library/queries";
+import {
+  availabilityFactsByVideo,
+  loadAvailabilityFacts,
+} from "../licensing/availability";
 import { ownerPostingsByVideo } from "../postings/queries";
 import {
   getRateCard,
@@ -288,6 +297,61 @@ export async function getRequestCounts(
   return row ?? null;
 }
 
+/**
+ * Each video's running exclusive licensee, the one whose license ends last (`until`'s), for the creator's lines (07
+ * D110). Only here, never in public.ts: the public grid names no one. Never the buyer's email.
+ */
+async function runningExclusiveLicensees(
+  videoIds: readonly string[],
+): Promise<Map<string, string>> {
+  if (videoIds.length === 0) return new Map();
+  const rows = await db
+    .selectDistinctOn([license.videoId], {
+      videoId: license.videoId,
+      licenseeName: licenseRequest.licenseeName,
+    })
+    .from(license)
+    .innerJoin(licenseRequest, eq(licenseRequest.id, license.licenseRequestId))
+    .where(
+      and(
+        inArray(license.videoId, [...videoIds]),
+        eq(license.exclusive, true),
+        isNull(license.revokedAt),
+        gt(license.endsAt, sql`now()`),
+      ),
+    )
+    .orderBy(license.videoId, desc(license.endsAt));
+  return new Map(rows.map((row) => [row.videoId, row.licenseeName]));
+}
+
+/**
+ * The creator's video's availability for its page's line (07 D110), or null when it isn't the creator's. A perpetual
+ * license stands apart from the facts: it is what can't be licensed exclusively, and only this page says so.
+ */
+export async function getVideoAvailability(
+  a: Actor,
+  videoId: string,
+): Promise<VideoPageAvailability | null> {
+  const { creatorId } = requireCreatorActor(a);
+  if (!isUuid(videoId)) return null;
+  const [row] = await db
+    .select({
+      perpetualRunning: sql<boolean>`exists(select 1 from ${license} l where l.video_id = ${video}.id and l.revoked_at is null and l.ends_at is null)`,
+    })
+    .from(video)
+    .where(ownedVideo(creatorId, videoId));
+  if (!row) return null;
+  const [facts, names] = await Promise.all([
+    loadAvailabilityFacts(db, videoId),
+    runningExclusiveLicensees([videoId]),
+  ]);
+  return {
+    ...availabilityDisplayFromFacts(facts),
+    licenseeName: names.get(videoId) ?? null,
+    perpetualRunning: row.perpetualRunning,
+  };
+}
+
 /** One card on /dashboard/videos (04 §9.27; 03 §7.4): no object key, creator id or upload id reaches it. */
 export type CreatorVideoCardDTO = {
   id: string;
@@ -308,12 +372,14 @@ export type CreatorVideoCardDTO = {
   /** Requests awaiting approval and licenses (03 §7.4's list query); the cards don't show them yet. */
   pendingCount: number;
   licenseCount: number;
+  /** What the card's line says (07 D110): the state, its end and, while one runs, the exclusive licensee. */
+  availability: CreatorVideoAvailability;
 };
 
 /**
  * The creator's videos as cards (S20; 03 §7.4): drafts first, then the most recently changed. The videos with their
- * counts, every posting of the creator's videos (for the badges), the handle and the rate card are read together, so a
- * card costs no query of its own.
+ * counts, every posting of the creator's videos (for the badges), the handle and the rate card are read together, then
+ * their availability and exclusive licensees, once for the page's ids, so a card costs no query of its own.
  */
 export async function listCreatorVideos(
   a: Actor,
@@ -347,6 +413,11 @@ export async function listCreatorVideos(
     getRateCard(creatorId),
   ]);
   if (!creator) throw new Error(`Creator ${creatorId} has no profile`);
+  const ids = rows.map((row) => row.id);
+  const [factsFor, names] = await Promise.all([
+    availabilityFactsByVideo(db, ids),
+    runningExclusiveLicensees(ids),
+  ]);
   const videos = rows.map(
     (row): CreatorVideoCardDTO => ({
       id: row.id,
@@ -369,6 +440,10 @@ export async function listCreatorVideos(
         : null,
       pendingCount: row.pendingCount,
       licenseCount: row.licenseCount,
+      availability: {
+        ...availabilityDisplayFromFacts(factsFor(row.id)),
+        licenseeName: names.get(row.id) ?? null,
+      },
     }),
   );
   return { handle: creator.handle, videos };

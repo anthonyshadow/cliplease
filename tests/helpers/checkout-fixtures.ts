@@ -7,6 +7,7 @@ export const DEMO_REQUEST = {
   termKey: "y1",
   territoryKey: "worldwide",
   territoryCode: null,
+  exclusive: false,
   licenseeName: "Daily Laughs Media LLC",
   contactName: "Sam Lee",
   buyerEmail: "sam@dailylaughs.com",

@@ -19,6 +19,7 @@ import { SETTINGS_COLUMN } from "@/components/layout/gutter";
 import { PosterThumb } from "@/components/license/poster-thumb";
 import { SetUpPayoutsLink } from "@/components/payouts/set-up-payouts-link";
 import { Notice } from "@/components/ui/notice";
+import { StatusPill } from "@/components/ui/status-pill";
 import { BackLink } from "@/components/videos/back-link";
 import { INBOX_COPY } from "@/lib/licensing/inbox";
 import { requestDetailPath } from "@/lib/urls";
@@ -40,8 +41,9 @@ export const maxDuration = 60;
  * until its deadline (07 D77). Another creator's request, an unknown id, and a request the creator never sees (in
  * checkout, abandoned, a renewal) are a 404. The action row under the card: Decline and Approve; an approved request
  * reads "License {code} issued" under its pill, then its payout line (P19b; owner answer Q-146 a); auto-approve's
- * fallback line or "Auto-approved" under the status (07 D81); no refresher (as claimed rows). The request is settled
- * first: a stuck claim reconciled, an overdue request expired after the response (02 §8.4).
+ * fallback line or "Auto-approved" under the status (07 D81); no refresher (as claimed rows). An exclusive request's tag
+ * under the heading (04 §11.5; 07 D111). The request is settled first: a stuck claim reconciled, an overdue request
+ * expired after the response (02 §8.4).
  */
 export default async function RequestDetailPage({
   params,
@@ -65,6 +67,9 @@ export default async function RequestDetailPage({
         <h1 className="text-title-2 text-ink wrap-anywhere">
           {INBOX_COPY.detailHeading(request.licenseeName, request.title)}
         </h1>
+        {request.exclusive ? (
+          <StatusPill>{INBOX_COPY.exclusiveTag}</StatusPill>
+        ) : null}
         <div
           id={REQUEST_STATUS_ID}
           tabIndex={-1}

@@ -82,6 +82,12 @@ function page(
           : [],
       })}
       counts={{ pendingCount: 1, licenseCount: 2 }}
+      availability={{
+        state: "open",
+        until: null,
+        licenseeName: null,
+        perpetualRunning: false,
+      }}
       platformFeeBps={1000}
       progress={null}
       {...change}
@@ -361,5 +367,79 @@ describe("VideoPageView (S19; 05 §6.7)", () => {
         "Verified · @demo.creator (demo account) · no longer linked",
       ),
     ).toBeTruthy();
+  });
+});
+
+describe("VideoPageView's availability line (07 D110; AD-70)", () => {
+  const BADGE = "Verified · @demo.creator (demo account)";
+  const PERPETUAL =
+    "A perpetual license of this video is running, so it can't be licensed exclusively.";
+  const NO_LINE = {
+    state: "open",
+    until: null,
+    licenseeName: null,
+    perpetualRunning: false,
+  } as const;
+  const offered = publishOf({
+    options: {
+      ...OPTIONS,
+      exclusive: { ...OPTIONS.exclusive, offered: true },
+    },
+  });
+
+  it("prints what holds the video directly under the badge, naming the licensee", () => {
+    page({
+      availability: {
+        ...NO_LINE,
+        state: "exclusive_active",
+        until: "2027-11-20T15:00:00.000Z",
+        licenseeName: "Daily Laughs Media LLC",
+      },
+    });
+    expect(
+      screen
+        .getByText(
+          "Licensed exclusively to Daily Laughs Media LLC until 20 Nov 2027",
+        )
+        .previousElementSibling?.contains(screen.getByText(BADGE)),
+    ).toBe(true);
+  });
+
+  it("says a waiting exclusive request is waiting", () => {
+    page({ availability: { ...NO_LINE, state: "reserved" } });
+    expect(screen.getByText("Exclusive request waiting")).toBeTruthy();
+  });
+
+  it("names a running perpetual license only while exclusive licenses are on offer", () => {
+    const running = {
+      ...NO_LINE,
+      state: "non_exclusive_only",
+      perpetualRunning: true,
+    } as const;
+    page({ availability: running, publish: offered });
+    expect(
+      screen
+        .getByText(PERPETUAL)
+        .previousElementSibling?.contains(screen.getByText(BADGE)),
+    ).toBe(true);
+    cleanup();
+    page({ availability: running });
+    expect(screen.queryByText(PERPETUAL)).toBeNull();
+    cleanup();
+    page({
+      availability: { ...running, perpetualRunning: false },
+      publish: offered,
+    });
+    expect(screen.queryByText(PERPETUAL)).toBeNull();
+  });
+
+  it("has no line for an open video", () => {
+    page({ publish: offered });
+    // The badge ends the title's block.
+    expect(
+      screen
+        .getByRole("heading", { level: 1 })
+        .parentElement?.lastElementChild?.contains(screen.getByText(BADGE)),
+    ).toBe(true);
   });
 });

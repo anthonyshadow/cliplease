@@ -13,7 +13,7 @@ import type { CreateLicenseRequestResult } from "./requests";
 
 // The license page's form ↔ startCheckout (02 §5.7, §6.1): what the posted fields mean, and what the page hears back.
 
-/** The posted license form as StartCheckoutSchema reads it: a number for the total, a boolean for the box. */
+/** The posted license form as StartCheckoutSchema reads it: a number for the total, booleans for the box and the type. */
 export function startCheckoutFields(formData: FormData) {
   const text = (key: string) => formText(formData, key);
   const total = text("expectedTotalCents");
@@ -26,6 +26,7 @@ export function startCheckoutFields(formData: FormData) {
     territoryKey: text("territoryKey"),
     // The page posts "" until a country or region is chosen, and for Worldwide.
     territoryCode: text("territoryCode") || null,
+    exclusive: formData.get("exclusive") === "true",
     licenseeName: text("licenseeName"),
     contactName: text("contactName"),
     buyerEmail: text("buyerEmail"),

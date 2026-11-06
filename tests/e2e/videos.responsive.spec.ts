@@ -1,5 +1,6 @@
 import { expect, type Locator, test } from "@playwright/test";
 import { VIDEO_EXCLUSIVE_MODES } from "../../src/lib/domain/values";
+import { AVAILABILITY_COPY } from "../../src/lib/licensing/availability";
 import { PUBLISHED_COPY, REVIEW_COPY } from "../../src/lib/videos/review";
 import { videoHref } from "../../src/lib/videos/steps";
 import {
@@ -9,6 +10,8 @@ import {
 import { choose } from "./helpers/buyer";
 import { collectConsoleErrors } from "./helpers/console";
 import {
+  buyLicense,
+  offerExclusive,
   openDeleteSheet,
   publishDemoVideo,
   publishedView,
@@ -53,7 +56,8 @@ import { cleanCreatedVideos, createDraft, DRAFT_TITLE } from "./helpers/videos";
 // with "Set a base price for this video" and "Offer on this video" both chosen each field, Save and Cancel too, with no
 // sideways scroll; /dashboard/videos (with a draft beside it, its Menu's Delete sheet a bottom sheet or a dialog) and,
 // logged out, /@handle hold their cards in 2 / 3 / 4 / 5 columns (Mobile / Tablet / Desktop / XL) inside the app frame,
-// with no sideways scroll and no console error.
+// with no sideways scroll and no console error. A second test (P19f; 07 D110): an exclusive request's availability line
+// inside its card and the video page, and the public card's.
 test.use({ reducedMotion: "reduce" });
 test.afterEach(cleanCreatedVideos);
 
@@ -214,6 +218,54 @@ test("G.6: the success view, the video's page, /dashboard/videos and the public 
   await atEveryWidth(page, testInfo, async ({ width }) => {
     await expectPageFrame(page, width, { banner: true });
     await expectTracks(grid, width);
+  });
+  expect(errors).toEqual([]);
+});
+
+test("G.6, 07 D110: an exclusive request's line stays inside its card on /dashboard/videos and on the video page, and logged out the public card's Reserved, at every tier", async ({
+  page,
+  browser,
+}, testInfo) => {
+  test.setTimeout(600_000);
+  const errors = collectConsoleErrors(page);
+  const { handle, shareUrl, videoId } = await publishDemoVideo(page);
+  await offerExclusive(page);
+  const bought = await buyLicense(browser, shareUrl, {
+    use: "paid_social",
+    term: "y1",
+    territory: "worldwide",
+    exclusive: true,
+  });
+  await bought.context.close();
+
+  const words = AVAILABILITY_COPY.line;
+  await page.goto("/dashboard/videos");
+  const card = videoCard(page, POST_01);
+  const cardLine = card.getByText(words.requestWaiting, { exact: true });
+  await atEveryWidth(page, testInfo, async () => {
+    await expect(cardLine).toBeVisible();
+    await expectInside(cardLine, card);
+    await expectNoHorizontalScroll(page);
+  });
+
+  await page.goto(videoHref(videoId));
+  const aside = videoPage(page).locator("[data-video-aside]");
+  const pageLine = aside.getByText(words.requestWaiting, { exact: true });
+  await atEveryWidth(page, testInfo, async () => {
+    await expect(pageLine).toBeVisible();
+    await expectInside(pageLine, aside);
+    await expectNoHorizontalScroll(page);
+  });
+
+  // Logged out: the public page on the same viewport.
+  await page.context().clearCookies();
+  await page.goto(`/@${handle}`);
+  const publicCard = videoCard(page, POST_01);
+  const publicLine = publicCard.getByText(words.reserved, { exact: true });
+  await atEveryWidth(page, testInfo, async () => {
+    await expect(publicLine).toBeVisible();
+    await expectInside(publicLine, publicCard);
+    await expectNoHorizontalScroll(page);
   });
   expect(errors).toEqual([]);
 });

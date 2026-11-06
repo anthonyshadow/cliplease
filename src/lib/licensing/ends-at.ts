@@ -1,4 +1,9 @@
-import type { TermKey } from "@/lib/domain/values";
+import {
+  isOneOf,
+  type RateOptionKey,
+  TERM_KEYS,
+  type TermKey,
+} from "@/lib/domain/values";
 import { DAY_MS } from "@/lib/time";
 
 // When a license ends (02 §5.7; 03 §3.7.2; 07 D33): UTC only, so the server's zone never moves a date. Pure.
@@ -20,6 +25,17 @@ export function computeEndsAt(startsAt: Date, term: TermKey): Date | null {
     case "y1":
       return addUtcMonths(startsAt, TERM_MONTHS[term]);
   }
+}
+
+/**
+ * When a stored request's license would end if approved at `now` (the Inbox and request-new, 07 D111); null for a
+ * perpetual term, and for a key that isn't a term.
+ */
+export function endsAtIfApprovedNow(
+  now: Date,
+  termKey: RateOptionKey,
+): Date | null {
+  return isOneOf(TERM_KEYS, termKey) ? computeEndsAt(now, termKey) : null;
 }
 
 function addUtcMonths(at: Date, months: number): Date {

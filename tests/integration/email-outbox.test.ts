@@ -5,7 +5,8 @@ import { fakeCheckoutPay } from "../../src/app/dev/fake-checkout/[requestId]/act
 import { db } from "../../src/db/client";
 import { emailLog, licenseRequest, user } from "../../src/db/schema";
 import type { CreatorProfile, LicenseRequest } from "../../src/db/schema/types";
-import { formatEmailDateTime } from "../../src/lib/format";
+import { formatEmailDateTime, formatPostDate } from "../../src/lib/format";
+import { endsAtIfApprovedNow } from "../../src/lib/licensing/ends-at";
 import { REQUEST_STATUS_COPY } from "../../src/lib/licensing/request-status";
 import { HOUR_MS } from "../../src/lib/time";
 import { WEBHOOK } from "../../src/server/auth/actor";
@@ -41,7 +42,8 @@ import { emailTemplatesOf } from "../helpers/request-outcomes";
 // request-received in its own transaction, they are sent after the response (after() runs at once here), and the
 // retry picks up what is left. P19: the declined transition queues request-declined to the buyer the same way; no
 // other ending of a waiting request emails anyone in CORE. P19c: an auto-approve request's authorization queues
-// request-received only. The console driver writes .data/emails; a test can make it fail.
+// request-received only. P19f: an exclusive request says so in both. The console driver writes .data/emails; a test can
+// make it fail.
 
 const driver = vi.hoisted(() => ({
   fail: false,
@@ -516,6 +518,85 @@ describe("sending (02 §5.10 step 2)", () => {
     expect(await rowOf(row.id, "request-new")).toMatchObject({
       status: "sent",
     });
+  });
+});
+
+describe("an exclusive request's emails (P19f; 07 D111; owner answer Q-173)", () => {
+  const EXCLUSIVE = {
+    exclusive: true,
+    exclusiveMultiplierBps: 30000,
+    termKey: "y1",
+  } satisfies Partial<LicenseRequest>;
+  const SCOPE = "Organic social repost · 1 year · Canada";
+
+  it("tells the creator its scope and when its license would end if approved now, and a manual creator's buyer that the video waits", async () => {
+    const { row, creator, creatorEmail, ids } = await waitingRequest(
+      {},
+      EXCLUSIVE,
+    );
+    const since = new Date();
+    await sendQueuedEmails(ids);
+    const after = new Date();
+    const toCreator = await readLatestEmail({
+      to: creatorEmail,
+      template: "request-new",
+      since: since.getTime(),
+    });
+    expect(toCreator.text).toContain(
+      `Exclusive · ${SCOPE}. You get CA$150.00.`,
+    );
+    expect(toCreator.text).toMatch(
+      /Exclusive request\. If you approve, no one else can license this video until \d{1,2} [A-Z][a-z]{2} \d{4}\./,
+    );
+    const dates = [since, after].map((at) => {
+      const endsAt = endsAtIfApprovedNow(at, "y1");
+      if (!endsAt) throw new Error("no end");
+      return formatPostDate(endsAt);
+    });
+    expect(
+      dates.some((date) => toCreator.text.includes(`until ${date}.`)),
+    ).toBe(true);
+
+    const toBuyer = await readLatestEmail({
+      to: row.buyerEmail,
+      template: "request-received",
+      since: since.getTime(),
+    });
+    expect(toBuyer.text).toContain(
+      `Exclusive request. While @${creator.handle} decides, no one else can request this video.`,
+    );
+    // Its scope stays the plain one: only request-new says the kind there.
+    expect(toBuyer.text).not.toContain(`Exclusive · ${SCOPE}`);
+    expect(toBuyer.text).toContain(SCOPE);
+  });
+
+  it("tells an auto-approve creator's buyer only its kind", async () => {
+    const { row, ids } = await waitingRequest(
+      {},
+      { ...EXCLUSIVE, autoApprove: true },
+    );
+    const since = Date.now();
+    await sendQueuedEmails(ids);
+    const toBuyer = await readLatestEmail({
+      to: row.buyerEmail,
+      template: "request-received",
+      since,
+    });
+    expect(toBuyer.text).toContain("Exclusive request.");
+    expect(toBuyer.text).not.toContain("no one else can request");
+  });
+
+  it("says nothing of it for a standard request", async () => {
+    const { row, creatorEmail, ids } = await waitingRequest();
+    const since = Date.now();
+    await sendQueuedEmails(ids);
+    for (const { to, template } of [
+      { to: creatorEmail, template: "request-new" },
+      { to: row.buyerEmail, template: "request-received" },
+    ] as const) {
+      const { text } = await readLatestEmail({ to, template, since });
+      expect(text).not.toContain("Exclusive");
+    }
   });
 });
 

@@ -3,7 +3,10 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, permanentRedirect } from "next/navigation";
 import { z } from "zod";
+import { AutoRefresh } from "@/components/layout/auto-refresh";
 import { LICENSE_COLUMNS } from "@/components/layout/gutter";
+import { AvailabilityFocus } from "@/components/license/availability-focus";
+import { AvailabilityNotice } from "@/components/license/availability-notice";
 import { LicensePageClient } from "@/components/license/license-page-client";
 import { PosterFrame } from "@/components/license/poster-frame";
 import { PostingList } from "@/components/license/posting-list";
@@ -65,8 +68,11 @@ export async function generateMetadata({
  * S01, the license page (01 J6–J7; 05 §4.1; 07 D148), for anyone, signed in or not: a published, publicly available,
  * licensable video, else the route's 404 (07 D03, D72); mixed case is a 308 to the lowercase handle. This server part
  * draws the left column (poster, title, ownership, where it was posted, the music and people notices); the client part
- * the rest and the PriceBar. No loading.tsx: a streamed route answers 200, and every miss here must be a real 404
- * (owner answer Q-110 a).
+ * the rest and the PriceBar. A video that can't take a request (07 D110; owner answers Q-169, Q-172) answers 200 here
+ * with no client part: the notice, first in the right column from lg and under the badge below it, then "What you get".
+ * A reserved page refreshes itself: a hold can end at any moment, and the buyer who just left theirs lands here on a read
+ * from before its release (owner answer Q-175).
+ * No loading.tsx: a streamed route answers 200, and every miss here must be a real 404 (owner answer Q-110 a).
  */
 export default async function LicensePage({
   params,
@@ -77,8 +83,12 @@ export default async function LicensePage({
   const page = await getLicensePageData(route.handle, route.slug);
   if (!page) notFound();
   const { video, creator } = page;
+  const sellable = page.availability.canRequestNonExclusive;
   return (
-    <div className={LICENSE_COLUMNS.page}>
+    <div
+      className={cn(LICENSE_COLUMNS.page, !sellable && LICENSE_COLUMNS.noBar)}
+    >
+      <AvailabilityFocus sellable={sellable} />
       <div data-license-side className={LICENSE_COLUMNS.side}>
         <PosterFrame
           src={video.posterUrl}
@@ -101,6 +111,12 @@ export default async function LicensePage({
           </p>
         </div>
         <VerifiedOwnerBadge {...page.badge} />
+        {sellable ? null : (
+          <AvailabilityNotice
+            availability={page.availability}
+            className="lg:hidden"
+          />
+        )}
         <PostingList postings={page.postings.postings} />
         {video.containsMusic ? (
           <Notice icon={Music} title={COPY.music.title}>
@@ -111,7 +127,20 @@ export default async function LicensePage({
           <Notice icon={Users}>{COPY.people}</Notice>
         ) : null}
       </div>
-      <LicensePageClient page={page} submissionId={crypto.randomUUID()} />
+      {sellable ? (
+        <LicensePageClient page={page} submissionId={crypto.randomUUID()} />
+      ) : (
+        <div className={LICENSE_COLUMNS.main}>
+          {page.availability.state === "reserved" ? (
+            <AutoRefresh burst />
+          ) : null}
+          <AvailabilityNotice
+            availability={page.availability}
+            className="hidden lg:block"
+          />
+          <Notice title={COPY.whatYouGet.title}>{COPY.whatYouGet.body}</Notice>
+        </div>
+      )}
     </div>
   );
 }

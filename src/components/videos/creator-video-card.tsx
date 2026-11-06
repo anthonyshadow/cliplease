@@ -6,6 +6,7 @@ import { PUBLISHED_COPY } from "@/lib/videos/review";
 import { videoHref } from "@/lib/videos/steps";
 import { isUnlicensable } from "@/lib/videos/video-page";
 import type { CreatorVideoCardDTO } from "@/server/videos/queries";
+import { AvailabilityLine } from "./availability-line";
 import { UnlicensableNotice } from "./unlicensable-notice";
 import { CardText } from "./video-card";
 import { VideoCardMenu } from "./video-card-menu";
@@ -38,6 +39,11 @@ export function CreatorVideoCard({ video }: { video: CreatorVideoCardDTO }) {
           className="group-hover:bg-fill"
         >
           <VideoStatusPill status={video.status} className="self-start" />
+          <AvailabilityLine
+            audience="creator"
+            availability={video.availability}
+            licenseeName={video.availability.licenseeName}
+          />
         </CardText>
       </Link>
       <div className="flex flex-wrap items-center gap-2 px-2 pb-2">

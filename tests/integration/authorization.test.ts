@@ -44,7 +44,7 @@ import {
   readyUpload,
 } from "../helpers/ready-videos";
 import type { ScriptedPayments } from "../helpers/scripted-payments";
-import { installScriptedPayments } from "../helpers/scripted-suite";
+import { cancels, installScriptedPayments } from "../helpers/scripted-suite";
 
 // Authorization through the event path (P16b; 02 §8.1, §8.3; 03 T2, T3, T11–T13; 07 D24, D27, D28, D32, D35, D74,
 // D81, D95, D96; owner answers Q-119 a, Q-122 a, Q-123 a): the fake checkout's events and Stripe's, deduplicated in
@@ -129,12 +129,6 @@ const expired = (row: LicenseRequest): PaymentsEvent => ({
   sessionId: `cs_fake_${row.id}`,
   requestId: row.id,
 });
-
-/** The cancels the double saw: their key, Stripe's reason and the request's committed status at the call. */
-const cancels = () =>
-  scripted
-    .callsOf("cancel")
-    .map(({ key, args, status }) => ({ key, reason: args[1], status }));
 
 /** What an abandon (T3) leaves: the hold's ids, one attempt counted, never authorized. */
 async function expectAbandoned(id: string, reason: string) {
@@ -510,8 +504,8 @@ async function waitForLockWaiters(n: number) {
 }
 
 /**
- * Holds the request's row so the two calls `start` makes both queue on applyTransition's lock, then lets them go and
- * waits for both.
+ * Holds the request's row so the two calls `start` make both queue, one on applyTransition's lock with the video's held,
+ * the other on the video's, then lets them go and waits for both.
  */
 async function bothQueuedOnRow(
   requestId: string,

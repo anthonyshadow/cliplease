@@ -28,6 +28,7 @@ const demoForm = (videoId: string): FormData =>
     ...DEMO_REQUEST,
     videoId,
     territoryCode: "",
+    exclusive: "false",
     acceptTerms: "on",
     submissionId: randomUUID(),
     expectedTotalCents: String(DEMO_REQUEST.expectedTotalCents),

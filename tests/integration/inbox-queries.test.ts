@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
-import { describe, expect, it } from "vitest";
+import { eq, sql } from "drizzle-orm";
+import { describe, expect, it, vi } from "vitest";
 import { db } from "../../src/db/client";
 import { video } from "../../src/db/schema";
 import type {
@@ -9,6 +9,7 @@ import type {
   NewLicenseRequest,
   Video,
 } from "../../src/db/schema/types";
+import { endsAtIfApprovedNow } from "../../src/lib/licensing/ends-at";
 import { DAY_MS, HOUR_MS } from "../../src/lib/time";
 import { MUSIC_DISABLED_USES } from "../../src/lib/videos/rights";
 import {
@@ -38,16 +39,21 @@ import { readyUpload } from "../helpers/ready-videos";
 // transfer (status, amount, currency) for the payout line, never its Stripe id or error; /r's never carry it. P19c: a
 // waiting auto-approve request reads Processing… while its automatic approval may still run; the creator's reads carry
 // the fallback instant and whether auto-approve approved it, /r's only whether it is still auto-approving (07 D81).
+// P19f: the creator's reads say an exclusive request is one, with its premium and, while it waits, when its license would
+// end if approved now; /r's stay as they were (07 D111).
 
 /** The keys a creator's request carries, and nothing else. */
 const CREATOR_KEYS = [
   "amountTotalCents",
+  "approveEndsAt",
   "autoApproveFallbackAt",
   "autoApproved",
   "contactName",
   "createdAt",
   "currency",
   "displayStatus",
+  "exclusive",
+  "exclusiveMultiplierBps",
   "expiresAt",
   "handle",
   "id",
@@ -650,6 +656,116 @@ describe("an auto-approve request (P19c; 07 D81; owner answer Q-155)", () => {
         /autoApproveFallbackAt|"autoApprove"/,
       );
     }
+  });
+});
+
+describe("an exclusive request (P19f; 07 D111; 04 §11.5; AD-72)", () => {
+  const EXCLUSIVE = {
+    exclusive: true,
+    exclusiveMultiplierBps: 30000,
+    termKey: "y1",
+  } satisfies Partial<NewLicenseRequest>;
+
+  /** The database's clock now, as the query's now() reads it. */
+  async function databaseNow() {
+    const { rows } = await db.execute<{ ms: string }>(
+      sql`select floor(extract(epoch from clock_timestamp()) * 1000)::text as ms`,
+    );
+    return new Date(Number(rows[0]?.ms));
+  }
+
+  it("while it waits: its kind, its premium, its scope prefixed, and its end if approved now on the database's clock", async () => {
+    const { creator, live } = await creatorWithVideo();
+    const { id } = await requestIn(live, "awaiting_approval", EXCLUSIVE);
+    const before = await databaseNow();
+    // The app's clock far from the database's: only the database's can fall between the two reads.
+    vi.useFakeTimers({
+      now: Date.parse("2031-03-04T05:06:07.000Z"),
+      toFake: ["Date"],
+    });
+    const [listed, one] = await Promise.all([
+      listInbox(creator.id, "waiting"),
+      getRequestForCreator(creator.id, id),
+    ]).finally(() => vi.useRealTimers());
+    const after = await databaseNow();
+    for (const dto of [...listed, one]) {
+      expect(Object.keys(dto ?? {}).sort()).toEqual(CREATOR_KEYS);
+      expect(dto).toMatchObject({
+        id,
+        exclusive: true,
+        exclusiveMultiplierBps: 30000,
+        scope: "Exclusive · Organic social repost · 1 year · Canada",
+      });
+      const endsAt = new Date(dto?.approveEndsAt ?? 0).getTime();
+      expect(endsAt).toBeGreaterThanOrEqual(
+        endsAtIfApprovedNow(before, "y1")?.getTime() ?? Number.NaN,
+      );
+      expect(endsAt).toBeLessThanOrEqual(
+        endsAtIfApprovedNow(after, "y1")?.getTime() ?? Number.NaN,
+      );
+    }
+  });
+
+  it("keeps its end while claimed or overdue: the row's guard, not the read, drops the line", async () => {
+    const { creator, live } = await creatorWithVideo();
+    const claimed = await requestIn(live, "awaiting_approval", {
+      ...EXCLUSIVE,
+      paymentAction: "capture",
+      paymentActionAt: new Date(),
+    });
+    const late = await requestIn(live, "awaiting_approval", EXCLUSIVE);
+    await overdue(late.id);
+    const rows = await listInbox(creator.id, "waiting");
+    expect(
+      Object.fromEntries(
+        rows.map((r) => [r.id, [r.displayStatus, r.approveEndsAt !== null]]),
+      ),
+    ).toEqual({
+      [claimed.id]: ["processing", true],
+      [late.id]: ["expired", true],
+    });
+  });
+
+  it("once decided: no end, its kind and scope kept", async () => {
+    const { creator, live } = await creatorWithVideo();
+    const { id } = await requestIn(live, "approved", EXCLUSIVE);
+    const rows = await listInbox(creator.id, "history");
+    expect(rows).toEqual([
+      expect.objectContaining({
+        id,
+        exclusive: true,
+        exclusiveMultiplierBps: 30000,
+        approveEndsAt: null,
+        scope: "Exclusive · Organic social repost · 1 year · Canada",
+      }),
+    ]);
+  });
+
+  it("a standard request has no end and no prefix, waiting or decided", async () => {
+    const { creator, live } = await creatorWithVideo();
+    await requestIn(live, "awaiting_approval", { termKey: "y1" });
+    await requestIn(live, "approved", { termKey: "y1" });
+    const rows = [
+      ...(await listInbox(creator.id, "waiting")),
+      ...(await listInbox(creator.id, "history")),
+    ];
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      expect(row).toMatchObject({
+        exclusive: false,
+        exclusiveMultiplierBps: 10000,
+        approveEndsAt: null,
+        scope: "Organic social repost · 1 year · Canada",
+      });
+    }
+  });
+
+  it("/r's keys are unchanged and its scope unprefixed: the buyer's page says it in P19g", async () => {
+    const { live } = await creatorWithVideo();
+    const { row, token } = await withKey(live, "awaiting_approval", EXCLUSIVE);
+    const status = await getBuyerStatus(row.id, token);
+    expect(Object.keys(status ?? {}).sort()).toEqual(BUYER_KEYS);
+    expect(status?.scope).toBe("Organic social repost · 1 year · Canada");
   });
 });
 

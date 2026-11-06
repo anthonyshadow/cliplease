@@ -83,6 +83,7 @@ export const licenseRequest = pgTable(
     checkoutSubmissionId: uuid("checkout_submission_id").notNull(), // hidden form input per request; one request per submission (07 D31)
     stripeCheckoutSessionId: text("stripe_checkout_session_id"),
     checkoutExpiresAt: tstz("checkout_expires_at").notNull(), // computed once (now + 60 min), reused on retries; renewal rows: = expires_at
+    checkoutHoldUntil: tstz("checkout_hold_until").notNull(), // CORE · 0003_checkout_hold (P19f) · unpaid hold, now + 10 min, extended to at most checkout_expires_at (Q-170); renewal rows: = expires_at
     stripePaymentIntentId: text("stripe_payment_intent_id"),
     stripeChargeId: text("stripe_charge_id"), // source_transaction of the creator transfer (07 D74)
     authorizedAt: tstz("authorized_at"), // renewal rows: the payment time (T16)

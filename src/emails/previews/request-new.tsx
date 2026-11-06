@@ -14,6 +14,7 @@ export default function RequestNewPreview() {
       timeZone="America/Toronto"
       payoutsActive={false}
       fellBack={false}
+      exclusiveEndsAt={null}
       url="http://localhost:3000/dashboard/requests/00000000-0000-4000-8000-000000000201"
     />
   );

@@ -48,10 +48,13 @@ export const TWO_COLUMN = {
  * lg two columns in max-w-license (1056, not widened at XL), 12 of them with a 48 px gap: `side` (poster, ownership,
  * postings, notices) in 1–5, `main` (options, summary, details) in 7–12. From lg the PriceBar is fixed under the NavBar,
  * so the grid starts below it; `side` sticks 24 px under both bars and is capped at the window, scrolling inside itself
- * when taller (its 4 px inset keeps focus rings inside the scroll box; SC 2.4.11).
+ * when taller (its 4 px inset keeps focus rings inside the scroll box; SC 2.4.11). `noBar` goes on `page` for a video that
+ * can't take a request, whose page has no PriceBar (owner answer Q-169): the bar's height is 0 inside it, so the grid and
+ * `side` sit under the NavBar alone.
  */
 export const LICENSE_COLUMNS = {
   page: "mx-auto grid w-full max-w-reading grid-cols-1 gap-8 py-6 lg:max-w-license lg:grid-cols-12 lg:items-start lg:gap-x-12 lg:pt-[calc(var(--pricebar-h)+1.5rem)] lg:pb-12",
   side: "flex min-w-0 flex-col gap-6 lg:sticky lg:top-[calc(var(--nav-h)+var(--pricebar-h)+1.5rem)] lg:col-span-5 lg:-m-1 lg:max-h-[calc(100svh-var(--nav-h)-var(--pricebar-h)-3rem)] lg:overflow-y-auto lg:p-1",
   main: "flex min-w-0 flex-col gap-8 lg:col-span-6 lg:col-start-7",
+  noBar: "[--pricebar-h:0px]",
 } as const;

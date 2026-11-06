@@ -41,6 +41,9 @@ export const REQUEST_STATUS_COPY = {
   updatesItself: UPDATES_ITSELF,
   /** 01 J7.6, 05 §4.3 callout 9, 05 §8 (07 D81): "@{handle} approves requests automatically." */
   autoApproves,
+  /** 04 §11.2 (owner answer Q-173): an exclusive request while the creator decides; the license page and request-received. */
+  exclusiveWhileDeciding: (handle: string) =>
+    `Exclusive request. While @${handle} decides, no one else can request this video.`,
   /** 05 §4.3 callouts 8–9 (proposed): /r while the automatic approval runs; no deadline. */
   autoApprovingBody: (handle: string, total: string) =>
     sentences(

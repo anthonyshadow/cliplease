@@ -44,9 +44,16 @@ export type BuyerStatus = RequestFacts & {
 /**
  * A request in the creator's inbox and on its page (S14, S15): the buyer's entries, but never their email; and once it
  * is approved, its creator transfer for the payout line (P19b; 07 D75): status, amount and currency only, never its
- * Stripe id or error. The three are null together until T5 leaves the row.
+ * Stripe id or error. The three are null together until T5 leaves the row. An exclusive request's `scope` starts with
+ * its kind (04 §11.5).
  */
 export type CreatorRequest = RequestFacts & {
+  /** An exclusive request (07 D111): its tag and its License type fact. */
+  exclusive: boolean;
+  /** The premium stored at T1: ×1.00 on a standard request. */
+  exclusiveMultiplierBps: number;
+  /** When its license would end if approved now, for the "If you approve" line (ISO); null unless exclusive and waiting. */
+  approveEndsAt: string | null;
   licenseeName: string;
   contactName: string;
   intendedUse: string | null;

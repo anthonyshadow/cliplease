@@ -9,6 +9,7 @@ import { Banner } from "@/components/ui/banner";
 import { Button } from "@/components/ui/button";
 import { CopyLinkField } from "@/components/ui/copy-link-field";
 import { ShareButton } from "@/components/ui/share-button";
+import type { VideoPageAvailability } from "@/lib/licensing/availability";
 import type { OwnerPostingDTO } from "@/lib/postings/types";
 import { fromPriceCents } from "@/lib/pricing/from-price";
 import { COVER_COPY } from "@/lib/upload/messages";
@@ -42,8 +43,10 @@ import { getPublishBlockers } from "@/server/videos/publish";
 import {
   type CreatorVideoDTO,
   getRequestCounts,
+  getVideoAvailability,
 } from "@/server/videos/queries";
 import { shareUrl } from "@/server/videos/visibility";
+import { AvailabilityLine } from "./availability-line";
 import { BackLink } from "./back-link";
 import { DoneLine } from "./done-line";
 import { uploadVideo } from "./file-step";
@@ -61,8 +64,8 @@ import { EditLink, PostingSummary } from "./where-posted-summary";
 
 /**
  * The video page (S19; 05 §6.7; 01 J5.19–J5.21, J6) of a video past its draft, live, off or disabled: its postings (with
- * their removed posts), its blockers (Turn on runs them again) with the prices, its request counts, and an Off video's
- * paused upload (P10c), read together.
+ * their removed posts), its blockers (Turn on runs them again) with the prices, its request counts, its availability
+ * and an Off video's paused upload (P10c), read together.
  */
 export async function VideoPage({
   actor,
@@ -75,15 +78,18 @@ export async function VideoPage({
   handle: string;
   platformFeeBps: number;
 }) {
-  const [postings, publish, counts, progress] = await Promise.all([
-    listVideoPostings(actor, video.id),
-    getPublishBlockers(actor, video.id),
-    getRequestCounts(actor, video.id),
-    video.status === "unpublished" && video.originalStatus === "uploading"
-      ? getOriginalUploadProgress(actor, { videoId: video.id })
-      : null,
-  ]);
-  if (!counts) notFound();
+  const [postings, publish, counts, availability, progress] = await Promise.all(
+    [
+      listVideoPostings(actor, video.id),
+      getPublishBlockers(actor, video.id),
+      getRequestCounts(actor, video.id),
+      getVideoAvailability(actor, video.id),
+      video.status === "unpublished" && video.originalStatus === "uploading"
+        ? getOriginalUploadProgress(actor, { videoId: video.id })
+        : null,
+    ],
+  );
+  if (!counts || !availability) notFound();
   return (
     <VideoPageView
       video={video}
@@ -92,6 +98,7 @@ export async function VideoPage({
       postings={postings}
       publish={publish}
       counts={counts}
+      availability={availability}
       platformFeeBps={platformFeeBps}
       progress={progress}
     />
@@ -104,7 +111,8 @@ export async function VideoPage({
  * phone (05's frame) and the large one, at most 60svh, from md. Sections: Requests, Details, Where it was posted,
  * Original file, Rights, Prices (VideoPriceEditor and ExclusiveOfferEditor over the preview, 07 D82, D109, owner answer
  * Q-166, then "From {price} · {uses}"), then Turn off / Turn on. Off: its Banner, Where posted and the original editable.
- * Disabled: the admin's reason only (never the note, 07 D45), nothing editable, no link and no prices.
+ * Disabled: the admin's reason only (never the note, 07 D45), nothing editable, no link and no prices. The availability
+ * line under the badge (07 D110), which alone says a running perpetual license keeps an offered exclusive from being sold.
  */
 export function VideoPageView({
   video,
@@ -113,6 +121,7 @@ export function VideoPageView({
   postings,
   publish,
   counts,
+  availability,
   platformFeeBps,
   progress,
 }: {
@@ -122,6 +131,7 @@ export function VideoPageView({
   postings: readonly OwnerPostingDTO[];
   publish: Awaited<ReturnType<typeof getPublishBlockers>>;
   counts: { pendingCount: number; licenseCount: number };
+  availability: VideoPageAvailability;
   platformFeeBps: number;
   progress: OriginalUploadProgress;
 }) {
@@ -169,6 +179,16 @@ export function VideoPageView({
             </h1>
             <VideoStatusPill status={status} className="self-start" />
             <VerifiedOwnerBadge {...ownerBadge(postings, "sm")} showUnlinked />
+            <AvailabilityLine
+              audience="creator"
+              availability={availability}
+              licenseeName={availability.licenseeName}
+              perpetualBlocksExclusive={
+                availability.state === "non_exclusive_only" &&
+                availability.perpetualRunning &&
+                publish.options.exclusive.offered
+              }
+            />
           </div>
         </div>
         {unlicensable ? (

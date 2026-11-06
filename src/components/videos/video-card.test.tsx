@@ -45,7 +45,10 @@ const LIVE: CreatorVideoCardDTO = {
   shareUrl: "http://localhost:3000/@maya/he-saw-snow",
   pendingCount: 0,
   licenseCount: 0,
+  availability: { state: "open", until: null, licenseeName: null },
 };
+const UNTIL = "2027-11-20T15:00:00.000Z";
+const LICENSEE = "Daily Laughs Media LLC";
 
 const card = (video: CreatorVideoCardDTO) => {
   render(
@@ -124,6 +127,38 @@ describe("CreatorVideoCard (04 §9.27; 05 §6.8)", () => {
       within(item).queryByText("Buyers can't license this video right now."),
     ).toBeNull();
   });
+
+  it.each([
+    ["reserved", null, null, "Exclusive request waiting"],
+    [
+      "exclusive_active",
+      UNTIL,
+      LICENSEE,
+      `Licensed exclusively to ${LICENSEE} until 20 Nov 2027`,
+    ],
+  ] as const)(
+    "prints a %s video's line after the status pill, inside the card's link (07 D110)",
+    (state, until, licenseeName, text) => {
+      const item = card({
+        ...LIVE,
+        availability: { state, until, licenseeName },
+      });
+      const link = within(item).getAllByRole("link")[0] as HTMLElement;
+      const line = within(link).getByText(text);
+      expect(line.previousElementSibling).toBe(within(link).getByText("Live"));
+    },
+  );
+
+  it.each(["open", "non_exclusive_only"] as const)(
+    "has no line for a %s video: the status pill ends the text",
+    (state) => {
+      const item = card({
+        ...LIVE,
+        availability: { state, until: null, licenseeName: null },
+      });
+      expect(within(item).getByText("Live").nextElementSibling).toBeNull();
+    },
+  );
 });
 
 describe("CreatorVideoCard's Menu (05 §6.8 callout 4)", () => {
@@ -203,5 +238,48 @@ describe("PublicVideoCard (04 §9.27; 05 §4.6)", () => {
     expect(links[0]?.getAttribute("href")).toBe("/@maya/he-saw-snow");
     expect(within(item).queryByText("Live")).toBeNull();
     expect(within(item).queryByRole("button")).toBeNull();
+  });
+
+  const publicCard = (availability: CreatorVideoCardDTO["availability"]) => {
+    render(
+      <ul>
+        <PublicVideoCard
+          video={{ ...LIVE, availability }}
+          href="/@maya/he-saw-snow"
+        />
+      </ul>,
+    );
+    return screen.getByRole("listitem");
+  };
+
+  it("prints a reserved video's line under the price, inside its one link (07 D110)", () => {
+    const item = publicCard({
+      state: "reserved",
+      until: null,
+      licenseeName: null,
+    });
+    const line = within(within(item).getByRole("link")).getByText("Reserved");
+    expect(line.previousElementSibling).toBe(
+      within(item).getByText("From CA$150.00"),
+    );
+  });
+
+  it("says until when a video is licensed exclusively, and never to whom, even when handed a name", () => {
+    const item = publicCard({
+      state: "exclusive_active",
+      until: UNTIL,
+      licenseeName: LICENSEE,
+    });
+    expect(
+      within(item).getByText("Licensed exclusively until 20 Nov 2027"),
+    ).toBeTruthy();
+    expect(item.textContent).not.toContain(LICENSEE);
+  });
+
+  it("has no line for an open video", () => {
+    const item = publicCard(LIVE.availability);
+    expect(
+      within(item).getByText("From CA$150.00").nextElementSibling,
+    ).toBeNull();
   });
 });

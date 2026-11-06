@@ -19,6 +19,8 @@ import {
   latestToast,
   pressApprove,
   pressDecline,
+  WAITING_EXCLUSIVE_LINE,
+  WAITING_EXCLUSIVE_REQUEST,
   WAITING_REQUEST,
 } from "../../../tests/helpers/inbox-fixtures";
 import { REQUEST_STATUS_ID, RequestActions } from "./request-actions";
@@ -130,6 +132,61 @@ describe("RequestActions (05 §6.4)", () => {
     expect(screen.queryByText(/Finish payout setup/)).toBeNull();
     expect(main().getByRole("button", { name: "Decline" })).toBeTruthy();
     expect(main().getByRole("button", { name: "Approve" })).toBeTruthy();
+  });
+});
+
+describe("RequestActions' exclusive line (04 §11.5; 07 D111; AD-72)", () => {
+  const exclusive = WAITING_EXCLUSIVE_REQUEST;
+
+  it("sits above the buttons while they show", () => {
+    render(<Page request={exclusive} />);
+    const line = main().getByText(WAITING_EXCLUSIVE_LINE);
+    expect(line.className).toBe("text-callout text-ink wrap-anywhere");
+    expect(
+      line.nextElementSibling?.contains(
+        main().getByRole("button", { name: "Decline" }),
+      ),
+    ).toBe(true);
+  });
+
+  it("goes with them when the request is decided, claimed or overdue", () => {
+    const view = render(<Page request={exclusive} />);
+    for (const request of [
+      { ...exclusive, displayStatus: "processing" },
+      { ...exclusive, displayStatus: "expired" },
+      {
+        ...exclusive,
+        status: "approved",
+        displayStatus: "approved",
+        approveEndsAt: null,
+      },
+    ] as const) {
+      view.rerender(<Page request={request} />);
+      expect(main().queryAllByRole("button")).toHaveLength(0);
+      expect(main().queryByText(WAITING_EXCLUSIVE_LINE)).toBeNull();
+    }
+  });
+
+  it("goes in the same render as the buttons when a result settles the request, before the refresh", async () => {
+    render(<Page request={exclusive} />);
+    await declineWith({ ok: true });
+    expect(main().queryAllByRole("button")).toHaveLength(0);
+    expect(main().queryByText(WAITING_EXCLUSIVE_LINE)).toBeNull();
+    expect(
+      main().getByText("Declined. The buyer wasn't charged."),
+    ).toBeTruthy();
+  });
+
+  it("stays with the buttons when a retry leaves them", async () => {
+    render(<Page request={exclusive} />);
+    await tapWith({ ok: false, reason: "retry", status: "awaiting_approval" });
+    expect(main().getAllByRole("button")).toHaveLength(2);
+    expect(main().getByText(WAITING_EXCLUSIVE_LINE)).toBeTruthy();
+  });
+
+  it("isn't there for a standard request", () => {
+    render(<Page request={waiting} />);
+    expect(main().queryByText(/^Exclusive request/)).toBeNull();
   });
 });
 

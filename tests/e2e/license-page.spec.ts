@@ -23,6 +23,7 @@ import {
   requestDemoLicense,
   requestWithStaleTotal,
 } from "./helpers/buyer";
+import { holdReady } from "./helpers/checkout-hold";
 import { collectConsoleErrors, type ExpectedFailure } from "./helpers/console";
 import { publishDemoVideo } from "./helpers/flows";
 import { boxOf } from "./helpers/layout";
@@ -518,6 +519,9 @@ test("J7.8, J7.13, J7.14: Pay holds the card and /r waits for the creator, also 
   const checkout = await context.newPage();
   const checkoutErrors = collectConsoleErrors(checkout);
   await checkout.goto(checkoutUrl);
+  // Cancel released the hold, so Extend comes first (Q-176).
+  await holdReady(checkout);
+  await pressAndSettle(checkout, CHECKOUT_COPY.holdExtend);
   const paidFrom = Date.now();
   await pressAndSettle(checkout, pay);
   const paidBy = Date.now();

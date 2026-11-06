@@ -30,6 +30,7 @@ import {
   hashBuyerToken,
 } from "../../src/server/tokens/buyer-token";
 import { DEMO_REQUEST } from "../helpers/checkout-fixtures";
+import { auditsOf } from "../helpers/connect-flow";
 import {
   insertCreator,
   insertLicenseRequest,
@@ -171,6 +172,9 @@ describe("createLicenseRequest: prices (07 D79, D82, D97)", () => {
     expect(
       (row.checkoutExpiresAt.getTime() - row.createdAt.getTime()) / 60_000,
     ).toBeCloseTo(60, 0);
+    expect(
+      (row.checkoutHoldUntil.getTime() - row.createdAt.getTime()) / 60_000,
+    ).toBeCloseTo(10, 0);
     // Checkout got the server's amounts in the request's currency, and the key the hash was made from.
     expect(spy).toHaveBeenCalledOnce();
     const sent = spy.mock.calls[0]?.[0];
@@ -496,8 +500,8 @@ describe("createLicenseRequest: snapshots (07 D81, D84)", () => {
   });
 });
 
-describe("createLicenseRequest: a failed Checkout (07 D57)", () => {
-  it("leaves the request in checkout with no session, says so, and logs neither the key nor the email", async () => {
+describe("createLicenseRequest: a failed Checkout (owner answer Q-171)", () => {
+  it("ends the request at once, says so, and logs neither the key nor the email", async () => {
     const { live } = await liveVideo();
     checkoutSpy().mockRejectedValueOnce(new Error("stripe down"));
     const logs = captureLogEvents("license_request.checkout_failed");
@@ -506,12 +510,74 @@ describe("createLicenseRequest: a failed Checkout (07 D57)", () => {
     expect(result).toEqual({ ok: false, reason: "checkout_failed" });
     const row = await onlyRequest(live.id);
     expect(row).toMatchObject({
-      status: "checkout_pending",
+      status: "abandoned",
+      statusReason: "checkout_failed",
+      abandonedAt: expect.any(Date),
       stripeCheckoutSessionId: null,
     });
+    expect(await auditsOf(row.id, "license_request.transition")).toEqual([
+      {
+        data: {
+          from: "checkout_pending",
+          to: "abandoned",
+          event: "checkout_failed",
+        },
+        actorType: "buyer",
+      },
+    ]);
     expect(events).toHaveLength(1);
     expect(written).not.toContain("dailylaughs");
     expect(written).not.toContain(row.buyerTokenEnc);
+  });
+
+  it("still says checkout_failed when ending it fails too, and logs that", async () => {
+    const { live } = await liveVideo();
+    checkoutSpy().mockRejectedValueOnce(new Error("stripe down"));
+    const save = db.transaction.bind(db);
+    vi.spyOn(db, "transaction")
+      .mockImplementationOnce((run) => save(run))
+      .mockRejectedValueOnce(new Error("database down"));
+    const logs = captureLogEvents("license_request.checkout_fail_end_failed");
+    const result = await createLicenseRequest(input(live.id), REQUEST_CTX);
+    const { written, events } = logs();
+    expect(result).toEqual({ ok: false, reason: "checkout_failed" });
+    const row = await onlyRequest(live.id);
+    expect(events).toEqual([
+      expect.objectContaining({ level: "warn", requestId: row.id }),
+    ]);
+    expect(written).not.toContain("dailylaughs");
+    // The clock is what ends this one's hold.
+    expect(row).toMatchObject({
+      status: "checkout_pending",
+      stripeCheckoutSessionId: null,
+    });
+  });
+
+  it("frees the video after a failed exclusive: the retry with a new submission makes a new request", async () => {
+    const { creator, live } = await liveVideo();
+    await db
+      .update(rateCard)
+      .set({ exclusiveEnabled: true })
+      .where(eq(rateCard.creatorId, creator.id));
+    const exclusive = { exclusive: true, expectedTotalCents: 519750 };
+    checkoutSpy().mockRejectedValueOnce(new Error("stripe down"));
+    expect(
+      await createLicenseRequest(input(live.id, exclusive), REQUEST_CTX),
+    ).toEqual({ ok: false, reason: "checkout_failed" });
+    const [failed] = await requestsOf(live.id);
+    expect(failed).toMatchObject({
+      exclusive: true,
+      status: "abandoned",
+      statusReason: "checkout_failed",
+    });
+
+    okUrl(await createLicenseRequest(input(live.id, exclusive), REQUEST_CTX));
+    const rows = await requestsOf(live.id);
+    expect(rows).toHaveLength(2);
+    expect(rows.find((r) => r.id !== failed?.id)).toMatchObject({
+      exclusive: true,
+      status: "checkout_pending",
+    });
   });
 });
 

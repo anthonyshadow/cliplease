@@ -9,7 +9,12 @@ import {
 import { POSTINGS_COPY } from "../../../src/lib/postings/copy";
 import { PUBLISHED_COPY, REVIEW_COPY } from "../../../src/lib/videos/review";
 import { VIDEO_MENU_COPY } from "../../../src/lib/videos/video-page";
-import { BUYER_PHONE, type LicenseChoice, requestLicense } from "./buyer";
+import {
+  BUYER_PHONE,
+  type LicenseChoice,
+  payButton,
+  requestLicense,
+} from "./buyer";
 import { signUpCreator } from "./creator";
 import { LIBRARY, libraryPostId, POST_01, tiles } from "./library";
 import {
@@ -189,7 +194,7 @@ export async function buyLicense(
   const page = await context.newPage();
   const requestId = await requestLicense(page, url, { ...choice, email });
   const paid = requestEnded(page, isServerAction);
-  await pressLocator(page.getByRole("button", { name: /^Pay CA\$/ }));
+  await pressLocator(payButton(page));
   await paid;
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(landing);
   const statusUrl = page.url().replace(/&session_id=[^&]*$/, "");

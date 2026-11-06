@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useFocusAfterRender } from "@/components/ui/use-focus-after-render";
 import {
+  exclusiveRequestLine,
   INBOX_COPY,
   type RowOutcome,
   requestPageLine,
@@ -20,7 +21,8 @@ export const REQUEST_STATUS_ID = "request-status";
  * its own width under the facts card, at every tier (07 D149); one pending state disables the other button. It stays
  * mounted across the action's refresh(), which re-renders the page in its stored state, so it adds only the result line
  * that state doesn't show (requestPageLine: a plain decline's stays) and the toast. The buttons go once the request is
- * decided, claimed or overdue, or the result settled it. Then the focus moves to the result.
+ * decided, claimed or overdue, or the result settled it. Then the focus moves to the result. An exclusive request's line
+ * (04 §11.5; 07 D111) sits above the buttons and goes with them: it says what Approve does.
  */
 export function RequestActions({
   request,
@@ -57,25 +59,32 @@ export function RequestActions({
         </div>
       ) : null}
       {showActions ? (
-        <div className="flex flex-wrap gap-3">
-          <Button
-            variant="secondary"
-            loading={pending === "decline"}
-            loadingLabel={INBOX_COPY.declining}
-            disabled={pending === "approve"}
-            onClick={() => onTap(decline)}
-          >
-            {INBOX_COPY.decline}
-          </Button>
-          <Button
-            loading={pending === "approve"}
-            loadingLabel={INBOX_COPY.approving}
-            disabled={pending === "decline"}
-            onClick={() => onTap(approve)}
-          >
-            {INBOX_COPY.approve}
-          </Button>
-        </div>
+        <>
+          {request.approveEndsAt ? (
+            <p className="text-callout text-ink wrap-anywhere">
+              {exclusiveRequestLine(request.approveEndsAt)}
+            </p>
+          ) : null}
+          <div className="flex flex-wrap gap-3">
+            <Button
+              variant="secondary"
+              loading={pending === "decline"}
+              loadingLabel={INBOX_COPY.declining}
+              disabled={pending === "approve"}
+              onClick={() => onTap(decline)}
+            >
+              {INBOX_COPY.decline}
+            </Button>
+            <Button
+              loading={pending === "approve"}
+              loadingLabel={INBOX_COPY.approving}
+              disabled={pending === "decline"}
+              onClick={() => onTap(approve)}
+            >
+              {INBOX_COPY.approve}
+            </Button>
+          </div>
+        </>
       ) : null}
     </div>
   );

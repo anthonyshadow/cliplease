@@ -3,26 +3,40 @@ import { formatMoney } from "../../src/lib/format";
 import { CHECKOUT_COPY } from "../../src/lib/licensing/checkout-copy";
 import { LICENSE_PAGE_COPY } from "../../src/lib/licensing/license-page";
 import { REQUEST_STATUS_COPY } from "../../src/lib/licensing/request-status";
+import { BUYER_POSTINGS_COPY } from "../../src/lib/postings/buyer-rows";
 import { BADGE_COPY } from "../../src/lib/videos/ownership";
 import {
+  availabilityNotice,
+  choose,
   chooseDemoSelection,
   FAKE_CHECKOUT_URL,
   fillDetails,
   holdServerActions,
   hydrated,
+  licenseTypeGroup,
   openSuccessUrl,
+  optionTile,
+  radio,
   requestButton,
   requestDemoLicense,
   requestWithStaleTotal,
 } from "./helpers/buyer";
+import {
+  extendButton,
+  holdClock,
+  holdReady,
+  resyncCheckout,
+  setCheckoutTimes,
+} from "./helpers/checkout-hold";
 import { collectConsoleErrors } from "./helpers/console";
-import { publishDemoVideo } from "./helpers/flows";
+import { buyLicense, offerExclusive, publishDemoVideo } from "./helpers/flows";
 import {
   atEveryWidth,
   boxOf,
   expectAbove,
   expectInside,
   expectLeftOf,
+  expectNoBareDollar,
   expectNoHorizontalScroll,
   expectPageFrame,
   expectReadingColumn,
@@ -44,7 +58,10 @@ import { cleanCreatedVideos } from "./helpers/videos";
 // chromium-desktop at 1280 × 720 the sticky column fits under both bars and its last "View post" can be focused in view.
 // P16a: a refusal's banner across the form's column, the pending button in its bar, and the fake checkout and /r as one
 // centered reading column (07 D145, D148). P16b: the fake checkout's three buttons (Pay full width below 768), and /r
-// finishing checkout and waiting for the creator, a handle long enough to need wrapping at 320 px.
+// finishing checkout and waiting for the creator, a handle long enough to need wrapping at 320 px. P19f (07 D110; owner
+// answers Q-169, Q-176): the License type tiles filling their group, open and with Exclusive chosen; a reserved page with
+// no bar, its notice under the poster below 1024 and first in the right column from 1024; the Exclusive tile off while a
+// standard license runs; and the fake checkout's clock and Extend in the reading column.
 test.use({ reducedMotion: "reduce" });
 test.afterEach(cleanCreatedVideos);
 
@@ -315,6 +332,9 @@ test("G.6, 07 D145, D149: the fake checkout's three buttons, and /r finishing ch
 
   // Waiting for @handle, its deadline shown: the handle wraps rather than push the page sideways.
   await buyer.goto(checkoutUrl);
+  // Cancel released the hold, so Extend comes first (Q-176).
+  await holdReady(buyer);
+  await pressAndSettle(buyer, CHECKOUT_COPY.holdExtend);
   await pressAndSettle(buyer, CHECKOUT_COPY.pay(formatMoney(173250, "cad")));
   await expect(heading).toHaveAccessibleName(
     REQUEST_STATUS_COPY.waitingTitle(handle),
@@ -329,4 +349,173 @@ test("G.6, 07 D145, D149: the fake checkout's three buttons, and /r finishing ch
 
   await context.close();
   expect(errors).toEqual([]);
+});
+
+/** Paid social ads · 1 year · Worldwide. */
+const CHOICE = {
+  use: "paid_social",
+  term: "y1",
+  territory: "worldwide",
+} as const;
+
+test("G.6, 07 D110, D148, owner answer Q-169: the License type tiles on an open page and with Exclusive chosen, and a reserved page's notice, at every tier", async ({
+  page,
+  browser,
+  baseURL,
+}, testInfo) => {
+  test.setTimeout(600_000);
+  const creatorErrors = collectConsoleErrors(page);
+  const { shareUrl } = await publishDemoVideo(page);
+  await offerExclusive(page);
+  const context = await browser.newContext({ baseURL });
+  const buyer = await context.newPage();
+  const errors = collectConsoleErrors(buyer);
+  await buyer.goto(shareUrl);
+  await hydrated(buyer);
+
+  // Open: each tile fills the group, in the one centered column below 1024 and in the right column from 1024.
+  const side = buyer.locator("[data-license-side]");
+  const columns = side.locator("..");
+  const poster = side.locator("img");
+  const group = licenseTypeGroup(buyer);
+  const tiles = [
+    optionTile(buyer, "exclusive", "false"),
+    optionTile(buyer, "exclusive", "true"),
+  ];
+  await atEveryWidth(buyer, testInfo, async ({ width }) => {
+    await expectNoHorizontalScroll(buyer);
+    await expectNoBareDollar(buyer);
+    for (const tile of tiles) await expectFullWidth(tile, group);
+    if (width < TIERS.desktop) {
+      await expectWithinCap(columns, 640);
+    } else {
+      await expectLeftOf(poster, group);
+    }
+  });
+
+  // Exclusive chosen: the same tiles, with the bar still there.
+  await choose(buyer, "exclusive", "true");
+  await atEveryWidth(buyer, testInfo, async () => {
+    await expectNoHorizontalScroll(buyer);
+    await expectNoBareDollar(buyer);
+    for (const tile of tiles) await expectFullWidth(tile, group);
+    await expect(buyer.locator("[data-pricebar]")).toHaveCount(1);
+  });
+  await choose(buyer, "exclusive", "false");
+
+  // Reserved: no bar; the notice under the poster below 1024, and from 1024 first in the right column, in view on arrival.
+  const bought = await buyLicense(browser, shareUrl, {
+    ...CHOICE,
+    exclusive: true,
+  });
+  await bought.context.close();
+  await buyer.reload();
+  const notice = availabilityNotice(buyer);
+  await expect(notice).toBeVisible();
+  const whatYouGet = buyer.getByText(LICENSE_PAGE_COPY.whatYouGet.title, {
+    exact: true,
+  });
+  await atEveryWidth(buyer, testInfo, async ({ width }) => {
+    await expect(buyer.locator("[data-pricebar]")).toHaveCount(0);
+    await expectNoHorizontalScroll(buyer);
+    await expectAbove(notice, whatYouGet);
+    if (width < TIERS.desktop) {
+      await expectAbove(poster, notice);
+      // Directly under the ownership badge: between it and "Where it was posted" (owner answer Q-169).
+      await expectAbove(
+        side.getByRole("button", { name: BADGE_COPY.explainerLink }),
+        notice,
+      );
+      await expectAbove(
+        notice,
+        side.getByRole("region", { name: BUYER_POSTINGS_COPY.title }),
+      );
+    } else {
+      await expectLeftOf(poster, notice);
+      await buyer.evaluate(() => window.scrollTo(0, 0));
+      const [posterBox, navBox] = await Promise.all([
+        boxOf(poster),
+        boxOf(buyer.getByRole("banner")),
+      ]);
+      expect(posterBox.top).toBeLessThanOrEqual(navBox.bottom + 24 + 1);
+      // The side column sticks under the NavBar alone: no offset for a bar this page doesn't have (Q-169).
+      const stickyTop = await side.evaluate((el) =>
+        Number.parseFloat(getComputedStyle(el).top),
+      );
+      expect(stickyTop).toBeLessThanOrEqual(navBox.bottom + 24 + 1);
+    }
+  });
+  if (testInfo.project.name === "chromium-desktop") {
+    await buyer.setViewportSize({ width: 1280, height: 720 });
+    await buyer.evaluate(() => window.scrollTo(0, 0));
+    await expect(availabilityNotice(buyer)).toBeInViewport();
+  }
+
+  await context.close();
+  expect(errors).toEqual([]);
+  expect(creatorErrors).toEqual([]);
+});
+
+test("G.6, 07 D110: while a standard license runs the Exclusive tile is off and stays inside the page, at every tier", async ({
+  page,
+  browser,
+  baseURL,
+}, testInfo) => {
+  test.setTimeout(600_000);
+  const creatorErrors = collectConsoleErrors(page);
+  const { shareUrl } = await publishDemoVideo(page);
+  await offerExclusive(page);
+  const bought = await buyLicense(browser, shareUrl, CHOICE);
+  await bought.context.close();
+
+  const context = await browser.newContext({ baseURL });
+  const buyer = await context.newPage();
+  const errors = collectConsoleErrors(buyer);
+  await buyer.goto(shareUrl);
+  await hydrated(buyer);
+  const columns = buyer.locator("[data-license-side]").locator("..");
+  await atEveryWidth(buyer, testInfo, async () => {
+    await expect(radio(buyer, "exclusive", "true")).toBeDisabled();
+    await expectInside(optionTile(buyer, "exclusive", "true"), columns);
+    await expectNoHorizontalScroll(buyer);
+    await expectNoBareDollar(buyer);
+  });
+
+  await context.close();
+  expect(errors).toEqual([]);
+  expect(creatorErrors).toEqual([]);
+});
+
+test("G.6, owner answer Q-176: the fake checkout's clock and Extend stay in the reading column, Extend a 44 px target, at every tier", async ({
+  page,
+  browser,
+  baseURL,
+}, testInfo) => {
+  test.setTimeout(600_000);
+  const creatorErrors = collectConsoleErrors(page);
+  const { shareUrl } = await publishDemoVideo(page);
+  const context = await browser.newContext({ baseURL });
+  const buyer = await context.newPage();
+  const errors = collectConsoleErrors(buyer);
+  const requestId = await requestDemoLicense(buyer, shareUrl);
+
+  // Past zero the clock and Extend hold still for the whole sweep.
+  await setCheckoutTimes(requestId, { holdInSeconds: -1 });
+  await resyncCheckout(buyer);
+  const column = buyer.locator("main .max-w-reading");
+  const clock = holdClock(buyer);
+  const extend = extendButton(buyer);
+  await atEveryWidth(buyer, testInfo, async ({ width }) => {
+    await expectPageFrame(buyer, width, { banner: false });
+    await expectReadingColumn(buyer);
+    await expectInside(clock, column);
+    await expectInside(extend, column);
+    await expectTouchTarget(extend);
+    await expectNoHorizontalScroll(buyer);
+    await expectNoBareDollar(buyer);
+  });
+
+  await context.close();
+  expect(errors).toEqual([]);
+  expect(creatorErrors).toEqual([]);
 });

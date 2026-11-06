@@ -30,7 +30,7 @@ const Query = z.object({
   session_id: z.string().optional().catch(undefined),
 });
 
-/** One read per request, shared by the metadata and the page: the return's check from Stripe runs once. */
+/** One read per request, shared by the metadata and the page: the return's check from Stripe and a cancel's release run once. */
 const buyerRequest = cache(getBuyerRequest);
 
 /** The page a buyer link opens, or null for the dead-link 404. */
@@ -38,7 +38,12 @@ async function pageFor({ params, searchParams }: PageProps<"/r/[requestId]">) {
   const query = Query.safeParse(await searchParams);
   if (!query.success) return null;
   const { t, checkout, session_id: sessionId } = query.data;
-  const request = await buyerRequest((await params).requestId, t, sessionId);
+  const request = await buyerRequest(
+    (await params).requestId,
+    t,
+    sessionId,
+    checkout === "canceled",
+  );
   const view =
     request &&
     requestView(request, {

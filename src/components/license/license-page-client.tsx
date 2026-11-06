@@ -19,13 +19,17 @@ import {
   LICENSE_PAGE_COPY,
   type LicensePageDTO,
 } from "@/lib/licensing/license-page";
-import { rateOptionOneLiner } from "@/lib/licensing/options";
+import { rateOptionLabel, rateOptionOneLiner } from "@/lib/licensing/options";
 import {
   licenseDeltaCents,
+  licenseTypeOptions,
   offeredOptions,
   quoteFor,
   repairSelection,
   type Selection,
+  selectLicenseType,
+  type TileKeys,
+  termMovedMessage,
   territoryToChoose,
   withOption,
 } from "@/lib/licensing/selection";
@@ -36,6 +40,7 @@ import { SIGN_IN_COPY } from "@/lib/sign-in";
 import { HOUR_MS } from "@/lib/time";
 import { HoldCopy, LicenseDetails, twoTone } from "./license-details";
 import { LicenseSummary } from "./license-summary";
+import { LicenseTypeGroup } from "./license-type-group";
 import { OptionGroup, OptionTile } from "./option-group";
 import { PriceBar } from "./price-bar";
 import {
@@ -50,7 +55,7 @@ type Refusal = Awaited<ReturnType<typeof startCheckout>>;
 
 /**
  * A refusal's banner above "Your details" (05 §4.1 States); `priced`: a total that answered the choice it was sent
- * with, so a new choice drops it.
+ * with, so a new choice or a repair of that choice drops it.
  */
 type PageNotice = { tone: "info" | "error"; text: string; priced?: boolean };
 
@@ -93,16 +98,18 @@ function useViewerClock() {
 }
 
 /**
- * The license page's live part (01 J7; 05 §4.1): "What you get.", the Use, Term and Territory tiles, the summary, the
- * details form, the hold copy, and the PriceBar last, in the right-hand column from lg (LICENSE_COLUMNS.main; the
- * server page renders the left one). Every amount comes from the one quote (computeQuote; the server recomputes it,
- * 01 G.1). A tap on One country or One region moves focus into its select; arrow keys don't, so they stay in the group
- * (owner answer Q-113 a).
+ * The license page's live part (01 J7; 05 §4.1): "What you get.", the Use, Term, Territory and License type tiles, the
+ * summary, the details form, the hold copy, and the PriceBar last, in the right-hand column from lg
+ * (LICENSE_COLUMNS.main; the server page renders the left one). Every amount comes from the one quote (computeQuote; the
+ * server recomputes it, 01 G.1). A tap on One country or One region moves focus into its select; arrow keys don't, so
+ * they stay in the group (owner answer Q-113 a).
  *
  * Request license (P16a; 05 §4.1 "Submit"): every field is checked on press and focus goes to the first problem; then
  * startCheckout, with the column inert and "Starting checkout…" until the page leaves for Checkout. A refusal shows its
  * banner and gives focus to it; a change on the server refreshes the page (a new price, an option gone: its group moves
- * to an option still offered and says so, the buyer's details kept; a video gone: the 404).
+ * to an option still offered and says so, the buyer's details kept; an Exclusive the video can't take any more: back to
+ * Standard, saying so; a video reserved or licensed exclusively meanwhile: the server's notice in place of this part; a
+ * video gone: the 404).
  */
 export function LicensePageClient({
   page,
@@ -119,8 +126,16 @@ export function LicensePageClient({
   const { selection, gone } = repairSelection(
     options,
     stored,
+    page.availability,
     page.platformFeeBps,
   );
+  const typeTiles = licenseTypeOptions(
+    options,
+    selection,
+    page.availability,
+    page.platformFeeBps,
+  );
+  const [termMoved, setTermMoved] = useState("");
   const viewer = useViewerClock();
   const pointer = useRef(false);
   const main = useRef<HTMLDivElement>(null);
@@ -128,6 +143,11 @@ export function LicensePageClient({
   const [notice, setNotice] = useState<PageNotice | null>(null);
   const [pending, setPending] = useState(false);
   const [focus, setFocus] = useState<FocusTarget | null>(null);
+  // The refresh moved the choice that total answered: it goes before it paints, and the moved group speaks instead.
+  if (notice?.priced && gone.length > 0) {
+    setNotice(null);
+    setFocus("gone");
+  }
   // A failed Checkout's fresh submission, until the server renders a newer one (07 D31).
   const [fresh, setFresh] = useState<{ for: string; id: string } | null>(null);
   const currentSubmissionId =
@@ -135,20 +155,20 @@ export function LicensePageClient({
   const goneGroup = gone[0];
   useEffect(() => {
     if (!focus) return;
+    const find = (selector: string) =>
+      main.current?.querySelector<HTMLElement>(selector);
     if (focus === "gone") {
       // Waits for the refresh that brings the new options.
       if (!goneGroup) return;
-      main.current
-        ?.querySelector<HTMLElement>(`input[name="${goneGroup}"]:checked`)
-        ?.focus();
+      // An Exclusive gone with the whole group (the offer off) has no radio: the banner says it.
+      (
+        find(`input[name="${goneGroup}"]:checked`) ??
+        find("[data-license-notice]")
+      )?.focus();
     } else {
-      main.current
-        ?.querySelector<HTMLElement>(
-          focus === "notice"
-            ? "[data-license-notice]"
-            : '[aria-invalid="true"]',
-        )
-        ?.focus();
+      find(
+        focus === "notice" ? "[data-license-notice]" : '[aria-invalid="true"]',
+      )?.focus();
     }
     setFocus(null);
   }, [focus, goneGroup]);
@@ -171,7 +191,10 @@ export function LicensePageClient({
   const chooseTerritory = territoryToChoose(selection);
   const offered = offeredOptions(options, selection, page.platformFeeBps);
   const total = formatMoney(quote.totalCents, quote.currency);
-  const delta = <G extends RateDimension>(group: G, key: Selection[G]) => {
+  const delta = <G extends RateDimension | "type">(
+    group: G,
+    key: TileKeys[G],
+  ) => {
     const cents = licenseDeltaCents(
       options,
       selection,
@@ -188,6 +211,17 @@ export function LicensePageClient({
       setFocusSelect(true);
     }
     setSelection(withOption(selection, group, key));
+    setTermMoved("");
+    dropPricedNotice();
+  };
+  const chooseType = (exclusive: boolean) => {
+    const moved = selectLicenseType(options, selection, exclusive);
+    setSelection(moved.selection);
+    setTermMoved(
+      moved.movedTermKey
+        ? termMovedMessage(rateOptionLabel(moved.movedTermKey))
+        : "",
+    );
     dropPricedNotice();
   };
   const setError = (field: FormField, message: string | undefined) =>
@@ -219,6 +253,10 @@ export function LicensePageClient({
     }
     setErrors({});
     setNotice(null);
+    // The press takes the choice as shown: a later refresh can't bring back what the page dropped (an Exclusive, at its
+    // price), and what the term line said is over.
+    setSelection(selection);
+    setTermMoved("");
     setPending(true);
     const result: Refusal | null = await runAction(() => startCheckout(data));
     // null: on its way to Checkout; the column stays inert until the page leaves.
@@ -257,10 +295,13 @@ export function LicensePageClient({
         router.refresh();
         return;
       case "option_disabled":
+      case "exclusive_unavailable":
         setFocus("gone");
         router.refresh();
         return;
       case "not_available":
+      case "video_reserved":
+      case "licensed_exclusively":
         router.refresh();
         return;
       case "already_submitted":
@@ -291,7 +332,14 @@ export function LicensePageClient({
     }),
     containsMusic: video.containsMusic,
     identifiablePeople: video.identifiablePeople,
+    exclusive: selection.exclusive,
   });
+  // With no group to show it under (the offer went off), an Exclusive gone says so in the banner's place.
+  const banner: PageNotice | null =
+    notice ??
+    (gone.includes("exclusive") && typeTiles.length === 0
+      ? { tone: "info", text: COPY.optionGone }
+      : null);
 
   return (
     <>
@@ -336,8 +384,14 @@ export function LicensePageClient({
                 value={option.key}
                 title={option.label}
                 checked={selection.term === option.key}
+                disabled={!option.enabled}
                 onChange={() => choose("term", option.key)}
-                delta={delta("term", option.key)}
+                reason={
+                  option.disabledReason === "exclusive_term"
+                    ? COPY.exclusiveTerm
+                    : undefined
+                }
+                delta={option.enabled ? delta("term", option.key) : null}
                 deltaPlacement="below"
               />
             ))}
@@ -390,11 +444,21 @@ export function LicensePageClient({
             })}
           </div>
         </OptionGroup>
+        {typeTiles.length > 0 ? (
+          <LicenseTypeGroup
+            tiles={typeTiles}
+            exclusive={selection.exclusive}
+            delta={(key) => delta("type", key)}
+            onChoose={chooseType}
+            error={gone.includes("exclusive") ? COPY.optionGone : undefined}
+            termMoved={termMoved}
+          />
+        ) : null}
         <LicenseSummary summary={summary} currency={options.currency} />
-        {notice ? (
+        {banner ? (
           <div data-license-notice tabIndex={-1} className="rounded-md">
-            <Banner tone={notice.tone} live={false}>
-              {notice.text}
+            <Banner tone={banner.tone} live={false}>
+              {banner.text}
             </Banner>
           </div>
         ) : null}
@@ -409,6 +473,7 @@ export function LicensePageClient({
             termKey: selection.term,
             territoryKey: selection.territory,
             territoryCode: selection.territoryCode ?? "",
+            exclusive: selection.exclusive,
             submissionId: currentSubmissionId,
             expectedTotalCents: quote.totalCents,
             timeZone: viewer?.timeZone ?? "",
@@ -419,6 +484,7 @@ export function LicensePageClient({
           total={total}
           currency={options.currency}
           autoApprove={creator.autoApprove}
+          exclusive={selection.exclusive}
           deadline={
             !creator.autoApprove && viewer
               ? formatDeadline(

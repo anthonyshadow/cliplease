@@ -109,6 +109,53 @@ describe("licenseSummary (01 §4.7)", () => {
     ]);
   });
 
+  it("gives an exclusive license the exclusivity row in place of the standard one (07 D113)", () => {
+    const exclusive = { ...PAID_WORLDWIDE, exclusive: true };
+    expect(licenseSummary(exclusive).groups.map((g) => g.title)).toEqual([
+      "You can",
+      "You get",
+      "You must",
+      "You can't",
+    ]);
+    const rows = rowsOf(exclusive);
+    expect(rows["You get"]).toEqual([
+      "Exclusivity — @maya won't license this video to anyone else, for any use or place, for 1 year from approval.",
+    ]);
+    expect(rows["Not included"]).toBeUndefined();
+  });
+
+  it("keeps the music and people rows on an exclusive license", () => {
+    expect(
+      rowsOf({
+        ...PAID_WORLDWIDE,
+        exclusive: true,
+        containsMusic: true,
+        identifiablePeople: true,
+      })["Not included"],
+    ).toEqual([
+      "Music — The music isn't licensed. Mute it, replace it, or license it yourself.",
+      "People — People in the video haven't signed releases. Get their consent for ads or endorsements.",
+    ]);
+  });
+
+  it("reads the term from P20's phrase in the exclusivity row too", () => {
+    expect(
+      rowsOf({
+        ...PAID_WORLDWIDE,
+        exclusive: true,
+        termPhrase: "until 20 Nov 2027",
+      })["You get"],
+    ).toEqual([
+      "Exclusivity — @maya won't license this video to anyone else, for any use or place, until 20 Nov 2027.",
+    ]);
+  });
+
+  it("treats exclusive: false as the standard summary", () => {
+    expect(licenseSummary({ ...PAID_WORLDWIDE, exclusive: false })).toEqual(
+      licenseSummary(PAID_WORLDWIDE),
+    );
+  });
+
   it("credits a self-attested video by handle and takes P20's term phrase", () => {
     const rows = rowsOf({
       ...PAID_WORLDWIDE,

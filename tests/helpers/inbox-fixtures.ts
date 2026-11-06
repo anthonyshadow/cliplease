@@ -29,12 +29,28 @@ export const WAITING_REQUEST: CreatorRequest = {
   contactName: "Jordan Lee",
   intendedUse: "Instagram + TikTok ads, Q4 campaign",
   createdAt: "2026-10-27T19:10:00.000Z",
+  exclusive: false,
+  exclusiveMultiplierBps: 10000,
+  approveEndsAt: null,
   transferStatus: null,
   transferAmountCents: null,
   transferCurrency: null,
   autoApproveFallbackAt: null,
   autoApproved: false,
 };
+
+/** The demo request as an exclusive one at ×3.00, waiting: its license would end on 20 Nov 2027 if approved now. */
+export const WAITING_EXCLUSIVE_REQUEST: CreatorRequest = {
+  ...WAITING_REQUEST,
+  scope: "Exclusive · Paid social ads · 1 year · Worldwide",
+  exclusive: true,
+  exclusiveMultiplierBps: 30000,
+  approveEndsAt: "2027-11-20T15:00:00.000Z",
+};
+
+/** The line approving WAITING_EXCLUSIVE_REQUEST's row and page print. */
+export const WAITING_EXCLUSIVE_LINE =
+  "Exclusive request. If you approve, no one else can license this video until 20 Nov 2027.";
 
 /** Taps the button named `name` (in `container`, else the page) and lets the action's answer render. */
 async function press(name: string, container?: HTMLElement) {

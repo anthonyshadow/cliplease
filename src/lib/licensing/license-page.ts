@@ -8,6 +8,7 @@ import { sentences } from "../format";
 import { CURRENCY_DISPLAY, currencyLabel } from "../money/currency";
 import type { PublicPostings } from "../postings/types";
 import type { BadgeInput } from "../videos/ownership";
+import type { AvailabilityDisplay, LicenseAvailability } from "./availability";
 import { REQUEST_STATUS_COPY } from "./request-status";
 import type { Selection } from "./selection";
 
@@ -43,6 +44,12 @@ export type LicensePageDTO = {
   platformFeeMinCents: number;
   /** The first load's choice (01 J7.1). */
   selection: Selection;
+  /**
+   * Whether a request can start now (07 D110), display only: the server re-checks under the video's lock. `until` is
+   * ISO; no renewal plan id.
+   */
+  availability: AvailabilityDisplay &
+    Pick<LicenseAvailability, "canRequestExclusive" | "canRequestNonExclusive">;
 };
 
 /** The buyer-facing people notice (04 §11.2); the Rights step shows it to the creator after "Buyers will see:". */
@@ -60,8 +67,24 @@ export const LICENSE_PAGE_COPY = {
     use: ["Use.", "How will you post it?"],
     term: ["Term.", "How long will it run?"],
     territory: ["Territory.", "Where will people see it?"],
+    licenseType: ["License type.", "Who else can use it?"],
     details: ["Your details.", "For the license."],
   },
+  /** 04 §11.2: the License type tiles, and why a tile is disabled (07 D110, D112). */
+  licenseType: {
+    standard: {
+      title: "Standard",
+      description: "Others can license this video too.",
+    },
+    exclusive: {
+      title: "Exclusive",
+      description:
+        "No one else can license this video, for any use or place, until your license ends.",
+    },
+  },
+  exclusiveTerm: "Exclusive licenses last up to 1 year.",
+  exclusiveUnavailable:
+    "Not available while other licenses are running or waiting.",
   whatYouGet: {
     title: "What you get.",
     body: "The original video file, no watermark · A license PDF with a code anyone can verify.",
@@ -101,6 +124,8 @@ export const LICENSE_PAGE_COPY = {
       REQUEST_STATUS_COPY.autoApproves(handle),
       `You'll be charged ${total} now and get the file right away.`,
     ),
+  /** 04 §11.2 (owner answer Q-173): under the manual hold copy of an exclusive request. */
+  holdExclusive: REQUEST_STATUS_COPY.exclusiveWhileDeciding,
   smallPrint: (handle: string) => [
     "Some banks show a hold as a pending charge. It disappears when the hold is released; timing depends on your bank.",
     `Payments are processed by Stripe. You pay ${APP_NAME}, which pays @${handle}.`,

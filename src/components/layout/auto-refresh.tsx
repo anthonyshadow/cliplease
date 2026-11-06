@@ -14,8 +14,8 @@ const SAME_RETURN_MS = 1_000;
  * is visible, and when the viewer comes back to it: window focus, or the document becoming visible (iOS Safari doesn't
  * always fire focus). A hidden tab skips its ticks and refreshes on that return instead (owner answer Q-130: nobody
  * sees it). `onRefresh` runs just before each refresh; `restart` starts the 30 s over (P18: the inbox keeps a settled
- * row until the next refresh), ending a burst. One refresher per page; `burst` (/r while auto-approve runs, 05 §4.3):
- * every 3 s for 30 s first.
+ * row until the next refresh), ending a burst. One refresher per page; `burst` (/r while auto-approve runs, 05 §4.3; a
+ * reserved license page): every 3 s for 30 s first.
  */
 export function useAutoRefresh({
   onRefresh,
@@ -76,7 +76,10 @@ export function useAutoRefresh({
   return { restart };
 }
 
-/** useAutoRefresh for a page with nothing to add: /r while the request waits, in a burst while auto-approve runs. */
+/**
+ * useAutoRefresh for a page with nothing to add: /r while the request waits, in a burst while auto-approve runs; a
+ * reserved license page, in a burst.
+ */
 export function AutoRefresh({ burst }: { burst?: boolean } = {}): null {
   useAutoRefresh({ burst });
   return null;

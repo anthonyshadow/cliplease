@@ -2,9 +2,11 @@ import type { ReactNode } from "react";
 import { PosterFrame } from "@/components/license/poster-frame";
 import { VerifiedOwnerBadge } from "@/components/license/verified-owner-badge";
 import type { Currency } from "@/lib/domain/values";
+import type { PublicVideoAvailability } from "@/lib/licensing/availability";
 import { fromPriceText } from "@/lib/pricing/from-price";
 import { cn } from "@/lib/utils";
 import type { BadgeInput } from "@/lib/videos/ownership";
+import { AvailabilityLine } from "./availability-line";
 
 /** What both VideoCard variants show (04 §9.27). */
 export type CardVideo = {
@@ -18,7 +20,7 @@ export type CardVideo = {
   currency: Currency;
 };
 
-/** The text block (04 §9.27): the title on 2 lines, the sm badge, "From {price}", then `children` (the creator's status). */
+/** The text block (04 §9.27): the title on 2 lines, the sm badge, "From {price}", then `children` (status, availability line). */
 export function CardText({
   video,
   titleId,
@@ -53,13 +55,14 @@ export function CardText({
 
 /**
  * A card on the public /@handle grid (04 §9.27; 05 §4.6): no card surface, on `canvas`; the whole tile is one link to
- * the license page, a plain <a> so a grid of cards prefetches nothing; no status and no hover on the poster.
+ * the license page, a plain <a> so a grid of cards prefetches nothing; no status and no hover on the poster. Its line
+ * says when the video is reserved or licensed exclusively, never to whom (07 D110).
  */
 export function PublicVideoCard({
   video,
   href,
 }: {
-  video: CardVideo;
+  video: CardVideo & { availability: PublicVideoAvailability };
   href: string;
 }) {
   return (
@@ -72,7 +75,12 @@ export function PublicVideoCard({
           width={video.width}
           height={video.height}
         />
-        <CardText video={video} />
+        <CardText video={video}>
+          <AvailabilityLine
+            audience="public"
+            availability={video.availability}
+          />
+        </CardText>
       </a>
     </li>
   );

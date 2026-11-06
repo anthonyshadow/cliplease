@@ -80,6 +80,7 @@ describe.each(["Pacific/Auckland", "America/Los_Angeles"])(
     });
 
     it.each([
+      [5, "0:05"],
       [14, "0:14"],
       [724, "12:04"],
       [3723, "1:02:03"],

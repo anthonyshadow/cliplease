@@ -15,7 +15,7 @@ import {
 export const BUYER_PHONE = { width: 390, height: 844 };
 
 export const radio = (page: Page, group: string, key: string) =>
-  page.locator(`input[name="${group}"][value="${key}"]`);
+  page.locator(`input[type="radio"][name="${group}"][value="${key}"]`);
 
 /** An OptionTile (`[data-option-tile]`) by its radio. */
 export const optionTile = (page: Page, group: string, key: string) =>
@@ -32,6 +32,14 @@ export async function choose(page: Page, group: string, key: string) {
 /** The page has hydrated: the hidden timeZone is filled after mount. */
 export const hydrated = (page: Page) =>
   expect(page.locator('input[name="timeZone"]')).not.toHaveValue("");
+
+/** The notice for this width: the page holds one copy for each side of lg (owner answer Q-169). */
+export const availabilityNotice = (page: Page) =>
+  page.locator("[data-availability-notice]:visible");
+
+/** "License type. Who else can use it?", shown only while the creator offers exclusive licenses. */
+export const licenseTypeGroup = (page: Page) =>
+  page.getByRole("group", { name: /^License type\./ });
 
 /** The PriceBar's button: "Choose a country", then "Request license · {total}". */
 export const requestButton = (page: Page) =>
@@ -62,6 +70,10 @@ export async function fillDetails(
 
 /** The fake checkout's page for a new request (07 D35). */
 export const FAKE_CHECKOUT_URL = /\/dev\/fake-checkout\/[0-9a-f-]{36}$/;
+
+/** The fake checkout's Pay button. */
+export const payButton = (page: Page) =>
+  page.getByRole("button", { name: /^Pay CA\$/ });
 
 /** Presses Request license with a total the server didn't quote (07 D31), and waits for the refusal. */
 export async function requestWithStaleTotal(page: Page) {
@@ -99,6 +111,8 @@ export type LicenseChoice = {
   territory: RateOptionKey;
   /** The country or region the select takes, for those territories. */
   country?: string;
+  /** Chooses Exclusive right after the term; the group shows only while the creator offers it. */
+  exclusive?: boolean;
   email?: string;
   /** Who the license is for (E2E_LICENSEE unless given): a spec with several requests tells its rows apart by it. */
   licensee?: string;
@@ -111,12 +125,13 @@ export type LicenseChoice = {
 export async function requestLicense(
   page: Page,
   shareUrl: string,
-  { use, term, territory, country, email, licensee }: LicenseChoice,
+  { use, term, territory, country, exclusive, email, licensee }: LicenseChoice,
 ) {
   await page.goto(shareUrl);
   await hydrated(page);
   await choose(page, "use", use);
   await choose(page, "term", term);
+  if (exclusive) await choose(page, "exclusive", "true");
   await choose(page, "territory", territory);
   if (territory === "country" || territory === "region") {
     if (!country)

@@ -65,6 +65,17 @@ describe("startCheckoutFields (02 §5.7)", () => {
       startCheckoutFields(form({ timeZone: "x".repeat(65) })).timeZone,
     ).toBeUndefined();
   });
+
+  it.each([
+    ["true", true],
+    ["false", false],
+    [null, false],
+    ["on", false],
+  ])("reads the posted license type %s as exclusive: %s", (posted, want) => {
+    const fields = startCheckoutFields(form({ exclusive: posted }));
+    expect(fields.exclusive).toBe(want);
+    expect(StartCheckoutSchema.parse(fields).exclusive).toBe(want);
+  });
 });
 
 describe("startCheckoutFieldErrors", () => {
@@ -130,6 +141,17 @@ describe("startCheckoutRefusal", () => {
     ).toEqual({
       ok: false,
       error: { code: "already_submitted", message: GENERIC_ERROR_MESSAGE },
+    });
+  });
+
+  it.each([
+    "video_reserved",
+    "licensed_exclusively",
+    "exclusive_unavailable",
+  ] as const)("passes on %s as the reason", (reason) => {
+    expect(startCheckoutRefusal({ ok: false, reason })).toEqual({
+      ok: false,
+      error: { code: reason, message: GENERIC_ERROR_MESSAGE },
     });
   });
 });

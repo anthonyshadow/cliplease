@@ -50,6 +50,12 @@ function installedDouble(): ScriptedPayments {
   return installed;
 }
 
+/** The cancels the double saw: their key, Stripe's reason and the request's committed status at the call. */
+export const cancels = () =>
+  installedDouble()
+    .callsOf("cancel")
+    .map(({ key, args, status }) => ({ key, reason: args[1], status }));
+
 /** The double followed the test's script: every queued outcome used, nothing it couldn't follow, 07 D25 kept. */
 export function expectScriptPlayed(): void {
   const scripted = installedDouble();

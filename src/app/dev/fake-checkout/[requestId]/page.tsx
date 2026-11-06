@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 import { READING_COLUMN, SHELL_MAIN } from "@/components/layout/gutter";
+import { CheckoutHoldClock } from "@/components/license/checkout-hold-clock";
 import { Banner } from "@/components/ui/banner";
 import { Button } from "@/components/ui/button";
 import { PRIMARY_WIDTH, TERTIARY } from "@/components/ui/primary-width";
@@ -11,6 +12,7 @@ import { openFakeCheckout } from "@/server/payments/fake-checkout";
 import {
   fakeCheckoutCancel,
   fakeCheckoutExpire,
+  fakeCheckoutExtend,
   fakeCheckoutPay,
 } from "./actions";
 
@@ -30,9 +32,10 @@ export const maxDuration = 60;
 
 /**
  * S28, the fake driver's checkout (05 §10; 07 D35), development and test only: the request's snapshot laid out like
- * Stripe's two line items, then Pay, Cancel and Let it expire (02 §5.8). 05 §10 draws no NavBar, so the page brings its
- * own <main> in the reading column. A request past checkout goes to its /r page. Like Stripe's, the buttons show no
- * pending label: each answers with a redirect.
+ * Stripe's two line items, the unpaid hold's clock with Pay under it, then Cancel and Let it expire (02 §5.8), which stay
+ * whatever the clock says (owner answer Q-176). 05 §10 draws no NavBar, so the page brings its own <main> in the reading
+ * column. A request past checkout goes to its /r page. Like Stripe's, these three buttons show no pending label: each
+ * answers with a redirect.
  */
 export default async function FakeCheckoutPage({
   params,
@@ -55,7 +58,9 @@ export default async function FakeCheckoutPage({
           <h1 className="text-title-1 text-ink wrap-anywhere">
             {checkout.title}
           </h1>
-          <p className="text-body text-ink-2">{checkout.scope}</p>
+          <p className="text-body text-ink-2">
+            {checkout.exclusive ? checkout.label : checkout.scope}
+          </p>
         </div>
         <dl className="flex flex-col gap-2">
           {lines.map((line) => (
@@ -73,7 +78,14 @@ export default async function FakeCheckoutPage({
             </div>
           ))}
         </dl>
-        <div className="flex flex-col gap-3">
+        <CheckoutHoldClock
+          holdUntil={checkout.holdUntil.toISOString()}
+          sessionEndsAt={checkout.sessionEndsAt.toISOString()}
+          now={checkout.now.toISOString()}
+          extend={fakeCheckoutExtend.bind(null, checkout.id)}
+          releaseUrl={`/dev/fake-checkout/${checkout.id}/release`}
+          licensePath={checkout.licensePath}
+        >
           <form
             action={fakeCheckoutPay.bind(null, checkout.id)}
             className="flex flex-col"
@@ -84,6 +96,8 @@ export default async function FakeCheckoutPage({
               )}
             </Button>
           </form>
+        </CheckoutHoldClock>
+        <div className="flex flex-col gap-3">
           <form action={fakeCheckoutCancel.bind(null, checkout.id)}>
             <Button type="submit" variant="secondary">
               {COPY.cancel}

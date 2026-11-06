@@ -6,6 +6,8 @@ import { creatorProfile, licenseRequest, user, video } from "@/db/schema";
 import { RequestDeclined } from "@/emails/request-declined";
 import { RequestNew } from "@/emails/request-new";
 import { RequestReceived } from "@/emails/request-received";
+import { endsAtIfApprovedNow } from "@/lib/licensing/ends-at";
+import { INBOX_COPY } from "@/lib/licensing/inbox";
 import { scopeLabel } from "@/lib/licensing/selection";
 import { requestDetailPath, requestStatusPath } from "@/lib/urls";
 import { env } from "../env";
@@ -19,8 +21,9 @@ import {
 // The three request emails (05 §8): who gets each and its subject when it is queued, and its message when it is sent.
 // Each reads the request as it is now (02 §5.10): email_log keeps only the recipient's hash. The creator's email never
 // names the buyer's address (07 D47). An auto-approve request's request-received reads its snapshot (07 D81);
-// request-new opens with the fallback line once auto-approve fell back. Both switches cover every template, so a new
-// one fails typecheck until it is handled in each.
+// request-new opens with the fallback line once auto-approve fell back. An exclusive request says so in both (07 D111;
+// owner answer Q-173), request-new with the end date as of this send. Both switches cover every template, so a new one
+// fails typecheck until it is handled in each.
 
 export type RequestEmailTemplate =
   | "request-new"
@@ -46,6 +49,7 @@ export async function requestEmailFacts(
       termKey: licenseRequest.termKey,
       territoryKey: licenseRequest.territoryKey,
       territoryCode: licenseRequest.territoryCode,
+      exclusive: licenseRequest.exclusive,
       licensePriceCents: licenseRequest.licensePriceCents,
       amountTotalCents: licenseRequest.amountTotalCents,
       currency: licenseRequest.currency,
@@ -114,13 +118,16 @@ export async function composeRequestEmail(
         element: createElement(RequestNew, {
           licenseeName: f.licenseeName,
           title: f.title,
-          scope,
+          scope: f.exclusive ? INBOX_COPY.exclusiveScope(scope) : scope,
           licensePriceCents: f.licensePriceCents,
           currency: f.currency,
           expiresAt: f.expiresAt,
           timeZone: f.creatorTimeZone,
           payoutsActive: f.payoutsStatus === "active",
           fellBack: f.autoApproveFallbackAt !== null,
+          exclusiveEndsAt: f.exclusive
+            ? endsAtIfApprovedNow(new Date(), f.termKey)
+            : null,
           url: `${env.APP_URL}${requestDetailPath(f.id)}`,
         }),
       };
@@ -137,6 +144,7 @@ export async function composeRequestEmail(
           expiresAt: f.expiresAt,
           timeZone: f.buyerTimeZone,
           autoApprove: f.autoApprove,
+          exclusive: f.exclusive,
           url: `${env.APP_URL}${requestStatusPath(f.id, revealBuyerToken(f))}`,
         }),
       };

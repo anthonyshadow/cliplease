@@ -4,12 +4,18 @@ import { db } from "../../src/db/client";
 import { socialPost, video, videoPosting } from "../../src/db/schema";
 import type { Video } from "../../src/db/schema/types";
 import type { PayoutsStatus } from "../../src/lib/domain/values";
+import { DAY_MS } from "../../src/lib/time";
 import { MUSIC_DISABLED_USES } from "../../src/lib/videos/rights";
 import {
   getLicensePageData,
   readLicensePageData,
 } from "../../src/server/videos/public";
-import { insertVideoPosting, publishVideo } from "../helpers/factories";
+import {
+  insertLicense,
+  insertLicenseRequest,
+  insertVideoPosting,
+  publishVideo,
+} from "../helpers/factories";
 import { OBJECT_KEY } from "../helpers/object-key";
 import { postingsOf } from "../helpers/postings";
 import {
@@ -21,7 +27,8 @@ import { storedPayouts } from "../helpers/transfer-fixtures";
 
 // The license page's data (P15; 03 §7.5; 07 D03, D70, D72, D82, D94) against the test database: a published video gives
 // the page's plain DTO in the creator's currency, every other state nothing (the page 404s), and the buyer's postings
-// carry only what D70 shows. P19c: the hold copy's auto-approve flag, never the payouts status it is derived from.
+// carry only what D70 shows. P19c: the hold copy's auto-approve flag, never the payouts status it is derived from. P19f:
+// the video's availability, never a renewal plan's id.
 const MOCK_ON = ["mock"] as const;
 
 /** A creator's published Library video (its verified Demo source posting) and the creator. */
@@ -63,6 +70,12 @@ describe("readLicensePageData", () => {
         territory: "country",
         territoryCode: null,
       },
+      availability: {
+        state: "open",
+        canRequestExclusive: false,
+        canRequestNonExclusive: true,
+        until: null,
+      },
     });
     expect(page?.options.currency).toBe("cad");
     expect(page?.video.posterUrl).toMatch(
@@ -78,6 +91,22 @@ describe("readLicensePageData", () => {
     expect(json).not.toMatch(/ObjectKey|disabledReason":"(rights|prohibited)/);
     expect(json).not.toMatch(OBJECT_KEY);
     expect(json).not.toContain(creator.id);
+    expect(json).not.toContain("reservationPlanId");
+  });
+
+  it("says a video licensed exclusively can't take a request, with the license's end as ISO (07 D110)", async () => {
+    const { creator, live } = await liveLibraryVideo();
+    const endsAt = new Date(Date.now() + 30 * DAY_MS);
+    await insertLicense(
+      await insertLicenseRequest(live, { status: "approved", exclusive: true }),
+      { exclusive: true, endsAt },
+    );
+    expect((await read(creator.handle, live))?.availability).toEqual({
+      state: "exclusive_active",
+      canRequestExclusive: false,
+      canRequestNonExclusive: false,
+      until: endsAt.toISOString(),
+    });
   });
 
   it("gives nothing for a draft, an unpublished or a disabled video, an unknown slug or an unknown handle", async () => {

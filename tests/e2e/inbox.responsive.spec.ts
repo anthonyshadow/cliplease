@@ -9,13 +9,14 @@ import { BARE_DOLLAR } from "../helpers/money";
 import { readLatestEmail } from "../helpers/read-latest-email";
 import { E2E_LICENSEE } from "./helpers/buyer";
 import { collectConsoleErrors } from "./helpers/console";
-import { buyLicense, publishDemoVideo } from "./helpers/flows";
+import { buyLicense, offerExclusive, publishDemoVideo } from "./helpers/flows";
 import {
   atEveryWidth,
   boxOf,
   expectCreatorFrame,
   expectInside,
   expectInsideColumn,
+  expectNoHorizontalScroll,
   expectReadingPage,
   expectSettingsColumn,
   TIERS,
@@ -46,7 +47,8 @@ import { cleanCreatedVideos } from "./helpers/videos";
 // heading neutral). Each page's clock is paused after it loads (the Inbox's after the decline: a page loaded after a
 // pause stays paused until a resume), so the 30 s refresh can't fire mid-sweep. A second test forces another creator's
 // request overdue with the dev script and no cron call: its /r expires it before rendering and reads "No answer in
-// time" (owner answer Q-142 a).
+// time" (owner answer Q-142 a). A third (P19f; 07 D111): an exclusive request's tag and line inside the row and the
+// request page, under a 120-character licensee.
 test.use({ reducedMotion: "reduce" });
 test.afterEach(cleanCreatedVideos);
 
@@ -528,5 +530,44 @@ test("01 §4.8, owner answer Q-142 a: an overdue request's /r expires it before 
     await expectNeutralHeading(heading);
   });
   await buyerContext.close();
+  expect(errors).toEqual([]);
+});
+
+test("G.6, 07 D111: an exclusive request's tag and line stay inside the Inbox row and the request page, with a licensee long enough to need wrapping, at every tier", async ({
+  page,
+  browser,
+}, testInfo) => {
+  test.setTimeout(600_000);
+  const errors = collectConsoleErrors(page);
+  const { shareUrl } = await publishDemoVideo(page);
+  await offerExclusive(page);
+  const { requestId, context } = await buyLicense(browser, shareUrl, {
+    ...CHOICE,
+    exclusive: true,
+    licensee: "x".repeat(120),
+  });
+  await context.close();
+
+  await openPaused(page, "/dashboard");
+  const row = page.locator("[data-inbox-row]");
+  const pill = row.getByText(INBOX_COPY.exclusiveTag, { exact: true });
+  const line = row.getByText(/^Exclusive request\. If you approve, /);
+  await expect(line).toBeVisible();
+  await atEveryWidth(page, testInfo, async () => {
+    await expectNoHorizontalScroll(page);
+    await expectInside(line, row);
+    await expectInside(pill, row);
+  });
+
+  await openPaused(page, `/dashboard/requests/${requestId}`);
+  const column = page.locator("main .max-w-reading");
+  const pagePill = column.getByText(INBOX_COPY.exclusiveTag, { exact: true });
+  const pageLine = column.getByText(/^Exclusive request\. If you approve, /);
+  await expect(pageLine).toBeVisible();
+  await atEveryWidth(page, testInfo, async () => {
+    await expectNoHorizontalScroll(page);
+    await expectInside(pageLine, column);
+    await expectInside(pagePill, column);
+  });
   expect(errors).toEqual([]);
 });

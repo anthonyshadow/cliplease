@@ -3,13 +3,25 @@ import { randomUUID } from "node:crypto";
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import { db, type Tx } from "@/db/client";
 import { creatorProfile, licenseRequest, video } from "@/db/schema";
-import type { LicenseRequest } from "@/db/schema/types";
-import type { SocialProviderId } from "@/lib/domain/values";
+import type { LicenseRequest, NewLicenseRequest } from "@/db/schema/types";
+import type {
+  Currency,
+  SocialProviderId,
+  VideoStatus,
+} from "@/lib/domain/values";
 import { autoApprovesNewRequests } from "@/lib/licensing/auto-approve-rule";
+import {
+  type AvailabilityRefusal,
+  availabilityRefusal,
+} from "@/lib/licensing/availability";
+import { CHECKOUT_HOLD_MINUTES } from "@/lib/licensing/checkout-hold";
 import type { DeclineResult } from "@/lib/licensing/request-dto";
 import {
   chosenMultipliers,
+  exclusiveBpsOf,
   feeTerms,
+  licenseLineLabel,
+  quoteFor,
   scopeLabel,
 } from "@/lib/licensing/selection";
 import {
@@ -21,8 +33,7 @@ import {
   computeExpiresAt,
   HOLD_TOO_SHORT_MS,
 } from "@/lib/payments/expires-at";
-import { computeQuote } from "@/lib/pricing/compute-quote";
-import { NON_EXCLUSIVE_BPS } from "@/lib/pricing/presets";
+import { isExclusiveTermKey } from "@/lib/pricing/exclusive";
 import type { StartCheckoutInput } from "@/lib/validation/checkout";
 import { normalizeEmail } from "@/lib/validation/email";
 import { normalizeTimeZone } from "@/lib/validation/time-zone";
@@ -43,6 +54,7 @@ import {
 } from "../payments/driver";
 import { CurrencyNotEnabledError } from "../payments/registry";
 import {
+  type EffectiveOptions,
   effectiveOptions,
   getRateCard,
   VIDEO_PRICING_COLUMNS,
@@ -57,6 +69,11 @@ import {
 } from "../videos/visibility";
 import { authorizationMismatches } from "./authorization";
 import { autoApproveRequest } from "./auto-approve";
+import {
+  assertStillLicensable,
+  getLicenseAvailability,
+  lockVideoForLicensing,
+} from "./availability";
 import { overdueColumn, pastDeadline } from "./deadline";
 import { afterResponse, runEffects } from "./effects";
 import {
@@ -76,12 +93,11 @@ import {
 } from "./state-machine";
 
 // A buyer's license request (02 §5.7, §8.1, §8.3; 03 §5.1 T1–T3; 06 §6; 07 D24, D27, D31, D32, D74, D79, D81, D82,
-// D84, D94, D95): priced by the server, saved once per form submission, handed to Checkout, then authorized when the
-// card is held. Payouts are not checked: buyers can pay before the creator sets them up (07 D74). The video lock and
-// availability check (07 D110) arrive with P19f, whose tables they read (owner answer Q-122 a); until then
-// markAuthorized re-checks that the video is published. Then its endings other than approval (03 T8–T10; P19): the
-// creator's decline, expiry at the deadline, and Stripe's canceled event. Statuses change only through the state
-// machine.
+// D84, D94, D95, D110): priced by the server, saved once per form submission, handed to Checkout, then authorized when
+// the card is held. Payouts are not checked: buyers can pay before the creator sets them up (07 D74). Saving and
+// authorizing each lock the video first and check its availability under that lock (07 D110). Then its endings other
+// than approval (03 T8–T10; P19): the creator's decline, expiry at the deadline, and Stripe's canceled event. Statuses
+// change only through the state machine.
 
 export type CreateLicenseRequestResult =
   | { ok: true; checkoutUrl: string }
@@ -93,22 +109,84 @@ export type CreateLicenseRequestResult =
         | "option_disabled"
         | "over_max"
         | "checkout_failed"
-        | "already_submitted";
+        | "already_submitted"
+        | AvailabilityRefusal;
     };
 
-/** The row as createLicenseRequest builds it; the transaction adds the creator's settings and the two timestamps. */
+type Refusal = Extract<CreateLicenseRequestResult, { ok: false }>;
+
+/** The columns a request snapshots from its quote. */
+type PricedColumns = Pick<
+  NewLicenseRequest,
+  | "currency"
+  | "basePriceCents"
+  | "useMultiplierBps"
+  | "termMultiplierBps"
+  | "territoryMultiplierBps"
+  | "platformFeeBps"
+  | "platformFeeMinCents"
+  | "licensePriceCents"
+  | "platformFeeCents"
+  | "amountTotalCents"
+  | "exclusiveMultiplierBps"
+>;
+
+/** The row as createLicenseRequest builds it; the transaction adds its quote, the creator's settings and the timestamps. */
 type NewRequest = Omit<
-  typeof licenseRequest.$inferInsert,
+  NewLicenseRequest,
   | "approvalWindowHours"
   | "autoApprove"
   | "termsAcceptedAt"
   | "checkoutExpiresAt"
+  | "checkoutHoldUntil"
+  | keyof PricedColumns
 >;
 
 /**
+ * `i` priced on `options`, or why not: used before the transaction as the early refusal and again under the lock. The
+ * premium never comes from the browser.
+ */
+function priceRequest(
+  i: StartCheckoutInput,
+  options: EffectiveOptions,
+): Refusal | PricedColumns {
+  const selection = {
+    use: i.useKey,
+    term: i.termKey,
+    territory: i.territoryKey,
+    exclusive: i.exclusive,
+  };
+  const multipliers = chosenMultipliers(options, selection);
+  const fees = feeTerms(options, env.PLATFORM_FEE_BPS);
+  const result = quoteFor(options, selection, fees);
+  if (!multipliers || !result) return { ok: false, reason: "option_disabled" };
+  if (!result.ok) {
+    if (result.reason === "over_max") return { ok: false, reason: "over_max" };
+    throw new Error("License request: the quote's input is out of range");
+  }
+  const { quote } = result;
+  if (quote.totalCents !== i.expectedTotalCents) {
+    return { ok: false, reason: "price_changed", totalCents: quote.totalCents };
+  }
+  return {
+    currency: options.currency,
+    basePriceCents: options.basePriceCents,
+    useMultiplierBps: multipliers.useBps,
+    termMultiplierBps: multipliers.termBps,
+    territoryMultiplierBps: multipliers.territoryBps,
+    ...fees,
+    licensePriceCents: quote.licensePriceCents,
+    platformFeeCents: quote.platformFeeCents,
+    amountTotalCents: quote.totalCents,
+    exclusiveMultiplierBps: exclusiveBpsOf(options, i.exclusive),
+  };
+}
+
+/**
  * The request for `i` (the parsed StartCheckoutSchema), checked against the video and its creator's rate card, or why
- * not. A `submissionId` makes one row: sending it again returns that request's open Checkout, unless anything the
- * buyer entered changed. `platforms`: the enabled social platforms (tests pass their own).
+ * not. Quoted here as the early refusal, then again under the video's lock, whose quote is the one saved and charged. A
+ * `submissionId` makes one row: sending it again returns that request's open Checkout, unless anything the buyer entered
+ * changed. `platforms`: the enabled social platforms (tests pass their own).
  */
 export async function createLicenseRequest(
   i: StartCheckoutInput,
@@ -129,34 +207,19 @@ export async function createLicenseRequest(
   if (!row || !isPubliclyAvailable(row, platforms)) {
     return { ok: false, reason: "not_available" };
   }
+  if (i.exclusive && !isExclusiveTermKey(i.termKey)) {
+    return { ok: false, reason: "option_disabled" };
+  }
   const options = effectiveOptions(
     await getRateCard(row.creatorId),
     videoPricingOf(row),
   );
-  const multipliers = chosenMultipliers(options, {
-    use: i.useKey,
-    term: i.termKey,
-    territory: i.territoryKey,
-    territoryCode: i.territoryCode,
-  });
-  if (!multipliers) return { ok: false, reason: "option_disabled" };
-  const { currency } = options;
-  const fees = feeTerms(options, env.PLATFORM_FEE_BPS);
-  const result = computeQuote({
-    currency,
-    basePriceCents: options.basePriceCents,
-    ...multipliers,
-    exclusiveBps: NON_EXCLUSIVE_BPS,
-    ...fees,
-  });
-  if (!result.ok) {
-    if (result.reason === "over_max") return { ok: false, reason: "over_max" };
-    throw new Error("License request: the quote's input is out of range");
+  if (i.exclusive && !options.exclusive.offered) {
+    return { ok: false, reason: "exclusive_unavailable" };
   }
-  const { quote } = result;
-  if (quote.totalCents !== i.expectedTotalCents) {
-    return { ok: false, reason: "price_changed", totalCents: quote.totalCents };
-  }
+  const priced = priceRequest(i, options);
+  if ("ok" in priced) return priced;
+  const { currency } = priced;
   // Before the row: a currency without its platform account must not leave a request behind (06 §6).
   if (!enabledCurrencies().includes(currency)) {
     throw new CurrencyNotEnabledError(currency);
@@ -180,24 +243,15 @@ export async function createLicenseRequest(
     termKey: i.termKey,
     territoryKey: i.territoryKey,
     territoryCode: i.territoryCode,
-    currency,
-    basePriceCents: options.basePriceCents,
-    useMultiplierBps: multipliers.useBps,
-    termMultiplierBps: multipliers.termBps,
-    territoryMultiplierBps: multipliers.territoryBps,
-    ...fees,
-    licensePriceCents: quote.licensePriceCents,
-    platformFeeCents: quote.platformFeeCents,
-    amountTotalCents: quote.totalCents,
-    exclusive: false,
-    exclusiveMultiplierBps: NON_EXCLUSIVE_BPS,
+    exclusive: i.exclusive,
     termsVersion: i.termsVersion,
     termsAcceptedIp: ctx.ip,
     termsAcceptedUserAgent: ctx.userAgent,
     checkoutSubmissionId: i.submissionId,
   };
-  const saved = await saveRequest(values);
+  const saved = await saveRequest(i, values, currency);
   if (saved.kind === "existing") return resubmitted(saved.request, values);
+  if (saved.kind === "refused") return saved.result;
 
   // After the commit, never inside it (07 D24).
   let session: { sessionId: string; url: string };
@@ -207,17 +261,21 @@ export async function createLicenseRequest(
       requestId: id,
       buyerToken: token.token,
       buyerEmail,
-      licensePriceCents: quote.licensePriceCents,
-      platformFeeCents: quote.platformFeeCents,
-      licenseLabel: `${row.title} · ${scopeLabel(i)}`,
+      licensePriceCents: saved.columns.licensePriceCents,
+      platformFeeCents: saved.columns.platformFeeCents,
+      licenseLabel: licenseLineLabel({
+        title: row.title,
+        scopeLabel: scopeLabel(i),
+        exclusive: i.exclusive,
+      }),
       checkoutExpiresAt: saved.checkoutExpiresAt,
     });
   } catch (error) {
-    // The row stays checkout_pending with no session; [H4]'s sweep abandons it (07 D57).
     logEvent("warn", "license_request.checkout_failed", {
       requestId: id,
       error: errorName(error),
     });
+    await endFailedCheckout(id);
     return { ok: false, reason: "checkout_failed" };
   }
   const [stored] = await db
@@ -235,18 +293,80 @@ export async function createLicenseRequest(
 }
 
 /**
- * The insert (T1), in one short transaction: the creator's row FOR SHARE, so the currency, the approval window and
- * auto-approve are the ones in force (07 D81, D94, I33), then the row, or nothing when the submission already has one,
- * and its audit. The request auto-approves only while the stored payouts status is active (owner answer Q-155), the
- * rule the license page shows. Nothing here calls the payments driver.
+ * The request whose Checkout couldn't be created ends at once (owner answer Q-171), so it stops holding the video. If
+ * this fails too it is logged, not thrown: the buyer still hears checkout_failed, and the hold's clock ends it.
+ */
+async function endFailedCheckout(id: string): Promise<void> {
+  try {
+    await db.transaction((tx) =>
+      applyTransition(
+        tx,
+        id,
+        "checkout_failed",
+        { abandonedAt: new Date(), statusReason: "checkout_failed" },
+        { kind: "buyer", requestId: id },
+      ),
+    );
+  } catch (error) {
+    logEvent("warn", "license_request.checkout_fail_end_failed", {
+      requestId: id,
+      error: errorName(error),
+    });
+  }
+}
+
+/**
+ * T1 in one short transaction: the video's lock (07 D110), the submission's own row, the video's availability, then the
+ * price again on what the lock now guarantees; each read after the lock, through `tx`. Then the creator's row FOR SHARE,
+ * so the currency, the approval window and auto-approve are the ones in force (07 D81, D94, I33), the row, or nothing
+ * when the submission already has one, and its audit. The request auto-approves only while the stored payouts status is
+ * active (owner answer Q-155), the rule the license page shows. A refusal commits an empty transaction. Nothing here
+ * calls the payments driver. `currency`: the one the buyer was priced in, a total alone can't show it changed.
  */
 async function saveRequest(
+  i: StartCheckoutInput,
   values: NewRequest,
+  currency: Currency,
 ): Promise<
-  | { kind: "created"; checkoutExpiresAt: Date }
+  | { kind: "created"; checkoutExpiresAt: Date; columns: PricedColumns }
   | { kind: "existing"; request: LicenseRequest }
+  | { kind: "refused"; result: Refusal }
 > {
   return db.transaction(async (tx) => {
+    const { status } = await lockVideoForLicensing(tx, values.videoId);
+    if (status !== "published") {
+      return {
+        kind: "refused",
+        result: { ok: false, reason: "not_available" },
+      };
+    }
+    const [existing] = await tx
+      .select()
+      .from(licenseRequest)
+      .where(
+        eq(licenseRequest.checkoutSubmissionId, values.checkoutSubmissionId),
+      );
+    if (existing) return { kind: "existing", request: existing };
+    const refusal = availabilityRefusal(
+      await getLicenseAvailability(tx, values.videoId),
+      i.exclusive,
+    );
+    if (refusal) {
+      return { kind: "refused", result: { ok: false, reason: refusal } };
+    }
+    const [row] = await tx
+      .select(VIDEO_PRICING_COLUMNS)
+      .from(video)
+      .where(eq(video.id, values.videoId));
+    if (!row) throw new Error("License request: the video is gone");
+    const columns = priceRequest(
+      i,
+      effectiveOptions(
+        await getRateCard(values.creatorId, tx),
+        videoPricingOf(row),
+      ),
+    );
+    if ("ok" in columns) return { kind: "refused", result: columns };
     const [creator] = await tx
       .select({
         payoutCurrency: creatorProfile.payoutCurrency,
@@ -257,7 +377,7 @@ async function saveRequest(
       .from(creatorProfile)
       .where(eq(creatorProfile.id, values.creatorId))
       .for("share");
-    if (creator?.payoutCurrency !== values.currency) {
+    if (creator?.payoutCurrency !== currency || columns.currency !== currency) {
       // Priced in another currency than the creator's now: not possible before P34 lets a creator change it.
       throw new Error("License request: the creator's currency changed");
     }
@@ -265,11 +385,14 @@ async function saveRequest(
       .insert(licenseRequest)
       .values({
         ...values,
+        ...columns,
         approvalWindowHours: creator.approvalWindowHours,
         autoApprove: autoApprovesNewRequests(creator),
         termsAcceptedAt: sql`now()`,
         checkoutExpiresAt: sql`now() + make_interval(mins => ${CHECKOUT_SESSION_TTL_MINUTES}::int)`,
+        checkoutHoldUntil: sql`now() + make_interval(mins => ${CHECKOUT_HOLD_MINUTES}::int)`,
       })
+      // The backstop: the same submission on another video isn't serialized by this lock.
       .onConflictDoNothing({ target: licenseRequest.checkoutSubmissionId })
       .returning({
         id: licenseRequest.id,
@@ -286,7 +409,11 @@ async function saveRequest(
           data: { videoId: values.videoId, creatorId: values.creatorId },
         },
       );
-      return { kind: "created", checkoutExpiresAt: inserted.checkoutExpiresAt };
+      return {
+        kind: "created",
+        checkoutExpiresAt: inserted.checkoutExpiresAt,
+        columns,
+      };
     }
     const [request] = await tx
       .select()
@@ -311,6 +438,7 @@ const RESUBMIT_KEYS = [
   "termKey",
   "territoryKey",
   "territoryCode",
+  "exclusive",
 ] as const;
 
 /**
@@ -711,23 +839,29 @@ export async function handlePaymentIntentCanceled(
   };
 }
 
-/** The video can still be licensed (07 D27): published, and not hidden by a mock posting (07 D51). */
+/**
+ * The video can still be licensed (07 D27, D110), under its lock (`status` is the lock's read): published, not hidden by
+ * a mock posting (07 D51), and nothing running or holding that this request can't sit beside.
+ */
 async function videoAvailable(
   tx: Tx,
+  requestId: string,
   videoId: string,
+  status: VideoStatus,
   platforms: readonly SocialProviderId[],
 ): Promise<boolean> {
   const [row] = await tx
-    .select({ status: video.status, postingPlatforms: postingPlatformsColumn })
+    .select({ postingPlatforms: postingPlatformsColumn })
     .from(video)
     .where(eq(video.id, videoId));
-  return row !== undefined && isPubliclyAvailable(row, platforms);
+  if (!row || !isPubliclyAvailable({ status, ...row }, platforms)) return false;
+  return (await assertStillLicensable(tx, requestId)).ok;
 }
 
 /**
- * T2 or T3 in one short transaction (02 §8.1 row 1; 07 D32, D81): the asserts, then the video, then the hold's length:
- * at least an hour to approve (03 T2), from the request's own window. The first that fails abandons the request,
- * naming the asserts that failed; all passing authorizes it. P19f locks the video here, before applyTransition.
+ * T2 or T3 in one short transaction (02 §8.1 row 1; 07 D32, D81, D110): the video's lock, always first, then the asserts,
+ * the video and the hold's length: at least an hour to approve (03 T2), from the request's own window. The first that
+ * fails abandons the request, naming the asserts that failed; all passing authorizes it.
  */
 async function decideAuthorization(
   row: LicenseRequest,
@@ -750,9 +884,12 @@ async function decideAuthorization(
     stripeChargeId: auth.chargeId,
   };
   return db.transaction(async (tx) => {
+    const { status } = await lockVideoForLicensing(tx, row.videoId);
     let reason: AbandonReason | null = null;
     if (mismatches.length > 0) reason = "amount_mismatch";
-    else if (!(await videoAvailable(tx, row.videoId, platforms))) {
+    else if (
+      !(await videoAvailable(tx, row.id, row.videoId, status, platforms))
+    ) {
       reason = "video_unavailable";
     } else if (expiresAt.getTime() < now.getTime() + HOLD_TOO_SHORT_MS) {
       reason = "hold_too_short";

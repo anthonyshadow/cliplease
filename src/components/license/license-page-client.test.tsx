@@ -9,7 +9,7 @@ import {
 } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import type { UseKey } from "@/lib/domain/values";
+import type { RateOptionKey, UseKey } from "@/lib/domain/values";
 import { formatDeadline } from "@/lib/format";
 import {
   LICENSE_PAGE_COPY,
@@ -56,17 +56,44 @@ afterEach(() => {
 
 const SUBMISSION_ID = "6f4c8d7e-1a2b-4c3d-8e9f-0a1b2c3d4e5f";
 
+const OTHERS_RUNNING = {
+  state: "non_exclusive_only",
+  canRequestExclusive: false,
+  canRequestNonExclusive: true,
+  until: null,
+} as const;
+
 function page(
   video: { disabledUses?: UseKey[]; containsMusic?: boolean } = {},
   {
     autoApprove = false,
     approvalWindowHours = 72,
-  }: { autoApprove?: boolean; approvalWindowHours?: number } = {},
+    exclusiveEnabled = false,
+    off = [],
+    availability = {
+      state: "open",
+      canRequestExclusive: exclusiveEnabled,
+      canRequestNonExclusive: true,
+      until: null,
+    },
+  }: {
+    autoApprove?: boolean;
+    approvalWindowHours?: number;
+    exclusiveEnabled?: boolean;
+    /** Options the creator turned off. */
+    off?: RateOptionKey[];
+    availability?: LicensePageDTO["availability"];
+  } = {},
 ): LicensePageDTO {
-  const options = effectiveOptions(rateCardFixture(), {
-    ...NO_VIDEO,
-    disabledUses: video.disabledUses ?? [],
-  });
+  const options = effectiveOptions(
+    rateCardFixture((o) => ({ enabled: !off.includes(o.key) }), {
+      exclusiveEnabled,
+    }),
+    {
+      ...NO_VIDEO,
+      disabledUses: video.disabledUses ?? [],
+    },
+  );
   const selection = defaultSelection(options, 1000);
   if (!selection) throw new Error("fixture: nothing fits");
   return {
@@ -93,14 +120,19 @@ function page(
     platformFeeBps: 1000,
     platformFeeMinCents: 200,
     selection,
+    availability,
   };
 }
+
+/** A creator who offers exclusive licenses at ×3.00, on a video that can take one unless told otherwise. */
+const offering = (availability?: LicensePageDTO["availability"]) =>
+  page({}, { exclusiveEnabled: true, availability });
 
 const show = (dto = page()) =>
   render(<LicensePageClient page={dto} submissionId={SUBMISSION_ID} />);
 const radio = (group: string, value: string) => {
   const input = document.querySelector<HTMLInputElement>(
-    `input[name=${group}][value=${value}]`,
+    `input[type=radio][name=${group}][value=${value}]`,
   );
   if (!input) throw new Error(`no ${group} ${value}`);
   return input;
@@ -321,6 +353,126 @@ describe("LicensePageClient (01 J7; 05 §4.1)", () => {
   });
 });
 
+describe("License type (P19f; 01 J12; 04 §9.35; 07 D110, D112)", () => {
+  const typeGroup = () =>
+    screen.queryByRole("group", { name: /^License type\./ });
+  const liveLine = () => document.querySelector("[data-term-moved]");
+  const lines = () => bar()?.querySelector("[data-price-lines]")?.textContent;
+  const deltaOf = (group: string, value: string) =>
+    tileOf(group, value)?.querySelector(".tabular-nums");
+  const chooseDemo = () => {
+    choose("use", "paid_social");
+    choose("term", "y1");
+    choose("territory", "worldwide");
+  };
+
+  it("has no group when the creator doesn't offer it, and posts a standard license", () => {
+    show();
+    expect(typeGroup()).toBeNull();
+    expect(document.querySelector("input[type=radio][name=exclusive]")).toBe(
+      null,
+    );
+    expect(hidden("exclusive")).toBe("false");
+  });
+
+  it("opens on Standard, with Exclusive's delta at the demo selection", () => {
+    show(offering());
+    chooseDemo();
+    expect(typeGroup()).not.toBeNull();
+    expect(radio("exclusive", "false").checked).toBe(true);
+    expect(hidden("exclusive")).toBe("false");
+    expect(deltaOf("exclusive", "true")?.textContent).toBe("+ CA$3,150");
+    barButton("Request license · CA$1,732.50");
+  });
+
+  it("Exclusive prices the premium everywhere: the bar, the form's total and the summary", () => {
+    show(offering());
+    chooseDemo();
+    choose("exclusive", "true");
+    expect(lines()).toBe("License CA$4,725.00 · Service fee CA$472.50");
+    expect(hidden("exclusive")).toBe("true");
+    expect(hidden("expectedTotalCents")).toBe("519750");
+    barButton("Request license · CA$5,197.50");
+    expect(deltaOf("exclusive", "false")?.textContent).toBe("− CA$3,150");
+    expect(document.body.textContent).toContain(
+      "@maya won't license this video to anyone else, for any use or place, for 1 year from approval.",
+    );
+  });
+
+  it("Exclusive from Perpetual moves the term to 1 year, says so, and leaves the focus where it is", () => {
+    show(offering());
+    choose("term", "perpetual");
+    expect(liveLine()?.textContent).toBe("");
+    const exclusive = radio("exclusive", "true");
+    exclusive.focus();
+    choose("exclusive", "true");
+    expect(radio("term", "y1").checked).toBe(true);
+    expect(hidden("termKey")).toBe("y1");
+    expect(liveLine()?.textContent).toBe(
+      "Term changed to 1 year. Exclusive licenses last up to 1 year.",
+    );
+    expect(document.activeElement).toBe(exclusive);
+  });
+
+  it("empties the live line on Standard, and a term chosen after the move leaves it empty", () => {
+    show(offering());
+    choose("term", "perpetual");
+    choose("exclusive", "true");
+    choose("exclusive", "false");
+    expect(liveLine()?.textContent).toBe("");
+    // Standard keeps the moved term: Perpetual comes back as a choice, never re-selected.
+    expect(radio("term", "y1").checked).toBe(true);
+    expect(radio("term", "perpetual").disabled).toBe(false);
+    choose("term", "perpetual");
+    choose("exclusive", "true");
+    choose("term", "m6");
+    expect(liveLine()?.textContent).toBe("");
+  });
+
+  it("a disabled tile says why, with no delta: Perpetual while Exclusive is chosen, Exclusive while others run", () => {
+    show(offering());
+    choose("exclusive", "true");
+    expect(radio("term", "perpetual").disabled).toBe(true);
+    expect(tileOf("term", "perpetual")?.textContent).toContain(
+      LICENSE_PAGE_COPY.exclusiveTerm,
+    );
+    expect(deltaOf("term", "perpetual")).toBeNull();
+    cleanup();
+
+    show(offering(OTHERS_RUNNING));
+    expect(radio("exclusive", "true").disabled).toBe(true);
+    const tile = tileOf("exclusive", "true");
+    expect(tile?.textContent).toContain(LICENSE_PAGE_COPY.exclusiveUnavailable);
+    expect(tile?.textContent).not.toContain(
+      LICENSE_PAGE_COPY.licenseType.exclusive.description,
+    );
+    expect(deltaOf("exclusive", "true")).toBeNull();
+    expect(radio("exclusive", "false").checked).toBe(true);
+  });
+
+  it("the hold copy says the video waits on the creator only for a manual Exclusive (owner answer Q-173)", () => {
+    const line = LICENSE_PAGE_COPY.holdExclusive("maya");
+    show(offering());
+    expect(document.body.textContent).not.toContain(line);
+    choose("exclusive", "true");
+    expect(screen.getByText(line).className).toContain("text-callout");
+    cleanup();
+
+    show(
+      page(
+        {},
+        {
+          autoApprove: true,
+          exclusiveEnabled: true,
+        },
+      ),
+    );
+    choose("exclusive", "true");
+    expect(document.body.textContent).toContain("Instant approval.");
+    expect(document.body.textContent).not.toContain(line);
+  });
+});
+
 describe("Request license (P16a; 05 §4.1 Submit)", () => {
   const NEW_ID = "00000000-0000-4000-8000-000000000999";
 
@@ -503,5 +655,219 @@ describe("Request license (P16a; 05 §4.1 Submit)", () => {
         "That option isn't available anymore. Choose another.",
       ),
     ).toBeNull();
+  });
+
+  /** The refreshed card with 1 year turned off, after a press refused on it. */
+  const withoutOneYear = () =>
+    page({}, { exclusiveEnabled: true, off: ["y1"] });
+
+  it("a license type chosen after its term moved stays on the moved term, and the line goes", async () => {
+    mocks.startCheckout.mockResolvedValue(refusal("option_disabled"));
+    const { rerender } = show(offering());
+    choose("term", "y1");
+    fillDetails();
+    await press();
+    rerender(
+      <LicensePageClient
+        page={withoutOneYear()}
+        submissionId={SUBMISSION_ID}
+      />,
+    );
+    expect(radio("term", "d30").checked).toBe(true);
+    expect(screen.queryByText(LICENSE_PAGE_COPY.optionGone)).not.toBeNull();
+    choose("exclusive", "true");
+    expect(screen.queryByText(LICENSE_PAGE_COPY.optionGone)).toBeNull();
+    expect(radio("term", "d30").checked).toBe(true);
+    expect(hidden("termKey")).toBe("d30");
+    expect(hidden("exclusive")).toBe("true");
+  });
+
+  it("a press empties the term line, so a term the refresh moves again doesn't leave it behind", async () => {
+    mocks.startCheckout.mockResolvedValue(refusal("option_disabled"));
+    const { rerender } = show(offering());
+    fillDetails();
+    choose("term", "perpetual");
+    choose("exclusive", "true");
+    expect(document.querySelector("[data-term-moved]")?.textContent).toBe(
+      "Term changed to 1 year. Exclusive licenses last up to 1 year.",
+    );
+    await press();
+    rerender(
+      <LicensePageClient
+        page={withoutOneYear()}
+        submissionId={SUBMISSION_ID}
+      />,
+    );
+    expect(radio("exclusive", "true").checked).toBe(true);
+    expect(radio("term", "d30").checked).toBe(true);
+    expect(document.querySelector("[data-term-moved]")?.textContent).toBe("");
+  });
+
+  it.each(["video_reserved", "licensed_exclusively"])(
+    "%s: refreshes, for the server's notice, with no banner",
+    async (code) => {
+      mocks.startCheckout.mockResolvedValue(refusal(code));
+      show();
+      fillDetails();
+      await press();
+      expect(mocks.refresh).toHaveBeenCalledOnce();
+      expect(document.querySelector("[data-license-notice]")).toBeNull();
+    },
+  );
+
+  describe("exclusive_unavailable: the refresh drops Exclusive, and the next press goes on at the standard total", () => {
+    const GONE = LICENSE_PAGE_COPY.optionGone;
+    const goneLine = () => screen.queryByText(GONE);
+
+    /**
+     * Exclusive on the demo selection, or on `term` before the move, or in `country` instead of Worldwide; refused, then
+     * the page the refresh brings. Returns what brings a later refresh's page.
+     */
+    async function refusedExclusive(
+      refreshed: LicensePageDTO,
+      {
+        term = "y1",
+        country,
+        answer = refusal("exclusive_unavailable"),
+      }: {
+        term?: string;
+        country?: string;
+        answer?: ReturnType<typeof refusal>;
+      } = {},
+    ) {
+      mocks.startCheckout.mockResolvedValueOnce(answer);
+      const { rerender } = show(offering());
+      // Details first: their Worldwide is a new choice, which would empty the term line.
+      fillDetails();
+      choose("use", "paid_social");
+      choose("term", term);
+      choose("exclusive", "true");
+      expect(hidden("expectedTotalCents")).toBe("519750");
+      if (country) {
+        choose("territory", "country");
+        fireEvent.change(screen.getByLabelText("Country"), {
+          target: { value: country },
+        });
+      }
+      await press();
+      expect(mocks.refresh).toHaveBeenCalledOnce();
+      const refresh = (next: LicensePageDTO) =>
+        rerender(
+          <LicensePageClient page={next} submissionId={SUBMISSION_ID} />,
+        );
+      refresh(refreshed);
+      return refresh;
+    }
+
+    /** A later refresh finds the video open again: the buyer's Standard stands. */
+    function expectStaysStandard(refresh: (next: LicensePageDTO) => void) {
+      refresh(offering());
+      expect(radio("exclusive", "false").checked).toBe(true);
+      expect(radio("exclusive", "true").disabled).toBe(false);
+      expect(hidden("exclusive")).toBe("false");
+    }
+
+    /** What both refreshed pages post: Standard at its total, from the same details. */
+    async function expectStandardPosted() {
+      expect(hidden("exclusive")).toBe("false");
+      expect(hidden("expectedTotalCents")).toBe("173250");
+      expect(bar()?.querySelector("[data-price-lines]")?.textContent).toBe(
+        "License CA$1,575.00 · Service fee CA$157.50",
+      );
+      mocks.startCheckout.mockReturnValue(new Promise(() => {}));
+      await press();
+      const data = mocks.startCheckout.mock.lastCall?.[0] as FormData;
+      expect(data.get("exclusive")).toBe("false");
+      expect(data.get("expectedTotalCents")).toBe("173250");
+    }
+
+    it("the video can't take one now: the group says so and Standard takes the focus", async () => {
+      await refusedExclusive(offering(OTHERS_RUNNING));
+      const standard = radio("exclusive", "false");
+      expect(standard.checked).toBe(true);
+      expect(document.activeElement).toBe(standard);
+      expect(radio("exclusive", "true").disabled).toBe(true);
+      const group = screen.getByRole("group", { name: /^License type\./ });
+      expect(group.textContent).toContain(GONE);
+      expect(document.querySelector("[data-license-notice]")).toBeNull();
+      await expectStandardPosted();
+    });
+
+    it("the offer went off: no group, so the banner says so and takes the focus", async () => {
+      await refusedExclusive(page());
+      expect(
+        screen.queryByRole("group", { name: /^License type\./ }),
+      ).toBeNull();
+      const banner = document.querySelector("[data-license-notice]");
+      expect(banner?.textContent).toBe(GONE);
+      expect(document.activeElement).toBe(banner);
+      await expectStandardPosted();
+    });
+
+    it("a new total goes once a refresh drops the Exclusive it was for: the group says so, Standard takes the focus, and the bar is the only total", async () => {
+      const refresh = await refusedExclusive(offering(), {
+        answer: refusal("price_changed", { totalCents: 693000 }),
+      });
+      const notice = () => document.querySelector("[data-license-notice]");
+      // A refresh that moves nothing leaves it.
+      expect(notice()?.textContent).toBe(
+        "Prices changed since you opened this page. New total CA$6,930.00.",
+      );
+      expect(document.activeElement).toBe(notice());
+
+      refresh(offering(OTHERS_RUNNING));
+      expect(notice()).toBeNull();
+      expect(goneLine()).not.toBeNull();
+      expect(document.activeElement).toBe(radio("exclusive", "false"));
+      barButton("Request license · CA$1,732.50");
+      expect(screen.queryByText(/CA\$6,930/)).toBeNull();
+      expect(hidden("expectedTotalCents")).toBe("173250");
+
+      // Over for good: the video opening again brings Exclusive back, not that total's banner.
+      refresh(offering());
+      expect(notice()).toBeNull();
+    });
+
+    it("the term line goes with the Exclusive it spoke for", async () => {
+      await refusedExclusive(offering(OTHERS_RUNNING), { term: "perpetual" });
+      expect(radio("exclusive", "false").checked).toBe(true);
+      expect(radio("term", "y1").checked).toBe(true);
+      expect(document.querySelector("[data-term-moved]")?.textContent).toBe("");
+    });
+
+    it("a press takes Standard for good: the line goes, and a later refresh keeps the total pressed", async () => {
+      const refresh = await refusedExclusive(offering(OTHERS_RUNNING));
+      expect(goneLine()).not.toBeNull();
+      mocks.startCheckout.mockResolvedValueOnce(
+        refusal("price_changed", { totalCents: 173250 }),
+      );
+      await press();
+      expect(goneLine()).toBeNull();
+      expectStaysStandard(refresh);
+      expect(hidden("expectedTotalCents")).toBe("173250");
+      barButton("Request license · CA$1,732.50");
+    });
+
+    it("a new choice builds on Standard: the line goes, and Exclusive doesn't come back", async () => {
+      const refresh = await refusedExclusive(offering(OTHERS_RUNNING));
+      expect(goneLine()).not.toBeNull();
+      choose("term", "m6");
+      expect(goneLine()).toBeNull();
+      expectStaysStandard(refresh);
+      expect(hidden("termKey")).toBe("m6");
+    });
+
+    it("a new country builds on Standard too", async () => {
+      const refresh = await refusedExclusive(offering(OTHERS_RUNNING), {
+        country: "US",
+      });
+      expect(goneLine()).not.toBeNull();
+      fireEvent.change(screen.getByLabelText("Country"), {
+        target: { value: "FR" },
+      });
+      expect(goneLine()).toBeNull();
+      expectStaysStandard(refresh);
+      expect(hidden("territoryCode")).toBe("FR");
+    });
   });
 });

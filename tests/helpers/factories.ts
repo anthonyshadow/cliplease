@@ -40,9 +40,10 @@ import type {
 } from "../../src/db/schema/types";
 import type { RateOptionKey } from "../../src/lib/domain/values";
 import { LICENSE_V1_VERSION } from "../../src/lib/legal/license-v1-summary";
+import { CHECKOUT_HOLD_MINUTES } from "../../src/lib/licensing/checkout-hold";
 import type { LicenseSnapshotV1 } from "../../src/lib/licensing/snapshot";
 import { defaultRateOptions } from "../../src/lib/pricing/presets";
-import { DAY_MS, HOUR_MS } from "../../src/lib/time";
+import { DAY_MS, HOUR_MS, MINUTE_MS } from "../../src/lib/time";
 import { generateLicenseCode } from "../../src/server/codes/license-code";
 
 /** Random lowercase hex, for unique test values. */
@@ -361,6 +362,7 @@ export async function insertLicenseRequest(
     approvalWindowHours: 72,
     checkoutSubmissionId: randomUUID(),
     checkoutExpiresAt: new Date(Date.now() + HOUR_MS),
+    checkoutHoldUntil: new Date(Date.now() + CHECKOUT_HOLD_MINUTES * MINUTE_MS),
     ...overrides,
   });
 }

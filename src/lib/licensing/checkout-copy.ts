@@ -15,4 +15,12 @@ export const CHECKOUT_COPY = {
   cancel: "Cancel",
   /** 02 §5.8, 07 D35: the session ends unpaid. */
   letItExpire: "Let it expire",
+  /** The unpaid hold (owner answer Q-176): the same words on standard and exclusive rows. `time` is formatDuration's. */
+  holdClock: (time: string) => `Reserved for you · ${time}`,
+  holdEnding: "Your reservation ends in 1 minute.",
+  holdExtend: "Extend 10 minutes",
+  holdExtending: "Extending…",
+  holdEnded: "Your reservation ended. Extend it to keep going.",
+  holdTaken: "Someone else has reserved this video. Nothing was charged.",
+  sessionEnded: "This checkout has ended. Nothing was charged.",
 } as const;

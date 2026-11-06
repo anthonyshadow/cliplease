@@ -3,6 +3,7 @@ import {
   approveOutcome,
   autoApproveLine,
   declineOutcome,
+  exclusiveRequestLine,
   INBOX_COPY,
   outcomeLine,
   requestPageLine,
@@ -31,6 +32,12 @@ describe("the Inbox's words (04 §11.5; 05 §6.3, §6.4)", () => {
       "Inbox. All caught up.",
     );
     expect(INBOX_COPY.waitingSegment(0)).toBe("Waiting 0");
+  });
+
+  it("says what approving an exclusive request does, on the UTC date", () => {
+    expect(exclusiveRequestLine("2027-11-20T15:00:00.000Z")).toBe(
+      "Exclusive request. If you approve, no one else can license this video until 20 Nov 2027.",
+    );
   });
 
   it("words the facts with the currency's amounts", () => {

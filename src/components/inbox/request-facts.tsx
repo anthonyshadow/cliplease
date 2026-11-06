@@ -5,6 +5,7 @@ import { useViewerDeadline } from "@/components/ui/use-viewer-deadline";
 import { formatMoney } from "@/lib/format";
 import { INBOX_COPY } from "@/lib/licensing/inbox";
 import type { CreatorRequest } from "@/lib/licensing/request-dto";
+import { formatMultiplier } from "@/lib/pricing/multiplier";
 
 const FACT = INBOX_COPY.facts;
 
@@ -13,7 +14,7 @@ const FACT = INBOX_COPY.facts;
  * D47). What the hold means and the deadline only while the request waits, and what the creator gets only while it
  * waits or once approved: after a decision, or past the deadline before the expiry is stored (it reads Expired, owner
  * answer Q-142 a), they would no longer be true (owner answer Q-128 a). The deadline is in the viewer's zone, after
- * mount.
+ * mount. An exclusive request names its premium after its scope (04 §11.5); a standard one has no such row.
  */
 export function RequestFacts({ request }: { request: CreatorRequest }) {
   const deadline = useViewerDeadline(request.expiresAt);
@@ -28,6 +29,14 @@ export function RequestFacts({ request }: { request: CreatorRequest }) {
     facts.push({ label: FACT.plannedUse, value: request.intendedUse });
   }
   facts.push({ label: FACT.scope, value: request.scope });
+  if (request.exclusive) {
+    facts.push({
+      label: FACT.licenseType,
+      value: INBOX_COPY.licenseTypeFact(
+        formatMultiplier(request.exclusiveMultiplierBps),
+      ),
+    });
+  }
   if (waiting || request.status === "approved") {
     facts.push({
       label: FACT.youGet,

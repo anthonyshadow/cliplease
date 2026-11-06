@@ -14,6 +14,8 @@ export type RequestReceivedProps = {
   timeZone: string;
   /** license_request.auto_approve, the snapshot (07 D81). */
   autoApprove: boolean;
+  /** An exclusive request: adds its line under the body (owner answer Q-173). */
+  exclusive: boolean;
   /** The buyer's /r link, with its key: never logged. */
   url: string;
 };
@@ -27,7 +29,10 @@ export function RequestReceived(p: RequestReceivedProps) {
     <EmailLayout
       audience="buyer"
       headline={COPY.receivedSubject(p.handle)}
-      paragraphs={[body(p.handle, total, deadline)]}
+      paragraphs={[
+        body(p.handle, total, deadline),
+        p.exclusive ? COPY.exclusiveReceived(p.handle, p.autoApprove) : null,
+      ].filter((paragraph) => paragraph !== null)}
       context={[p.title, p.scope]}
       button={{ label: COPY.seeRequestStatus, url: p.url }}
     />

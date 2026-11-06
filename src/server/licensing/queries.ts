@@ -9,6 +9,8 @@ import {
   moneyMovement,
   video,
 } from "@/db/schema";
+import { endsAtIfApprovedNow } from "@/lib/licensing/ends-at";
+import { INBOX_COPY } from "@/lib/licensing/inbox";
 import type {
   BuyerStatus,
   CreatorRequest,
@@ -74,9 +76,14 @@ const FACTS = {
 /**
  * A creator's view adds the buyer's entries (never their email) and the creator transfer's status, amount and currency
  * for the payout line (P19b): never its Stripe id, its error or its claim. Never in FACTS: /r's buyer never sees it.
+ * An exclusive request's kind and premium too (07 D111), with the database's clock for approveEndsAt, as the claims read
+ * it; `dbNow` stops at creatorRequestOf.
  */
 const CREATOR_FACTS = {
   ...FACTS,
+  exclusive: licenseRequest.exclusive,
+  exclusiveMultiplierBps: licenseRequest.exclusiveMultiplierBps,
+  dbNow: sql<Date>`now()`.mapWith(licenseRequest.createdAt),
   licenseeName: licenseRequest.licenseeName,
   contactName: licenseRequest.contactName,
   intendedUse: licenseRequest.intendedUse,
@@ -137,12 +144,20 @@ function factsOf(r: FactsRow, posterUrl: string | null) {
 }
 
 function creatorRequestOf(r: CreatorRow): CreatorRequest {
+  // The creator always gets their own poster (02 §4.2).
+  const facts = factsOf(
+    r,
+    posterSrc({ id: r.videoId, posterObjectKey: r.posterObjectKey }),
+  );
   return {
-    // The creator always gets their own poster (02 §4.2).
-    ...factsOf(
-      r,
-      posterSrc({ id: r.videoId, posterObjectKey: r.posterObjectKey }),
-    ),
+    ...facts,
+    scope: r.exclusive ? INBOX_COPY.exclusiveScope(facts.scope) : facts.scope,
+    exclusive: r.exclusive,
+    exclusiveMultiplierBps: r.exclusiveMultiplierBps,
+    approveEndsAt:
+      r.exclusive && r.status === "awaiting_approval"
+        ? (endsAtIfApprovedNow(r.dbNow, r.termKey)?.toISOString() ?? null)
+        : null,
     licenseeName: r.licenseeName,
     contactName: r.contactName,
     intendedUse: r.intendedUse,

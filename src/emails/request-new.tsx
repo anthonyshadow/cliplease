@@ -1,5 +1,5 @@
 import type { Currency } from "@/lib/domain/values";
-import { formatEmailDateTime, formatMoney } from "@/lib/format";
+import { formatEmailDateTime, formatMoney, formatPostDate } from "@/lib/format";
 import { EmailLayout } from "./components/email-layout";
 import { REQUEST_EMAIL_COPY as COPY } from "./request-copy";
 
@@ -16,6 +16,8 @@ export type RequestNewProps = {
   payoutsActive: boolean;
   /** auto_approve_fallback_at set: the first line is the fallback's (07 D81). */
   fellBack: boolean;
+  /** An exclusive request's end if approved now: adds "If you approve…" (07 D111). null for a standard one. */
+  exclusiveEndsAt: Date | null;
   url: string;
 };
 
@@ -34,6 +36,9 @@ export function RequestNew(p: RequestNewProps) {
       paragraphs={[
         p.fellBack ? COPY.autoApproveFellBack(deadline) : null,
         body,
+        p.exclusiveEndsAt
+          ? COPY.exclusiveNew(formatPostDate(p.exclusiveEndsAt))
+          : null,
         p.payoutsActive ? null : COPY.setUpPayouts(deadline),
       ].filter((paragraph) => paragraph !== null)}
       context={[p.title, p.scope]}

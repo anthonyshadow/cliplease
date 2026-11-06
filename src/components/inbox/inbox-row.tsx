@@ -6,10 +6,12 @@ import { ClearedSeal } from "@/components/cleared/cleared-seal";
 import { PosterThumb } from "@/components/license/poster-thumb";
 import { Button } from "@/components/ui/button";
 import { Disclosure } from "@/components/ui/disclosure";
+import { StatusPill } from "@/components/ui/status-pill";
 import { useFocusAfterRender } from "@/components/ui/use-focus-after-render";
 import { useFocusOnRemove } from "@/components/ui/use-focus-on-remove";
 import { formatMoney } from "@/lib/format";
 import {
+  exclusiveRequestLine,
   INBOX_COPY,
   type ResultLine,
   type RowOutcome,
@@ -42,7 +44,8 @@ export type RowActionEvents = {
  * is an action's result kept with the row, as it was before the tap, until the next refresh (02 §4.4 rule 2): its pill
  * (with the 16 px seal for an approval) and its line where the actions were; "You get" stays only for an approval
  * (owner answer Q-128 a). After any result the focus moves to the row's status, which the result's line describes (05
- * §6.3).
+ * §6.3). An exclusive request carries the neutral tag (04 §11.5; 07 D111) on its name line while it waits, and beside the
+ * status once it has an outcome or in History; under its scope, what approving does, only while Approve is there.
  */
 export function InboxRow({
   request,
@@ -72,6 +75,15 @@ export function InboxRow({
   const youGet = outcome
     ? outcome.pill === "approved"
     : waiting && request.displayStatus !== "expired";
+  const exclusiveTag = request.exclusive ? (
+    <StatusPill>{INBOX_COPY.exclusiveTag}</StatusPill>
+  ) : null;
+  const tagOnName = waiting && !outcome;
+  const licensee = (
+    <p data-licensee className="text-body font-semibold text-ink wrap-anywhere">
+      {request.licenseeName}
+    </p>
+  );
 
   async function onTap(action: () => Promise<RowOutcome | null>) {
     setLiveLine(null);
@@ -120,15 +132,24 @@ export function InboxRow({
         <PosterThumb src={request.posterUrl} />
       </div>
       <div className="flex min-w-0 flex-col gap-1 md:row-span-3">
-        <p
-          data-licensee
-          className="text-body font-semibold text-ink wrap-anywhere"
-        >
-          {request.licenseeName}
-        </p>
+        {tagOnName && exclusiveTag ? (
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            {licensee}
+            {exclusiveTag}
+          </div>
+        ) : (
+          licensee
+        )}
         {waiting ? (
           <p className="text-callout text-ink-2 wrap-anywhere">
             {request.scope}
+          </p>
+        ) : null}
+        {request.approveEndsAt &&
+        request.displayStatus === "awaiting_approval" &&
+        !outcome ? (
+          <p className="text-footnote text-ink wrap-anywhere">
+            {exclusiveRequestLine(request.approveEndsAt)}
           </p>
         ) : null}
         <p className="text-footnote text-ink-2 tabular-nums wrap-anywhere">
@@ -164,6 +185,7 @@ export function InboxRow({
         >
           <RequestStatus request={request} status={outcome?.pill} />
         </div>
+        {tagOnName ? null : exclusiveTag}
         {request.licenseCode ? (
           <span className="text-footnote text-ink tracking-code">
             {request.licenseCode}

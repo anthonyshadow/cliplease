@@ -10,12 +10,22 @@ import type {
   VideoStatus,
 } from "../../lib/domain/values";
 import { autoApprovesNewRequests } from "../../lib/licensing/auto-approve-rule";
+import {
+  availabilityDisplayFromFacts,
+  availabilityDisplayOf,
+  deriveAvailability,
+  type PublicVideoAvailability,
+} from "../../lib/licensing/availability";
 import type { LicensePageDTO } from "../../lib/licensing/license-page";
 import { defaultSelection } from "../../lib/licensing/selection";
 import { fromPriceCents } from "../../lib/pricing/from-price";
 import { PLATFORM_FEE_MIN_CENTS } from "../../lib/pricing/presets";
 import { type BadgeInput, publicBadge } from "../../lib/videos/ownership";
 import { env } from "../env";
+import {
+  availabilityFactsByVideo,
+  loadAvailabilityFacts,
+} from "../licensing/availability";
 import {
   getPublicPostings,
   publicPostingRowsByVideo,
@@ -49,6 +59,8 @@ export type PublicVideoCardDTO = {
   badge: BadgeInput;
   fromPriceCents: number | null;
   currency: Currency;
+  /** What the card's line says (07 D110): the state and its end, never a licensee. */
+  availability: PublicVideoAvailability;
 };
 
 /** The video's columns licenseOffer reads. */
@@ -91,8 +103,9 @@ function licenseOffer(
 
 /**
  * The creator's videos anyone may license (03 §7.5; 07 D03, D72), newest published first: the published videos, every
- * posting of them and the rate card, read together; then, per video, licenseOffer, the public badge and the From
- * price.
+ * posting of them and the rate card, read together, then their availability, once for the page's ids; then, per video,
+ * licenseOffer, the public badge, the From price and the availability line's state. No license or request column is
+ * selected here: a licensee's name never reaches this list (07 D110).
  */
 export async function listPublicVideos(
   creatorId: string,
@@ -112,6 +125,10 @@ export async function listPublicVideos(
     publicPostingRowsByVideo(creatorId),
     getRateCard(creatorId),
   ]);
+  const factsFor = await availabilityFactsByVideo(
+    db,
+    rows.map((r) => r.id),
+  );
   const platforms = enabledPlatforms();
   return rows.flatMap((row): PublicVideoCardDTO[] => {
     const postings = postingsByVideo.get(row.id) ?? [];
@@ -133,6 +150,7 @@ export async function listPublicVideos(
         badge: publicBadge(toPublicPostings(postings), "sm"),
         fromPriceCents: fromPriceCents(offer.options, env.PLATFORM_FEE_BPS),
         currency: offer.options.currency,
+        availability: availabilityDisplayFromFacts(factsFor(row.id)),
       },
     ];
   });
@@ -167,10 +185,11 @@ export async function latestLiveShareUrl(creator: {
 }
 
 /**
- * The license page's data for `/@{handle}/{slug}` (03 §7.5; 07 D03, D72, D82): the video by its creator's handle and
- * slug, then its public postings and the rate card. null when licenseOffer offers nothing; the page then 404s. Fields
- * are picked one by one: the row's object key reaches nothing but posterSrc, and the stored payouts status nothing but
- * `creator.autoApprove` (owner answer Q-155; no Stripe call). `platforms`: the enabled ones (tests pass their own).
+ * The license page's data for `/@{handle}/{slug}` (03 §7.5; 07 D03, D72, D82, D110): the video by its creator's handle
+ * and slug, then its public postings, the rate card and its availability. null when licenseOffer offers nothing; the
+ * page then 404s. Fields are picked one by one: the row's object key reaches nothing but posterSrc, the stored payouts
+ * status nothing but `creator.autoApprove` (owner answer Q-155; no Stripe call), and a renewal plan's id nothing at all.
+ * `platforms`: the enabled ones (tests pass their own).
  */
 export async function readLicensePageData(
   handle: string,
@@ -197,9 +216,10 @@ export async function readLicensePageData(
     .innerJoin(creatorProfile, eq(creatorProfile.id, video.creatorId))
     .where(and(eq(creatorProfile.handle, handle), eq(video.slug, slug)));
   if (row?.status !== "published") return null;
-  const [postings, rateCard] = await Promise.all([
+  const [postings, rateCard, facts] = await Promise.all([
     getPublicPostings(row.id),
     getRateCard(row.creatorId),
+    loadAvailabilityFacts(db, row.id),
   ]);
   const offer = licenseOffer(
     row,
@@ -208,6 +228,10 @@ export async function readLicensePageData(
     platforms,
   );
   if (!offer) return null;
+  const availability = deriveAvailability(
+    facts,
+    offer.options.exclusive.offered,
+  );
   return {
     video: {
       id: row.id,
@@ -231,6 +255,11 @@ export async function readLicensePageData(
     platformFeeBps: env.PLATFORM_FEE_BPS,
     platformFeeMinCents: PLATFORM_FEE_MIN_CENTS[offer.options.currency],
     selection: offer.selection,
+    availability: {
+      ...availabilityDisplayOf(availability),
+      canRequestExclusive: availability.canRequestExclusive,
+      canRequestNonExclusive: availability.canRequestNonExclusive,
+    },
   };
 }
 

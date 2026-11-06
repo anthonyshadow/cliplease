@@ -16,6 +16,28 @@ describe("StartCheckoutSchema (02 §5.7; P15)", () => {
     expect(StartCheckoutSchema.parse(DEMO)).toEqual(DEMO);
   });
 
+  it("requires the license type as a boolean (07 D109)", () => {
+    expect(StartCheckoutSchema.parse({ ...DEMO, exclusive: true })).toEqual({
+      ...DEMO,
+      exclusive: true,
+    });
+    const { exclusive: _, ...missing } = DEMO;
+    expect(StartCheckoutSchema.safeParse(missing).success).toBe(false);
+    for (const exclusive of ["true", 1, null]) {
+      expect(issue({ exclusive })?.[0]).toBe("exclusive");
+    }
+  });
+
+  it("strips anything else, so a price never comes from the browser (07 D79)", () => {
+    expect(
+      StartCheckoutSchema.parse({
+        ...DEMO,
+        exclusiveMultiplierBps: 10000,
+        licensePriceCents: 1,
+      }),
+    ).toEqual(DEMO);
+  });
+
   it("tidies the names a buyer types (owner answer Q-108 a)", () => {
     const parsed = StartCheckoutSchema.parse({
       ...DEMO,

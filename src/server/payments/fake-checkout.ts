@@ -1,11 +1,11 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db } from "@/db/client";
-import { licenseRequest, video } from "@/db/schema";
+import { creatorProfile, licenseRequest, video } from "@/db/schema";
 import type { Currency, LicenseRequestStatus } from "@/lib/domain/values";
-import { scopeLabel } from "@/lib/licensing/selection";
-import { requestStatusPath } from "@/lib/urls";
+import { licenseLineLabel, scopeLabel } from "@/lib/licensing/selection";
+import { requestStatusPath, videoUrl } from "@/lib/urls";
 import { isUuid } from "@/lib/validation/uuid";
 import { type Env, env, isDevAppEnv } from "../env";
 import { revealBuyerToken } from "../tokens/buyer-token";
@@ -34,10 +34,19 @@ export type FakeCheckout = {
   sessionId: string;
   title: string;
   scope: string;
+  exclusive: boolean;
+  /** 07 D113's line item: what an exclusive request shows in place of `scope`. */
+  label: string;
   currency: Currency;
   licensePriceCents: number;
   platformFeeCents: number;
   amountTotalCents: number;
+  /** The unpaid hold's end (owner answer Q-170), its session's end, and the database's clock for the page's countdown. */
+  holdUntil: Date;
+  sessionEndsAt: Date;
+  now: Date;
+  /** The video's license page. */
+  licensePath: string;
   /** The buyer's /r link plus `extra`, where Stripe would return them. Only for redirect(): never shown or logged. */
   returnPath: (extra?: Readonly<Record<string, string>>) => string;
 };
@@ -61,27 +70,45 @@ export async function openFakeCheckout(
       termKey: licenseRequest.termKey,
       territoryKey: licenseRequest.territoryKey,
       territoryCode: licenseRequest.territoryCode,
+      exclusive: licenseRequest.exclusive,
       currency: licenseRequest.currency,
       licensePriceCents: licenseRequest.licensePriceCents,
       platformFeeCents: licenseRequest.platformFeeCents,
       amountTotalCents: licenseRequest.amountTotalCents,
+      holdUntil: licenseRequest.checkoutHoldUntil,
+      sessionEndsAt: licenseRequest.checkoutExpiresAt,
+      now: sql<Date>`now()`.mapWith(licenseRequest.checkoutExpiresAt),
       title: video.title,
+      slug: video.slug,
+      handle: creatorProfile.handle,
     })
     .from(licenseRequest)
     .innerJoin(video, eq(video.id, licenseRequest.videoId))
+    .innerJoin(creatorProfile, eq(creatorProfile.id, video.creatorId))
     .where(eq(licenseRequest.id, requestId));
   if (!row?.sessionId) return null;
   const token = revealBuyerToken(row);
+  const scope = scopeLabel(row);
   return {
     id: row.id,
     status: row.status,
     sessionId: row.sessionId,
     title: row.title,
-    scope: scopeLabel(row),
+    scope,
+    exclusive: row.exclusive,
+    label: licenseLineLabel({
+      title: row.title,
+      scopeLabel: scope,
+      exclusive: row.exclusive,
+    }),
     currency: row.currency,
     licensePriceCents: row.licensePriceCents,
     platformFeeCents: row.platformFeeCents,
     amountTotalCents: row.amountTotalCents,
+    holdUntil: row.holdUntil,
+    sessionEndsAt: row.sessionEndsAt,
+    now: row.now,
+    licensePath: videoUrl(row.handle, row.slug),
     returnPath: (extra) => requestStatusPath(row.id, token, extra),
   };
 }

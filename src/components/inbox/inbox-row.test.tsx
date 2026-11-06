@@ -11,7 +11,11 @@ import { renderToString } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Toaster } from "@/components/ui/toast";
 import { formatDeadline } from "@/lib/format";
-import { approveOutcome, declineOutcome } from "@/lib/licensing/inbox";
+import {
+  approveOutcome,
+  declineOutcome,
+  type RowOutcome,
+} from "@/lib/licensing/inbox";
 import type {
   ApproveResult,
   CreatorRequest,
@@ -22,6 +26,8 @@ import {
   latestToast,
   pressApprove,
   pressDecline,
+  WAITING_EXCLUSIVE_LINE,
+  WAITING_EXCLUSIVE_REQUEST,
   WAITING_REQUEST,
 } from "../../../tests/helpers/inbox-fixtures";
 import { InboxList } from "./inbox-list";
@@ -162,6 +168,110 @@ describe("InboxRow (04 §9.11; 05 §6.3)", () => {
         `Expired. No answer by ${viewerDeadline}. The buyer wasn't charged.`,
       ),
     ).toBeTruthy();
+  });
+});
+
+describe("InboxRow's exclusive tag and line (04 §11.5; 07 D111; AD-72)", () => {
+  const exclusive = WAITING_EXCLUSIVE_REQUEST;
+  /** The row of `request`, with an action's `outcome` if it has one. */
+  function rowOf(request: CreatorRequest, outcome?: RowOutcome) {
+    const { container } = render(
+      <ul>
+        <InboxRow request={request} outcome={outcome} />
+      </ul>,
+    );
+    return firstRow(container);
+  }
+  const statusOf = (row: HTMLElement) =>
+    row.querySelector("[data-row-status]") as HTMLElement;
+  const decided = (status: "approved" | "declined" | "expired") => ({
+    ...exclusive,
+    status,
+    displayStatus: status,
+    approveEndsAt: null,
+  });
+
+  it("a waiting exclusive row: the neutral pill beside the name, its scope, and the line directly under it, informing", () => {
+    const row = rowOf(exclusive);
+    const pill = within(row).getByText("Exclusive");
+    const name = row.querySelector("[data-licensee]") as HTMLElement;
+    // A sibling of the name, never inside it: the Inbox's list reads the name alone.
+    expect(pill.parentElement).toBe(name.parentElement);
+    expect(pill.previousElementSibling).toBe(name);
+    expect(name.textContent).toBe("Daily Laughs Media LLC");
+    expect(pill.className).toContain("bg-fill");
+    expect(pill.querySelector("[aria-hidden]")).toBeNull();
+    expect(pill.closest("[data-row-status]")).toBeNull();
+
+    const scope = within(row).getByText(
+      "Exclusive · Paid social ads · 1 year · Worldwide",
+    );
+    const line = within(row).getByText(WAITING_EXCLUSIVE_LINE);
+    expect(line.previousElementSibling).toBe(scope);
+    expect(line.className).toBe("text-footnote text-ink wrap-anywhere");
+    expect(line.querySelector("svg")).toBeNull();
+  });
+
+  it.each([
+    ["an overdue row", { ...exclusive, displayStatus: "expired" }, "Expired"],
+    [
+      "a claimed row",
+      { ...exclusive, displayStatus: "processing" },
+      "Processing…",
+    ],
+  ] as const)(
+    "%s keeps the pill by its name, and drops the line with the buttons",
+    (_, request, status) => {
+      const row = rowOf(request);
+      expect(within(statusOf(row)).getByText(status)).toBeTruthy();
+      expect(
+        within(row).getByText("Exclusive").closest("[data-row-status]"),
+      ).toBe(null);
+      expect(within(row).queryByText(WAITING_EXCLUSIVE_LINE)).toBeNull();
+    },
+  );
+
+  it.each([
+    ["approved", decided("approved"), "Approved"],
+    ["declined", decided("declined"), "Declined"],
+    ["expired", decided("expired"), "Expired"],
+    [
+      "held after an approval",
+      exclusive,
+      "Approved",
+      approveOutcome({ ok: true, licenseCode: "CL-7K3M-9QXA" }, exclusive),
+    ],
+    [
+      "held after a decline",
+      exclusive,
+      "Declined",
+      declineOutcome({ ok: true }),
+    ],
+  ] as const)(
+    "a row %s has the pill beside its status, and no line",
+    (_, request, status, outcome?: RowOutcome) => {
+      const row = rowOf(request, outcome);
+      const pill = within(row).getByText("Exclusive");
+      expect(pill.parentElement).toBe(statusOf(row));
+      expect(within(statusOf(row)).getByText(status)).toBeTruthy();
+      expect(within(row).queryByText(WAITING_EXCLUSIVE_LINE)).toBeNull();
+    },
+  );
+
+  it.each([
+    ["waiting", WAITING_REQUEST],
+    [
+      "approved",
+      {
+        ...WAITING_REQUEST,
+        status: "approved",
+        displayStatus: "approved",
+      },
+    ],
+  ] as const)("a standard %s row shows neither", (_, request) => {
+    const row = rowOf(request);
+    expect(within(row).queryByText("Exclusive")).toBeNull();
+    expect(within(row).queryByText(/^Exclusive request/)).toBeNull();
   });
 });
 
@@ -736,5 +846,40 @@ describe("RequestFacts (04 §9.11; owner answer Q-128 a)", () => {
       <RequestFacts request={{ ...waiting, intendedUse: null }} />,
     );
     expect(factsOf(container)).not.toHaveProperty("Planned use");
+  });
+
+  it("adds an exclusive request's License type straight after its scope, with one ×", () => {
+    const { container } = render(
+      <RequestFacts request={WAITING_EXCLUSIVE_REQUEST} />,
+    );
+    const facts = factsOf(container);
+    expect(facts.Scope).toBe(
+      "Exclusive · Paid social ads · 1 year · Worldwide",
+    );
+    expect(facts["License type"]).toBe("Exclusive (×3.00 premium)");
+    const labels = Object.keys(facts);
+    expect(labels[labels.indexOf("Scope") + 1]).toBe("License type");
+  });
+
+  it("keeps it once decided, a video's own premium included", () => {
+    const { container } = render(
+      <RequestFacts
+        request={{
+          ...WAITING_EXCLUSIVE_REQUEST,
+          status: "declined",
+          displayStatus: "declined",
+          exclusiveMultiplierBps: 20000,
+          approveEndsAt: null,
+        }}
+      />,
+    );
+    expect(factsOf(container)["License type"]).toBe(
+      "Exclusive (×2.00 premium)",
+    );
+  });
+
+  it("gives a standard request no License type", () => {
+    const { container } = render(<RequestFacts request={waiting} />);
+    expect(factsOf(container)).not.toHaveProperty("License type");
   });
 });

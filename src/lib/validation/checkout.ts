@@ -41,6 +41,7 @@ const fields = z.object({
   termKey: z.enum(TERM_KEYS),
   territoryKey: z.enum(TERRITORY_KEYS),
   territoryCode: z.string().max(40).nullable(),
+  exclusive: z.boolean(),
   licenseeName: name(DETAILS_COPY.licenseeEmpty).refine(
     (licensee) => !WEB_ADDRESS_RE.test(licensee),
     { error: DETAILS_COPY.licenseeWebAddress },

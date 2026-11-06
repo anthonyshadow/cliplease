@@ -1,5 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
-import { formatMoney } from "../../src/lib/format";
+import { formatDelta, formatMoney } from "../../src/lib/format";
 import { LICENSE_PAGE_COPY } from "../../src/lib/licensing/license-page";
 import { EXCLUSIVE_COPY } from "../../src/lib/pricing/exclusive-copy";
 import { DEFAULT_EXCLUSIVE_MULTIPLIER_BPS } from "../../src/lib/pricing/presets";
@@ -7,11 +7,17 @@ import { REVIEW_COPY } from "../../src/lib/videos/review";
 import { videoHref } from "../../src/lib/videos/steps";
 import { cad } from "../helpers/money";
 import {
+  availabilityNotice,
   BUYER_PHONE,
   choose,
   chooseDemoSelection,
+  fillDetails,
   hydrated,
+  licenseTypeGroup,
+  optionTile,
+  radio,
   requestButton,
+  requestLicense,
 } from "./helpers/buyer";
 import { collectConsoleErrors } from "./helpers/console";
 import { signUpCreator } from "./helpers/creator";
@@ -61,8 +67,9 @@ import { cleanCreatedVideos, leaveIsGuarded } from "./helpers/videos";
 // bounds refuse on Save with the focus on the field, and Reset turns it off at ×3.00. On a published video and on a plain
 // upload's Review the choice and the premium are one draft (Q-163): an arrow key or a typed premium sends nothing, the
 // preview follows, Save stores it and a reload reads it back, and an empty premium is the rate card's (Q-164). A buyer
-// still sees only standard licenses at the standard price. Every Switch and radio is worked by keyboard. A later save
-// reloads first, so the toast it reads is its own.
+// then sees the License type group (P19f) with Standard chosen at the standard price, and a press another buyer's request
+// has overtaken lands on the notice (P19f; AD-67). Every Switch and radio is worked by keyboard. A later save reloads
+// first, so the toast it reads is its own.
 test.use({ reducedMotion: "reduce" });
 test.afterEach(cleanCreatedVideos);
 
@@ -235,7 +242,7 @@ test("J12.1: the rate card's Exclusive licenses start off; on, the premium price
   expect(errors).toEqual([]);
 });
 
-test("J12.2: on a video page the exclusive choice and premium are a draft until Save, an empty premium is the rate card's, and a buyer still gets only the standard price", async ({
+test("J12.2: on a video page the exclusive choice and premium are a draft until Save, an empty premium is the rate card's, and a buyer gets the License type group with Standard chosen at the standard price", async ({
   page,
   browser,
   baseURL,
@@ -324,21 +331,76 @@ test("J12.2: on a video page the exclusive choice and premium are a draft until 
   await expect(pricePreview(page)).toHaveCount(1);
   await expectNoBareDollar(page);
 
-  // Logged out at 390 × 844: no license type yet (P19f adds it), and the demo selection at the standard price.
+  // Logged out at 390 × 844: the License type group with Standard chosen, Exclusive's delta beside the demo selection,
+  // which keeps the standard price until Exclusive is chosen.
   const context = await browser.newContext({ baseURL, viewport: BUYER_PHONE });
   const buyer = await context.newPage();
   const buyerErrors = collectConsoleErrors(buyer);
   await buyer.goto(shareUrl);
   await hydrated(buyer);
-  await expect(buyer.getByRole("group", { name: "License type" })).toHaveCount(
-    0,
-  );
+  await expect(licenseTypeGroup(buyer)).toBeVisible();
+  await expect(radio(buyer, "exclusive", "false")).toBeChecked();
   await chooseDemoSelection(buyer);
+  await expect(optionTile(buyer, "exclusive", "true")).toContainText(
+    formatDelta(315_000, "cad"),
+  );
   await expect(requestButton(buyer)).toHaveAccessibleName(
     LICENSE_PAGE_COPY.request(cad(173_250)),
   );
   await context.close();
   expect(buyerErrors).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
+test("AD-67: a press the video can't take any more, at 1280 × 720: the page turns to the notice from lg, in view and with the focus", async ({
+  page,
+  browser,
+  baseURL,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "chromium-desktop",
+    "Only the focus on the copy from lg is tested here: jsdom can't tell the two copies apart.",
+  );
+  test.setTimeout(240_000);
+  const { shareUrl } = await publishDemoVideo(page);
+  await offerExclusive(page);
+
+  // A buyer gets as far as the press, with the options on the page.
+  const buyerContext = await browser.newContext({
+    baseURL,
+    viewport: { width: 1280, height: 720 },
+  });
+  const buyer = await buyerContext.newPage();
+  const errors = collectConsoleErrors(buyer);
+  await buyer.goto(shareUrl);
+  await hydrated(buyer);
+  await choose(buyer, "territory", "worldwide");
+  await fillDetails(buyer);
+  const terms = buyer.getByRole("checkbox");
+  await terms.focus();
+  await terms.press("Space");
+
+  // Another buyer's Exclusive reaches the fake checkout first, and stays there: its unpaid hold reserves the video.
+  const otherContext = await browser.newContext({
+    baseURL,
+    viewport: BUYER_PHONE,
+  });
+  await requestLicense(await otherContext.newPage(), shareUrl, {
+    use: "paid_social",
+    term: "y1",
+    territory: "worldwide",
+    exclusive: true,
+  });
+
+  await pressLocator(requestButton(buyer));
+  await expect(availabilityNotice(buyer)).toBeFocused();
+  await expect(availabilityNotice(buyer)).toBeInViewport();
+  await expect(
+    buyer.locator("[data-license-side] [data-availability-notice]"),
+  ).toBeHidden();
+  await expect(buyer.locator("[data-pricebar]")).toHaveCount(0);
+  await otherContext.close();
+  await buyerContext.close();
   expect(errors).toEqual([]);
 });
 

@@ -31,6 +31,8 @@ export type LicenseFormValues = {
   territoryKey: string;
   /** "" while none is chosen (and for Worldwide); startCheckout reads "" as null. */
   territoryCode: string;
+  /** The License type group's choice; startCheckout reads "true" as exclusive. */
+  exclusive: boolean;
   submissionId: string;
   expectedTotalCents: number;
   /** The viewer's IANA zone once the page has mounted; "" before (the server then uses UTC, 07 D84). */
@@ -166,6 +168,7 @@ export function LicenseDetails({
       <input type="hidden" name="termKey" value={values.termKey} />
       <input type="hidden" name="territoryKey" value={values.territoryKey} />
       <input type="hidden" name="territoryCode" value={values.territoryCode} />
+      <input type="hidden" name="exclusive" value={String(values.exclusive)} />
       <input type="hidden" name="termsVersion" value={LICENSE_V1_VERSION} />
       <input type="hidden" name="submissionId" value={values.submissionId} />
       <input
@@ -181,13 +184,14 @@ export function LicenseDetails({
 /**
  * 01 J7.6's two variants: auto (07 D81; no clock, server-rendered) and manual (its deadline after mount only). The
  * manual deadline is an estimate, now plus the creator's approval window in the viewer's zone (`deadline` null before
- * mount; no clock reads in the server render, 02 §4.4). Then 04 §11.2's small print and the legal links, in a new tab
- * like the summary's.
+ * mount; no clock reads in the server render, 02 §4.4). A manual exclusive request says the video waits on the creator
+ * (owner answer Q-173). Then 04 §11.2's small print and the legal links, in a new tab like the summary's.
  */
 export function HoldCopy({
   handle,
   total,
   autoApprove,
+  exclusive,
   deadline,
   currency,
 }: {
@@ -196,6 +200,7 @@ export function HoldCopy({
   total: string;
   /** The creator's new requests approve automatically (LicensePageDTO's `creator.autoApprove`). */
   autoApprove: boolean;
+  exclusive: boolean;
   deadline: string | null;
   currency: Currency;
 }) {
@@ -217,6 +222,9 @@ export function HoldCopy({
           </>
         )}
       </p>
+      {exclusive && !autoApprove ? (
+        <p className="text-callout text-ink-2">{COPY.holdExclusive(handle)}</p>
+      ) : null}
       <p className="text-footnote text-ink-2">
         {[...COPY.smallPrint(handle), COPY.currencyFaq(currency)].join(" ")}
       </p>
