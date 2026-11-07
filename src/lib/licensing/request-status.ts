@@ -64,6 +64,8 @@ export const REQUEST_STATUS_COPY = {
   approvedTitle: "Approved",
   approvedBody: (handle: string, total: string) =>
     `@${handle} approved. You were charged ${total}. Your file and license are ready.`,
+  /** 05 §4.3 callout 7 (owner answer Q-141 a): the approved view's way to /l, as license-approved's button reads. */
+  getFileAndLicense: "Get file and license",
   declinedTitle: "Not approved",
   declinedBody: (handle: string) =>
     `@${handle} didn't approve this request. You haven't been charged, and the hold on your card has been released.`,

@@ -17,7 +17,6 @@ import {
   type CreatorNavKey,
   currentNavKey,
   MORE_SHEET_KEYS,
-  shellPrefetch,
 } from "./creator-nav";
 import { useInboxCount } from "./inbox-count";
 import { MoreSheet } from "./more-sheet";
@@ -83,7 +82,6 @@ export function TabBar({
             <li key={key} className="flex flex-1">
               <Link
                 href={CREATOR_NAV[key].href}
-                prefetch={shellPrefetch(key)}
                 aria-current={isCurrent ? "page" : undefined}
                 className={cn(TAB, isCurrent ? "text-ink" : "text-ink-2")}
               >

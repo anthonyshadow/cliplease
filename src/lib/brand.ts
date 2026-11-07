@@ -1,5 +1,5 @@
-// Platform names as the UI writes them (04 §9.16, 05 §1.5) and their official marks (04 §8.2). Client-safe. P11b's
-// posting labels build on these maps.
+// Platform names as the UI writes them (04 §9.16, 05 §1.5) and their official marks (04 §8.2), and our own cleared
+// seal's check (04 §10.1). Client-safe. P11b's posting labels build on these maps.
 import type { SocialProviderId } from "./domain/values";
 
 export const PLATFORM_LABELS = {
@@ -29,3 +29,9 @@ export const PLATFORM_MARKS: Readonly<
   tiktok: { kind: "none", minPx: 0 },
   mock: { kind: "none", minPx: 0 },
 };
+
+/** The cleared seal's check in its 100 × 100 box, stroke 8 % of the diameter (04 §10.1): ClearedSeal and the license PDF. */
+export const CLEARED_SEAL_CHECK = {
+  d: "M29 52 L44 66 L72 36",
+  strokeWidth: 8,
+} as const;

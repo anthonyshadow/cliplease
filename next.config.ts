@@ -20,8 +20,8 @@ const nextConfig: NextConfig = {
       },
     },
   },
-  // 02 §4.6. When two rules set one key the later wins, so the buyer-token rows follow /(.*). The /verify (P20) and
-  // /licenses, /api/my (P20b) rows come with their pages; CSP is [H2].
+  // 02 §4.6. When two rules set one key the later wins, so the buyer-token rows follow /(.*). The /licenses and /api/my
+  // rows (P20b) come with their pages; CSP is [H2].
   async headers() {
     return [
       {
@@ -48,6 +48,8 @@ const nextConfig: NextConfig = {
       { source: "/dashboard/:path*", headers: NOINDEX },
       { source: "/onboarding", headers: NOINDEX },
       { source: "/admin/:path*", headers: NOINDEX },
+      // The public record, its 404 and its 308 (01 J10.5): noindex only; it keeps the default referrer policy.
+      { source: "/verify/:path*", headers: NOINDEX },
       { source: "/r/:path*", headers: BUYER_TOKEN },
       { source: "/l/:path*", headers: BUYER_TOKEN },
       { source: "/api/licenses/:path*", headers: BUYER_TOKEN },
@@ -67,6 +69,11 @@ const nextConfig: NextConfig = {
     incomingRequests: {
       ignore: [/\/api\/dev\/storage\//, /^\/(?:r|l|api\/licenses)\//],
     },
+  },
+  // The license PDF reads its fonts from disk (src/server/pdf/fonts.ts), which tracing can't see: ship them with its
+  // route. Keys are route globs, so the dynamic segment's brackets are escaped.
+  outputFileTracingIncludes: {
+    "/api/licenses/\\[token\\]/pdf": ["./src/server/pdf/fonts/**/*"],
   },
   experimental: {
     serverActions: {

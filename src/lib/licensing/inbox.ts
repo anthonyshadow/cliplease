@@ -95,8 +95,14 @@ export const INBOX_COPY = {
   /** 04 §11.5, 07 D99: the creator's approval toast. */
   approvedToast: (price: string) =>
     `Approved. ${price} is on its way to your Stripe balance.`,
-  /** 04 §11.5: the settled row and the request page; P20 adds " · View license". */
+  /** 04 §11.5: the settled row and the request page, then " · View license". */
   licenseIssued: (code: string) => `License ${code} issued`,
+  /**
+   * 04 §10.3, §11.5 (05 §6.3 callouts 10–12): the link after that line and after a History row's code, and the approval
+   * toast's action, all to /dashboard/licenses. The action's altText is what a screen reader hears in its place.
+   */
+  viewLicense: "View license",
+  viewLicenseAltText: "Go to Licenses to view the license",
   /**
    * Approve after the deadline, before the hold is released: 07 D25 keeps "The buyer wasn't charged." for the stored
    * expiry (owner answer, P18 Q2).

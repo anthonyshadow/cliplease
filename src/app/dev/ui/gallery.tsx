@@ -36,7 +36,7 @@ import { Stepper } from "@/components/ui/stepper";
 import { Switch } from "@/components/ui/switch";
 import { TextArea, TextField } from "@/components/ui/text-field";
 import { toast } from "@/components/ui/toast";
-import { APP_NAME } from "@/lib/app-name";
+import { APP_NAME, DRAFT_NOTICE } from "@/lib/app-name";
 import { formatLicenseDate, formatMoney } from "@/lib/format";
 import { CURRENCY_DISPLAY } from "@/lib/money/currency";
 import { DAY_MS, HOUR_MS, MINUTE_MS } from "@/lib/time";
@@ -398,9 +398,7 @@ export function Gallery({ view }: { view: "waiting" | "history" }) {
           <Banner tone="info">
             Set up payouts so you can approve requests (about 2 min)
           </Banner>
-          <Banner tone="warning">
-            Draft for testing. Not for real transactions.
-          </Banner>
+          <Banner tone="warning">{DRAFT_NOTICE}</Banner>
           <Banner tone="error">Something went wrong. Try again.</Banner>
           <EmptyState
             title={

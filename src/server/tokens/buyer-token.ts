@@ -1,9 +1,10 @@
 import "server-only";
 import { createHash, randomBytes } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "@/db/client";
-import { licenseRequest } from "@/db/schema";
-import type { LicenseRequest } from "@/db/schema/types";
+import { license, licenseRequest } from "@/db/schema";
+import type { License, LicenseRequest } from "@/db/schema/types";
+import { LicenseSnapshotV1Schema } from "@/lib/licensing/snapshot";
 import { isUuid } from "@/lib/validation/uuid";
 import { bytesEqual } from "../crypto/hmac";
 import { decryptSecret, encryptSecret } from "../crypto/token-cipher";
@@ -14,6 +15,9 @@ import { decryptSecret, encryptSecret } from "../crypto/token-cipher";
 
 /** 32 bytes in base64url: 43 characters of A–Z, a–z, 0–9, "-" and "_". */
 const BUYER_TOKEN = /^[A-Za-z0-9_-]{43}$/;
+
+/** Whether `token` can be a buyer key at all: checked before any query, and before a link is built from it. */
+export const isBuyerToken = (token: string) => BUYER_TOKEN.test(token);
 
 /** The sealed copy's AAD: it names the column and the row, so a copy moved to another row never opens. */
 export const buyerTokenAad = (requestId: string) =>
@@ -54,7 +58,7 @@ export async function findRequestForBuyer(
   requestId: string,
   token: string,
 ): Promise<LicenseRequest | null> {
-  if (!isUuid(requestId) || !BUYER_TOKEN.test(token)) return null;
+  if (!isUuid(requestId) || !isBuyerToken(token)) return null;
   const [row] = await db
     .select()
     .from(licenseRequest)
@@ -65,4 +69,84 @@ export async function findRequestForBuyer(
     Buffer.from(hashBuyerToken(token), "hex"),
   );
   return matches ? row : null;
+}
+
+/** What /l, its two download routes and the license PDF read for a buyer link (03 §7.6, P20's part). */
+export type BuyerLicense = {
+  /** The license columns; `snapshot` checked against LicenseSnapshotV1Schema. */
+  license: Pick<
+    License,
+    | "id"
+    | "code"
+    | "startsAt"
+    | "endsAt"
+    | "revokedAt"
+    | "createdAt"
+    | "exclusive"
+    | "snapshot"
+    | "originalObjectKey"
+    | "originalBytes"
+    | "originalMime"
+  >;
+  /**
+   * The request facts the record prints next to its snapshot, which never change after checkout (owner answer Q-183).
+   * `buyerEmail` is for the masked receipt line only.
+   */
+  request: Pick<
+    LicenseRequest,
+    | "id"
+    | "territoryCode"
+    | "termsAcceptedAt"
+    | "amountTotalCents"
+    | "currency"
+    | "buyerEmail"
+  >;
+};
+
+/**
+ * The license a buyer link opens (02 §9.5; 03 §7.6): the approved request whose stored hash is the key's
+ * (license_request_buyer_token_hash_uidx; the hash of a 32-byte key, so the index lookup tells a guesser nothing), then
+ * its license (license_license_request_uidx). null for anything that can't be a key (checked before the query), an
+ * unknown key, a request that isn't approved, or no license. 03 §7.6's renewal plan and refund columns come with P22b
+ * and P21b.
+ */
+export async function findLicenseForBuyer(
+  token: string,
+): Promise<BuyerLicense | null> {
+  if (!isBuyerToken(token)) return null;
+  const [row] = await db
+    .select({
+      license: {
+        id: license.id,
+        code: license.code,
+        startsAt: license.startsAt,
+        endsAt: license.endsAt,
+        revokedAt: license.revokedAt,
+        createdAt: license.createdAt,
+        exclusive: license.exclusive,
+        snapshot: license.snapshot,
+        originalObjectKey: license.originalObjectKey,
+        originalBytes: license.originalBytes,
+        originalMime: license.originalMime,
+      },
+      request: {
+        id: licenseRequest.id,
+        territoryCode: licenseRequest.territoryCode,
+        termsAcceptedAt: licenseRequest.termsAcceptedAt,
+        amountTotalCents: licenseRequest.amountTotalCents,
+        currency: licenseRequest.currency,
+        buyerEmail: licenseRequest.buyerEmail,
+      },
+    })
+    .from(licenseRequest)
+    .innerJoin(license, eq(license.licenseRequestId, licenseRequest.id))
+    .where(
+      and(
+        eq(licenseRequest.buyerTokenHash, hashBuyerToken(token)),
+        eq(licenseRequest.status, "approved"),
+      ),
+    );
+  if (!row) return null;
+  const snapshot = LicenseSnapshotV1Schema.parse(row.license.snapshot);
+  return { license: { ...row.license, snapshot }, request: row.request };
 }

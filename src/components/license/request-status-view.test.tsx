@@ -20,7 +20,13 @@ vi.mock("next/navigation", async (actual) => ({
 }));
 
 const EXPIRES_AT = "2026-10-30T19:10:00.000Z";
-const props = { handle: "maya", total: "CA$1,732.50", expiresAt: EXPIRES_AT };
+const LICENSE_HREF = `/l/${"a".repeat(43)}`;
+const props = {
+  handle: "maya",
+  total: "CA$1,732.50",
+  expiresAt: EXPIRES_AT,
+  licenseHref: LICENSE_HREF,
+};
 const viewerDeadline = () =>
   formatDeadline(
     new Date(EXPIRES_AT),
@@ -177,5 +183,33 @@ describe("RequestStatusView (05 §4.3, 01 §4.8)", () => {
     ).toBeTruthy();
     rerender(<RequestStatusView view="capture_failed" {...props} />);
     expect(container.querySelector("svg")).toBeNull();
+  });
+
+  it("opens /l from the approved ending: Get file and license, primary and full width, under the body and before the card (05 §4.3 callout 7; Q-141 a)", () => {
+    render(
+      <RequestStatusView view="approved" {...props}>
+        <p>card</p>
+      </RequestStatusView>,
+    );
+    const link = screen.getByRole("link", { name: COPY.getFileAndLicense });
+    expect(link.getAttribute("href")).toBe(LICENSE_HREF);
+    expect(link.getAttribute("data-variant")).toBe("primary");
+    expect(link.classList.contains("w-full")).toBe(true);
+    const body = screen.getByText(/^@maya approved/);
+    const following = (a: Node, b: Node) =>
+      a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING;
+    expect(following(body, link)).toBeTruthy();
+    expect(following(link, screen.getByText("card"))).toBeTruthy();
+  });
+
+  it.each([
+    "waiting",
+    "auto_approving",
+    "declined",
+    "expired",
+    "capture_failed",
+  ] as const)("offers no license link while %s", (view) => {
+    render(<RequestStatusView view={view} {...props} />);
+    expect(screen.queryByRole("link")).toBeNull();
   });
 });

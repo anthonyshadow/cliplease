@@ -3,6 +3,7 @@ import { TokenCipherError } from "../crypto/token-cipher";
 import {
   generateBuyerToken,
   hashBuyerToken,
+  isBuyerToken,
   revealBuyerToken,
 } from "./buyer-token";
 
@@ -36,5 +37,19 @@ describe("buyer tokens (02 §5.11; 07 D14)", () => {
     expect(() => revealBuyerToken({ id: OTHER, buyerTokenEnc: enc })).toThrow(
       TokenCipherError,
     );
+  });
+
+  it("tells a possible key from anything else, before any lookup", () => {
+    expect(isBuyerToken(generateBuyerToken(ID).token)).toBe(true);
+    expect(isBuyerToken(`${"a".repeat(42)}-`)).toBe(true);
+    for (const bad of [
+      "",
+      "a".repeat(42),
+      "a".repeat(44),
+      `${"a".repeat(42)}=`,
+      `../${"a".repeat(40)}`,
+    ]) {
+      expect(isBuyerToken(bad)).toBe(false);
+    }
   });
 });

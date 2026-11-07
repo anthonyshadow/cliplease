@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { creatorUrl, requestStatusPath, videoUrl } from "./urls";
+import {
+  creatorUrl,
+  licenseDownloadPath,
+  requestStatusPath,
+  videoUrl,
+} from "./urls";
 
 describe("urls", () => {
   it("builds the public creator and video URLs", () => {
@@ -18,5 +23,12 @@ describe("urls", () => {
     expect(
       requestStatusPath(id, "tok", { session_id: "{CHECKOUT_SESSION_ID}" }),
     ).toBe(`/r/${id}?t=tok&session_id={CHECKOUT_SESSION_ID}`);
+  });
+
+  it("builds /l's two download routes", () => {
+    expect(licenseDownloadPath("tok", "original")).toBe(
+      "/api/licenses/tok/original",
+    );
+    expect(licenseDownloadPath("tok", "pdf")).toBe("/api/licenses/tok/pdf");
   });
 });

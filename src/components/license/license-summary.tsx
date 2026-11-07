@@ -7,15 +7,16 @@ import type { FilledSummary } from "@/lib/licensing/summary";
 
 /**
  * 04 §9.5 LicenseSummary: licenseSummary()'s heading, its groups as FactList rows, the link to the legal text (in a new
- * tab, so the page keeps the buyer's choices) and "Prices in Canadian dollars (CAD).". No aria-live: the PriceBar
- * announces. Presentational, so /l (P20) can show a license's summary too.
+ * tab, so the page keeps the buyer's choices) and, with a `currency`, "Prices in Canadian dollars (CAD).". No aria-live:
+ * the PriceBar announces. Presentational, so /l shows a license's summary too, with no currency: its card already says
+ * "Amounts in …" (07 D98), and 04 gives "Prices in" to the license page alone.
  */
 export function LicenseSummary({
   summary,
   currency,
 }: {
   summary: FilledSummary;
-  currency: Currency;
+  currency?: Currency;
 }) {
   const headingId = useId();
   const { link } = summary.footer;
@@ -53,9 +54,11 @@ export function LicenseSummary({
           {link.text}
         </a>
       </p>
-      <p className="text-footnote text-ink-2">
-        {LICENSE_PAGE_COPY.pricesIn(currency)}
-      </p>
+      {currency ? (
+        <p className="text-footnote text-ink-2">
+          {LICENSE_PAGE_COPY.pricesIn(currency)}
+        </p>
+      ) : null}
     </section>
   );
 }

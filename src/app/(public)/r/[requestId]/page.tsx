@@ -15,7 +15,7 @@ import {
   VIEW_COPY,
   viewTitle,
 } from "@/lib/licensing/request-status";
-import { videoUrl } from "@/lib/urls";
+import { licensePath, videoUrl } from "@/lib/urls";
 import { getBuyerRequest } from "@/server/licensing/request-status";
 
 const COPY = REQUEST_STATUS_COPY;
@@ -50,7 +50,8 @@ async function pageFor({ params, searchParams }: PageProps<"/r/[requestId]">) {
       canceled: checkout === "canceled",
       returning: sessionId !== undefined,
     });
-  return request && view ? { request, view } : null;
+  // `t` matched the request's stored hash: the key /l opens too (ADR-24), never revealed from the sealed copy.
+  return request && view ? { request, view, token: t } : null;
 }
 
 /**
@@ -82,16 +83,16 @@ export async function generateMetadata(
  * S03, the buyer's request status (01 §4.8, J7.17; 05 §4.3; 04 §11.3): every state's words, its stored status only (07
  * D25), and the summary card. While the request waits, a neutral countdown (or "Processing…" while a capture, decline
  * or expiry is claimed, 07 D26), and the page refreshes on focus and every 30 s; an auto-approve request reads
- * Processing… with its own body and refreshes every 3 s for 30 s, then every 30 s (05 §4.3 callouts 8–9). No
- * loading.tsx: a streamed route answers 200, and a dead link must be a real 404 (owner answer Q-110 a). The Get file
- * and license button comes with /l in P20.
+ * Processing… with its own body and refreshes every 3 s for 30 s, then every 30 s (05 §4.3 callouts 8–9). Approved,
+ * Get file and license opens /l with the same key (owner answer Q-141 a). No loading.tsx: a streamed route answers
+ * 200, and a dead link must be a real 404 (owner answer Q-110 a).
  */
 export default async function RequestStatusPage(
   props: PageProps<"/r/[requestId]">,
 ) {
   const page = await pageFor(props);
   if (!page) notFound();
-  const { request, view } = page;
+  const { request, view, token } = page;
   const waiting = view === "waiting";
   const autoApproving = view === "auto_approving";
   return (
@@ -100,6 +101,7 @@ export default async function RequestStatusPage(
       handle={request.handle}
       total={formatMoney(request.amountTotalCents, request.currency)}
       expiresAt={request.expiresAt}
+      licenseHref={licensePath(token)}
     >
       {/* One refresher: a burst while auto-approve runs, the 30 s pace while waiting; a flip between them restarts it. */}
       {waiting || autoApproving ? <AutoRefresh burst={autoApproving} /> : null}

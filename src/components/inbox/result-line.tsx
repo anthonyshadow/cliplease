@@ -1,6 +1,9 @@
 "use client";
 
+import Link from "next/link";
+import { CREATOR_NAV } from "@/components/layout/creator-nav";
 import { SetUpPayoutsLink } from "@/components/payouts/set-up-payouts-link";
+import { INLINE_LINK } from "@/components/ui/inline-link";
 import { SupportEmailLink } from "@/components/ui/support-email-link";
 import { INBOX_COPY, type ResultLine } from "@/lib/licensing/inbox";
 import { payoutLine } from "@/lib/licensing/payout-line";
@@ -11,7 +14,22 @@ import { PayoutsWaiting } from "./payouts-waiting";
 /** A request's footnote line in a row's text column or the request page's status block (04 §9.11). */
 export const LINE = "text-footnote wrap-anywhere";
 
-/** "License {code} issued" (04 §11.5): a held row's line and the approved request page's. P20 adds " · View license". */
+/** "View license" → /dashboard/licenses (04 §10.3, §11.5): after the issued line, and after a History row's code. */
+export function ViewLicenseLink() {
+  return (
+    <Link
+      href={CREATOR_NAV.licenses.href}
+      className={cn(INLINE_LINK, "hit-44 text-footnote")}
+    >
+      {INBOX_COPY.viewLicense}
+    </Link>
+  );
+}
+
+/**
+ * "License {code} issued · View license" (04 §10.3, §11.5): a held row's line and the approved request page's. The
+ * sentence keeps an element of its own, so it reads (and is found) without the link.
+ */
 export function LicenseIssuedLine({
   code,
   id,
@@ -23,7 +41,7 @@ export function LicenseIssuedLine({
 }) {
   return (
     <p id={id} className={cn(LINE, "text-ink", className)}>
-      {INBOX_COPY.licenseIssued(code)}
+      <span>{INBOX_COPY.licenseIssued(code)}</span> · <ViewLicenseLink />
     </p>
   );
 }

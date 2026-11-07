@@ -1,3 +1,4 @@
+import { CLEARED_SEAL_CHECK } from "@/lib/brand";
 import { cn } from "@/lib/utils";
 
 /** The seal's sizes (04 §10.1): 16 a row or toast, 40 /r and /verify, 72 and 88 /l (below and from lg). */
@@ -26,9 +27,9 @@ export function ClearedSeal({
     >
       <circle cx="50" cy="50" r="50" className="fill-cleared" />
       <path
-        d="M29 52 L44 66 L72 36"
+        d={CLEARED_SEAL_CHECK.d}
         fill="none"
-        strokeWidth="8"
+        strokeWidth={CLEARED_SEAL_CHECK.strokeWidth}
         strokeLinecap="round"
         strokeLinejoin="round"
         pathLength={1}

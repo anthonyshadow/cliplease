@@ -1,4 +1,6 @@
 // Public URLs: a creator and their videos (02 §4.3: /@handle is rewritten to /u/handle), and a buyer's request.
+import type { DownloadKind } from "./domain/values";
+
 export const creatorUrl = (handle: string) => `/@${handle}`;
 export const videoUrl = (handle: string, slug: string) => `/@${handle}/${slug}`;
 
@@ -25,6 +27,10 @@ export const requestDetailPath = (requestId: string) =>
 
 /** A buyer's license page, `/l/{token}` (02 §9.5; P20): the request's buyer key opens it. Never logged. */
 export const licensePath = (token: string) => `/l/${token}`;
+
+/** /l's two downloads, `/api/licenses/{token}/original|pdf` (02 §4.2; P20). Plain links only (Q-185). Never logged. */
+export const licenseDownloadPath = (token: string, kind: DownloadKind) =>
+  `/api/licenses/${token}/${kind}`;
 
 /** A license's public record (02 §4.1; P20). */
 export const verifyPath = (code: string) => `/verify/${code}`;

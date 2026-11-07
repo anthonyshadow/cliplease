@@ -28,10 +28,15 @@ import { REQUEST_STATUS_ID, RequestActions } from "./request-actions";
 const mocks = vi.hoisted(() => ({
   approveRequest: vi.fn(),
   declineRequest: vi.fn(),
+  push: vi.fn(),
 }));
 vi.mock("@/app/(dashboard)/dashboard/actions", () => ({
   approveRequest: mocks.approveRequest,
   declineRequest: mocks.declineRequest,
+}));
+vi.mock("next/navigation", async (actual) => ({
+  ...(await actual<typeof import("next/navigation")>()),
+  useRouter: () => ({ push: mocks.push }),
 }));
 
 afterEach(() => {
@@ -108,6 +113,19 @@ describe("RequestActions (05 §6.4)", () => {
     );
     expect(screen.queryByText(/License CL-7K3M-9QXA issued/)).toBeNull();
     expect(document.activeElement?.id).toBe(REQUEST_STATUS_ID);
+  });
+
+  it("offers View license in the approval toast, which opens Licenses (04 §10.3)", async () => {
+    render(<Page request={waiting} />);
+    await tapWith({ ok: true, licenseCode: "CL-7K3M-9QXA" });
+    const toast = within(latestToast() as HTMLElement);
+    expect(
+      toast.getByText(
+        "Approved. CA$1,575.00 is on its way to your Stripe balance.",
+      ),
+    ).toBeTruthy();
+    fireEvent.click(toast.getByRole("button", { name: "View license" }));
+    expect(mocks.push).toHaveBeenCalledWith("/dashboard/licenses");
   });
 
   it("keeps the late tap's line while the request still waits, without Decline or Approve, focused (07 D25)", async () => {

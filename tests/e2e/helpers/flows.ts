@@ -6,11 +6,14 @@ import {
   type Locator,
   type Page,
 } from "@playwright/test";
+import { INBOX_COPY } from "../../../src/lib/licensing/inbox";
+import { LICENSE_CODE_PATTERN } from "../../../src/lib/licensing/snapshot";
 import { POSTINGS_COPY } from "../../../src/lib/postings/copy";
 import { PUBLISHED_COPY, REVIEW_COPY } from "../../../src/lib/videos/review";
 import { VIDEO_MENU_COPY } from "../../../src/lib/videos/video-page";
 import {
   BUYER_PHONE,
+  E2E_LICENSEE,
   type LicenseChoice,
   payButton,
   requestLicense,
@@ -20,6 +23,7 @@ import { LIBRARY, libraryPostId, POST_01, tiles } from "./library";
 import {
   isServerAction,
   pressAndSettle,
+  pressAndSettleIn,
   pressButton,
   pressLocator,
   requestEnded,
@@ -199,4 +203,60 @@ export async function buyLicense(
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(landing);
   const statusUrl = page.url().replace(/&session_id=[^&]*$/, "");
   return { requestId, statusUrl, context, email };
+}
+
+/** A license code as issued (07 D101): `CL-` and two groups of four Crockford base32 symbols. */
+export const LICENSE_CODE = new RegExp(
+  LICENSE_CODE_PATTERN.source.slice(1, -1),
+);
+
+/** The buyer key a /r link carries (02 §9.5): the key /l opens too. */
+export function buyerKey(statusUrl: string): string {
+  const token = new URL(statusUrl).searchParams.get("t");
+  if (!token) throw new Error("buyerKey: the link has no key");
+  return token;
+}
+
+/**
+ * The signed-in creator taps Approve once on the Inbox row for `licensee` (01 J8.2: no dialog), reads the code from the
+ * row's "License {code} issued" and leaves the Inbox before its next refresh (WebKit cancels a refresh in flight and
+ * Next's fallback interrupts the next goto). Returns the code.
+ */
+export async function approveInInbox(
+  page: Page,
+  licensee: string = E2E_LICENSEE,
+): Promise<string> {
+  await page.goto("/dashboard");
+  const row = page
+    .locator("[data-inbox-row]")
+    .filter({ has: page.locator("[data-licensee]", { hasText: licensee }) });
+  await expect(row).toHaveCount(1);
+  await pressAndSettleIn(page, row, INBOX_COPY.approve);
+  const issued = row.getByText(/^License CL-.+ issued$/);
+  await expect(issued).toBeVisible();
+  const code = LICENSE_CODE.exec((await issued.textContent()) ?? "")?.[0];
+  if (!code) throw new Error("approveInInbox: no license code");
+  await page.goto("about:blank");
+  return code;
+}
+
+/**
+ * A license for the video at `shareUrl` (P20): a logged-out buyer pays (buyLicense, its context closed) and the
+ * signed-in creator approves it from the Inbox (approveInInbox). Returns the request's id, its buyer key, the code and
+ * the buyer's address.
+ */
+export async function licenseVideo(
+  page: Page,
+  browser: Browser,
+  shareUrl: string,
+  choice: LicenseChoice,
+): Promise<{ requestId: string; token: string; code: string; email: string }> {
+  const { requestId, statusUrl, context, email } = await buyLicense(
+    browser,
+    shareUrl,
+    choice,
+  );
+  await context.close();
+  const code = await approveInInbox(page, choice.licensee);
+  return { requestId, token: buyerKey(statusUrl), code, email };
 }

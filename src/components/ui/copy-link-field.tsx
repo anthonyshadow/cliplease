@@ -5,8 +5,81 @@ import { useEffect, useRef } from "react";
 import { cn } from "@/lib/utils";
 import { COPY_LINK_COPY, useCopyLink } from "./use-copy-link";
 
-const PILL =
-  "hit-44 inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-transparent bg-surface px-4 text-callout font-semibold text-ink active:opacity-70";
+/** 04 §9.25's Copy pill, `sm` and borderless; the caller gives its fill, one step off what it sits on (04 §2.2-8). */
+const COPY_PILL =
+  "hit-44 inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-transparent px-4 text-callout font-semibold text-ink active:opacity-70";
+
+/** The Copy pill's words: "Copied" for 2 s after a copy. */
+export const COPY_PILL_COPY = { copy: "Copy", copied: "Copied" } as const;
+
+type CopyStatus = ReturnType<typeof useCopyLink>["status"];
+
+/** A ref for the copied text, selected when there is no clipboard (04 §9.25: "Press and hold to copy"). */
+export function useSelectWhenManual(status: CopyStatus) {
+  const ref = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (status.kind !== "manual") return;
+    const node = ref.current;
+    const selection = window.getSelection();
+    if (!node || !selection) return;
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }, [status]);
+  return ref;
+}
+
+/** 04 §9.25's Copy pill: Copy, then Check and "Copied" for 2 s. `className` is its fill. */
+export function CopyPill({
+  copied,
+  onClick,
+  className,
+  "aria-label": ariaLabel,
+}: {
+  copied: boolean;
+  onClick: () => void;
+  className: string;
+  "aria-label"?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={ariaLabel}
+      className={cn(COPY_PILL, className)}
+    >
+      {copied ? (
+        <Check aria-hidden size={16} strokeWidth={2} />
+      ) : (
+        <Copy aria-hidden size={16} strokeWidth={2} />
+      )}
+      {copied ? COPY_PILL_COPY.copied : COPY_PILL_COPY.copy}
+    </button>
+  );
+}
+
+/**
+ * A copy's polite line: `copiedText` for screen readers only after a copy, "Press and hold to copy" shown when there is
+ * no clipboard. Keyed by the press, so a repeated message is announced again.
+ */
+export function CopyStatusLine({
+  status,
+  copiedText,
+}: {
+  status: CopyStatus;
+  copiedText: string;
+}) {
+  const copied = status.kind === "copied";
+  return (
+    <p aria-live="polite" className="text-footnote text-ink-2">
+      <span key={status.id} className={cn(copied && "sr-only")}>
+        {copied ? copiedText : null}
+        {status.kind === "manual" ? COPY_LINK_COPY.manual : null}
+      </span>
+    </p>
+  );
+}
 
 /**
  * 04 §9.25: read-only row with the URL truncated at the start (the slug stays visible) and a Copy pill. Copy → "Copied"
@@ -25,18 +98,7 @@ export function CopyLinkField({
 }) {
   const { status, copy } = useCopyLink(url);
   const copied = status.kind === "copied";
-  const textRef = useRef<HTMLSpanElement>(null);
-
-  useEffect(() => {
-    if (status.kind !== "manual") return;
-    const node = textRef.current;
-    const selection = window.getSelection();
-    if (!node || !selection) return;
-    const range = document.createRange();
-    range.selectNodeContents(node);
-    selection.removeAllRanges();
-    selection.addRange(range);
-  }, [status]);
+  const textRef = useSelectWhenManual(status);
 
   return (
     <div className={cn("flex flex-col gap-1", className)}>
@@ -49,22 +111,9 @@ export function CopyLinkField({
           {/* The bidi isolate keeps the URL's own order while the start is the part that gets cut. */}
           <bdi dir="ltr">{url}</bdi>
         </span>
-        <button type="button" onClick={copy} className={PILL}>
-          {copied ? (
-            <Check aria-hidden size={16} strokeWidth={2} />
-          ) : (
-            <Copy aria-hidden size={16} strokeWidth={2} />
-          )}
-          {copied ? "Copied" : "Copy"}
-        </button>
+        <CopyPill copied={copied} onClick={copy} className="bg-surface" />
       </div>
-      {/* Keyed by the press, so a repeated message is announced again. "Link copied" is for screen readers only. */}
-      <p aria-live="polite" className="text-footnote text-ink-2">
-        <span key={status.id} className={cn(copied && "sr-only")}>
-          {copied ? COPY_LINK_COPY.copied : null}
-          {status.kind === "manual" ? COPY_LINK_COPY.manual : null}
-        </span>
-      </p>
+      <CopyStatusLine status={status} copiedText={COPY_LINK_COPY.copied} />
     </div>
   );
 }

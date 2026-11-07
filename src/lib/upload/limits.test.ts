@@ -4,6 +4,7 @@ import {
   mimeFromFileName,
   ORIGINAL_MAX_BYTES,
   ORIGINAL_MIME,
+  originalExtension,
   PART_BYTES,
   PART_CONCURRENCY,
   PART_MAX_ATTEMPTS,
@@ -84,4 +85,15 @@ describe("mimeFromFileName", () => {
       expect(mimeFromFileName(name)).toBeNull();
     },
   );
+});
+
+describe("originalExtension", () => {
+  it("names each upload type's extension", () => {
+    expect(originalExtension("video/mp4")).toBe("mp4");
+    expect(originalExtension("video/quicktime")).toBe("mov");
+  });
+
+  it("throws for any other type: a license's original is always an upload type", () => {
+    expect(() => originalExtension("video/webm")).toThrow();
+  });
 });

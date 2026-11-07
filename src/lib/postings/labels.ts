@@ -20,3 +20,15 @@ export function postingPlatformLabel(
   const label = otherLabel?.trim() ?? "";
   return label === "" ? "Other" : label;
 }
+
+/**
+ * An Other site's link text, its hostname without a leading "www." ("vimeo.com"): the live list's and the license
+ * record's (P20). Null for any other platform, a posting with no link shown, or a url that doesn't parse.
+ */
+export function postingHostLabel(
+  platform: PostingPlatform,
+  url: string | null,
+): string | null {
+  if (platform !== "other" || url === null || !URL.canParse(url)) return null;
+  return new URL(url).hostname.replace(/^www\./, "");
+}

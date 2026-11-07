@@ -1,5 +1,6 @@
 // Upload limits (07 D80, 07 §7.2; 02 §5.9). Client-safe: the P10b dropzone and the server share them, so the size and type
 // rules can't drift. src/server/storage/limits.ts re-exports them with the server's URL lifetimes.
+import { isOneOf } from "../domain/values";
 
 export const ORIGINAL_MAX_BYTES = 2 * 1024 ** 3; // 2 GiB, shown "2 GB" (OQ-10)
 export const PART_BYTES = 16 * 1024 ** 2; // fixed 16 MiB parts; 2 GiB = 128 parts
@@ -19,6 +20,19 @@ export const ORIGINAL_EXTENSION = {
   "video/mp4": "mp4",
   "video/quicktime": "mov",
 } as const satisfies Record<OriginalMime, string>;
+
+/**
+ * A license's original's extension ("mp4"): the type was one of the upload types, copied from the ready video (07 D80,
+ * DB13), so anything else is a broken row and throws. /l's button names it; the original route's file name ends in it.
+ */
+export function originalExtension(
+  mime: string,
+): (typeof ORIGINAL_EXTENSION)[OriginalMime] {
+  if (!isOneOf(ORIGINAL_MIME, mime)) {
+    throw new Error("originalExtension: not an upload type");
+  }
+  return ORIGINAL_EXTENSION[mime];
+}
 
 /** The original's type from its name when the browser gives none (iPhone's "IMG_0001.MOV" often has an empty type). */
 export function mimeFromFileName(name: string): OriginalMime | null {

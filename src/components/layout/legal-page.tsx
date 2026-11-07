@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { Banner } from "@/components/ui/banner";
 import { Button } from "@/components/ui/button";
 import { INLINE_LINK } from "@/components/ui/inline-link";
+import { DRAFT_NOTICE } from "@/lib/app-name";
 import { LICENSE_V1_UPDATED_LABEL } from "@/lib/legal/license-v1";
 import { LICENSE_V1_VERSION } from "@/lib/legal/license-v1-summary";
 import {
@@ -105,9 +106,7 @@ export function LegalPage({
 }) {
   return (
     <article className="mx-auto flex max-w-reading flex-col gap-8 py-6 text-body text-ink wrap-break-word lg:py-12">
-      <Banner tone="warning">
-        Draft for testing. Not for real transactions.
-      </Banner>
+      <Banner tone="warning">{DRAFT_NOTICE}</Banner>
       <header className="flex flex-col gap-2">
         <h1 className="text-title-1 text-ink">{title}</h1>
         <p className="text-callout text-ink-2">

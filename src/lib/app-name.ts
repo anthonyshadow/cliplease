@@ -10,3 +10,6 @@ export const COPYRIGHT_EMAIL = "copyright@example.com";
 export const COPYRIGHT_AGENT = "[DMCA agent TBD]";
 export const GOVERNING_LAW = "[Governing law TBD]";
 export const VENUE = "[Venue TBD]";
+
+/** The draft line (OQ-28): the legal pages' banner and the license PDF's footer (owner answer Q-186). */
+export const DRAFT_NOTICE = "Draft for testing. Not for real transactions.";

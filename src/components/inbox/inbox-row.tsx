@@ -22,7 +22,7 @@ import { requestDetailPath } from "@/lib/urls";
 import { AutoApproveLine } from "./auto-approve-line";
 import { RequestFacts } from "./request-facts";
 import { RequestOutcome, RequestStatus } from "./request-status-line";
-import { PayoutLineView, ResultLineView } from "./result-line";
+import { PayoutLineView, ResultLineView, ViewLicenseLink } from "./result-line";
 import { useRequestActions } from "./use-request-actions";
 
 /** How a row tells its list about an action: started (hold the row) and how it ended (null: nothing to show). */
@@ -36,10 +36,11 @@ export type RowActionEvents = {
  * countdown under it, then Decline and Approve, half width each (Approve on the right), with Details after them. From
  * md the wide row, a grid: the countdown top-right on the Licensed-to line, and Details · Decline · Approve
  * bottom-right on the third line, Approve rightmost. The facts open under the row, full width. A waiting row shows its
- * scope and "You get {price}"; a History row its price, pill and outcome, no actions, and an approved one its code beside
- * the pill and its payout line in the text column, where it wraps and never widens the pill's column (P19b; owner answer
- * Q-146 a); a claimed row, or one auto-approve may still approve, reads Processing… and an overdue one Expired (until
- * its expiry is stored, with no sentence; owner answer Q-142 a), neither with actions. A request auto-approve fell back
+ * scope and "You get {price}"; a History row its price, pill and outcome, no actions, and an approved one its code and
+ * View license beside the pill (05 §6.3 callout 12) and its payout line in the text column, where it wraps and never
+ * widens the pill's column (P19b; owner answer Q-146 a); a claimed row, or one auto-approve may still approve, reads
+ * Processing… and an overdue one Expired (until its expiry is stored, with no sentence; owner answer Q-142 a), neither
+ * with actions. A request auto-approve fell back
  * on reads its awaiting line; an auto-approved History row "Auto-approved" (07 D81), both in the text column. `outcome`
  * is an action's result kept with the row, as it was before the tap, until the next refresh (02 §4.4 rule 2): its pill
  * (with the 16 px seal for an approval) and its line where the actions were; "You get" stays only for an approval
@@ -187,9 +188,12 @@ export function InboxRow({
         </div>
         {tagOnName ? null : exclusiveTag}
         {request.licenseCode ? (
-          <span className="text-footnote text-ink tracking-code">
-            {request.licenseCode}
-          </span>
+          <>
+            <span className="text-footnote text-ink tracking-code">
+              {request.licenseCode}
+            </span>
+            <ViewLicenseLink />
+          </>
         ) : null}
       </div>
       {waiting && !outcome ? (

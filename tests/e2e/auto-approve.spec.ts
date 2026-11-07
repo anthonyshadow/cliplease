@@ -2,6 +2,7 @@ import { expect, type Locator, test } from "@playwright/test";
 import { REQUEST_EMAIL_COPY } from "../../src/emails/request-copy";
 import { INBOX_COPY, requestPill } from "../../src/lib/licensing/inbox";
 import { LICENSE_PAGE_COPY } from "../../src/lib/licensing/license-page";
+import { LICENSE_RECORD_COPY } from "../../src/lib/licensing/license-record";
 import { REQUEST_STATUS_COPY } from "../../src/lib/licensing/request-status";
 import { REQUESTS_SETTINGS_COPY } from "../../src/lib/payouts";
 import { licensePath, requestDetailPath } from "../../src/lib/urls";
@@ -18,7 +19,7 @@ import {
 import { collectConsoleErrors } from "./helpers/console";
 import { buyLicense, publishDemoVideo } from "./helpers/flows";
 import { expectNoBareDollar } from "./helpers/layout";
-import { pressAndSettleIn } from "./helpers/press";
+import { pressAndSettleIn, pressLocator } from "./helpers/press";
 import { cleanCreatedVideos } from "./helpers/videos";
 
 // The auto-approve proof (P19c; 01 J7.6, J7.18; 04 §11.2, §11.5, §11.10; 05 §4.1, §4.3, §6.3, §6.11, §8; 07 D81) on
@@ -26,11 +27,15 @@ import { cleanCreatedVideos } from "./helpers/videos";
 // requests automatically" in Settings, saved by the Requests section's own Save. A logged-out buyer reads "Instant
 // approval." under the button, pays on the fake checkout and lands on /r reading Processing… (or already Approved: the
 // approval runs after Pay's response and can finish before the first render), which turns Approved with no tap from
-// the creator. license-approved carries the /l link with /r's own key (no Get file and license on /r until P20, owner
-// answer Q-141 a), request-received the 05 §8 auto wording (owner answer Q-152), and the creator gets no request-new.
+// the creator; its Get file and license (05 §4.3 callout 7; owner answer Q-141 a, P20) opens /l with /r's own key, the
+// link license-approved carries too. request-received has the 05 §8 auto wording (owner answer Q-152), and the creator
+// gets no request-new.
 // The creator's History reads «✓ Approved» and "Auto-approved", nothing waits, and the request page says it too.
 test.use({ reducedMotion: "reduce" });
 test.afterEach(cleanCreatedVideos);
+
+/** /l's headline (04 §11.4). */
+const CLEARED = LICENSE_RECORD_COPY.buyer.headline;
 
 /** Filled in where a sentence names a value the test can't know (a deadline); leadOf keeps the words before it. */
 const MARK = "\u0000";
@@ -135,13 +140,25 @@ test("J7.6, J7.18: with auto-approve on, the license page says Instant approval.
   );
   await expect(buyer.locator("main time")).toHaveCount(0);
   await expectNoBareDollar(buyer);
+
+  // Get file and license (05 §4.3 callout 7; owner answer Q-141 a): /l with /r's own key, "Cleared. Yours to post."
+  const token = new URL(statusUrl).searchParams.get("t") ?? "";
+  expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+  const getFile = buyer.getByRole("link", {
+    name: COPY.getFileAndLicense,
+    exact: true,
+  });
+  await expect(getFile).toHaveAttribute("href", licensePath(token));
+  await pressLocator(getFile);
+  await expect(buyer).toHaveURL(new RegExp(`${licensePath(token)}$`));
+  await expect(buyer.getByRole("heading", { level: 1 })).toHaveText(
+    `${CLEARED.lead} ${CLEARED.rest}`,
+  );
   await context.close();
   expect(buyerErrors).toEqual([]);
 
-  // The emails (05 §8): license-approved links /l with /r's own key; request-received opens with the auto wording, up
-  // to its deadline; and no request-new reaches the creator (01 J7.18).
-  const token = new URL(statusUrl).searchParams.get("t") ?? "";
-  expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+  // The emails (05 §8): license-approved links the same /l; request-received opens with the auto wording, up to its
+  // deadline; and no request-new reaches the creator (01 J7.18).
   const approved = await readLatestEmail({
     to: email,
     template: "license-approved",

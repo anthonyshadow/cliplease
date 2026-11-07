@@ -1,7 +1,6 @@
 import { Link } from "react-email";
 import type { Currency } from "@/lib/domain/values";
 import { formatLicenseDate, formatMoney } from "@/lib/format";
-import { currencyLabel } from "@/lib/money/currency";
 import { EmailLayout } from "./components/email-layout";
 import * as s from "./components/styles";
 import { REQUEST_EMAIL_COPY as COPY } from "./request-copy";
@@ -37,7 +36,7 @@ export function LicenseApproved(p: LicenseApprovedProps) {
           p.handle,
           formatMoney(p.amountTotalCents, p.currency),
         ),
-        COPY.amountsIn(currencyLabel(p.currency)),
+        COPY.amountsIn(p.currency),
         ...(p.exclusiveEndsAt
           ? [COPY.exclusiveApproved(formatLicenseDate(p.exclusiveEndsAt))]
           : []),

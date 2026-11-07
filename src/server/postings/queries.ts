@@ -7,7 +7,10 @@ import {
   video,
   videoPosting,
 } from "../../db/schema";
-import { postingPlatformLabel } from "../../lib/postings/labels";
+import {
+  postingHostLabel,
+  postingPlatformLabel,
+} from "../../lib/postings/labels";
 import type {
   OwnerPostingDTO,
   PublicPostingDTO,
@@ -247,10 +250,7 @@ function toPublicPosting(row: PublicPostingRow): PublicPostingDTO {
       : null,
     noLongerLinked: verified && row.accountStatus === "disconnected",
     url,
-    hostLabel:
-      row.platform === "other" && url !== null
-        ? new URL(url).hostname.replace(/^www\./, "")
-        : null,
+    hostLabel: postingHostLabel(row.platform, url),
     removed,
     hasLink: row.url !== null,
   };

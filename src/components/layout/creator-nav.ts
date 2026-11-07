@@ -1,4 +1,7 @@
-// The creator shell's destinations (02 §4.1, 04 §9.30), shared by NavBar, TabBar and MoreSheet.
+// The creator shell's destinations (02 §4.1, 04 §9.30), shared by NavBar, TabBar and MoreSheet. Every one has its
+// page (P20 built the last, /dashboard/licenses), so each link takes Next's default prefetch: a dynamic route down to
+// its loading state, so Library, Connections and Pricing show their skeleton at once. creator-nav.test.ts fails on a
+// destination with no page, whose production prefetch would log a 404.
 // P20b adds "My licenses" (/licenses) to the account Menu and the MoreSheet (07 D126).
 export const CREATOR_NAV = {
   inbox: { label: "Inbox", href: "/dashboard" },
@@ -28,16 +31,6 @@ export const MORE_SHEET_KEYS = [
   "pricing",
   "settings",
 ] as const satisfies readonly CreatorNavKey[];
-
-/**
- * A shell link's prefetch: Next's default (a dynamic route down to its loading state, so Library, Connections and
- * Pricing show their skeleton at once) for every route that exists, and none for Licenses until P20 builds it: a
- * production prefetch of a missing route logs a 404 in the console. creator-nav.test.ts fails once a page and this
- * disagree.
- */
-export function shellPrefetch(key: CreatorNavKey): false | undefined {
-  return key === "licenses" ? false : undefined;
-}
 
 /** The nav key whose route contains `pathname` (Inbox only for /dashboard itself). */
 export function currentNavKey(pathname: string): CreatorNavKey | undefined {

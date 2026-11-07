@@ -38,6 +38,7 @@ const mocks = vi.hoisted(() => ({
   approveRequest: vi.fn(),
   declineRequest: vi.fn(),
   refresh: vi.fn(),
+  push: vi.fn(),
 }));
 vi.mock("@/app/(dashboard)/dashboard/actions", () => ({
   approveRequest: mocks.approveRequest,
@@ -45,7 +46,7 @@ vi.mock("@/app/(dashboard)/dashboard/actions", () => ({
 }));
 vi.mock("next/navigation", async (actual) => ({
   ...(await actual<typeof import("next/navigation")>()),
-  useRouter: () => ({ refresh: mocks.refresh }),
+  useRouter: () => ({ refresh: mocks.refresh, push: mocks.push }),
 }));
 
 afterEach(() => {
@@ -379,6 +380,60 @@ describe("InboxRow's payout line (04 §9.11, §11.5; 07 D75; owner answer Q-146 
     inList(request);
     expect(
       screen.queryByText(/Paid out|Payout pending|setup to receive/),
+    ).toBeNull();
+  });
+});
+
+describe("InboxRow's View license link (04 §10.3, §11.5; 05 §6.3 callouts 10, 12)", () => {
+  const issued = { ok: true, licenseCode: "CL-7K3M-9QXA" } as const;
+  const viewLicense = (scope: HTMLElement) =>
+    within(scope).getByRole("link", { name: "View license" });
+
+  it("follows a held row's issued line, which keeps the sentence in an element of its own", () => {
+    const { container } = render(
+      <ul>
+        <InboxRow request={waiting} outcome={approveOutcome(issued, waiting)} />
+      </ul>,
+    );
+    const sentence = screen.getByText("License CL-7K3M-9QXA issued");
+    const line = sentence.parentElement as HTMLElement;
+    expect(line.textContent).toBe("License CL-7K3M-9QXA issued · View license");
+    expect(viewLicense(line).getAttribute("href")).toBe("/dashboard/licenses");
+    expect(within(firstRow(container)).getAllByRole("link")).toHaveLength(1);
+  });
+
+  it("follows an approved History row's code, beside the pill", () => {
+    const { container } = inList({
+      ...waiting,
+      status: "approved",
+      displayStatus: "approved",
+      licenseCode: "CL-7K3M-9QXA",
+    });
+    const status = firstRow(container).querySelector(
+      "[data-row-status]",
+    ) as HTMLElement;
+    const link = viewLicense(status);
+    expect(link.getAttribute("href")).toBe("/dashboard/licenses");
+    expect(link.previousElementSibling?.textContent).toBe("CL-7K3M-9QXA");
+  });
+
+  it.each([
+    { name: "a waiting row", request: waiting },
+    {
+      name: "a declined History row",
+      request: {
+        ...waiting,
+        status: "declined",
+        displayStatus: "declined",
+        statusReason: "creator",
+      },
+    },
+  ] as const)("isn't on $name", ({ request }) => {
+    const { container } = inList(request);
+    expect(
+      within(firstRow(container)).queryByRole("link", {
+        name: "View license",
+      }),
     ).toBeNull();
   });
 });
@@ -773,11 +828,16 @@ describe("InboxList's settled rows (02 §4.4 rule 2; 07 D160)", () => {
       );
     expect(names()).toEqual(["Daily Laughs Media LLC", "Second Buyer Inc."]);
     expect(screen.getByText("License CL-7K3M-9QXA issued")).toBeTruthy();
-    // The polite toast, with its seal (04 §9.23).
-    expect(latestToast()?.textContent).toBe(
-      "Approved. CA$1,575.00 is on its way to your Stripe balance.",
-    );
+    // The polite toast, with its seal and View license (04 §9.23, §10.3).
+    const toast = within(latestToast() as HTMLElement);
+    expect(
+      toast.getByText(
+        "Approved. CA$1,575.00 is on its way to your Stripe balance.",
+      ),
+    ).toBeTruthy();
     expect(latestToast()?.querySelector("svg")).not.toBeNull();
+    fireEvent.click(toast.getByRole("button", { name: "View license" }));
+    expect(mocks.push).toHaveBeenCalledWith("/dashboard/licenses");
     // …until the window takes the focus again.
     act(() => {
       window.dispatchEvent(new Event("focus"));

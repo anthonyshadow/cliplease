@@ -1,6 +1,7 @@
 import { APP_NAME } from "@/lib/app-name";
 import { sentences } from "@/lib/format";
 import { INBOX_COPY } from "@/lib/licensing/inbox";
+import { amountsIn } from "@/lib/licensing/license-record";
 import {
   type DeclinedView,
   REQUEST_STATUS_COPY,
@@ -49,12 +50,13 @@ export const REQUEST_EMAIL_COPY = {
   /** 05 §8 callout 11 (07 D113): license-approved's line for an exclusive license; `endDate` formatLicenseDate's (07 D84). */
   exclusiveApproved: (endDate: string) =>
     `This license is exclusive: no one else can license this video until ${endDate}.`,
-  /** 05 §8 callout 10, 07 D98: under the first paragraph. */
-  amountsIn: (label: string) => `Amounts in ${label}.`,
+  /** 05 §8 callout 10, 07 D98: under the first paragraph, /l's and the PDF's line word for word. */
+  amountsIn,
   licenseLine: (code: string) => `License ${code}`,
   /** 05 §8 callout 7: followed by the {APP_URL}/verify/{code} link and a period. */
   verifyLead: "Anyone can check this license at",
-  getFileAndLicense: "Get file and license",
+  /** /r's approved button, word for word (Q-141). */
+  getFileAndLicense: REQUEST_STATUS_COPY.getFileAndLicense,
   reviewRequest: "Review request",
   seeRequestStatus: "See request status",
   orOpen: "Or open:",

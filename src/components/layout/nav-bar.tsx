@@ -12,7 +12,6 @@ import {
   type CreatorNavKey,
   currentNavKey,
   NAV_BAR_KEYS,
-  shellPrefetch,
 } from "./creator-nav";
 import { SHELL_GUTTER } from "./gutter";
 import { useInboxCount } from "./inbox-count";
@@ -76,7 +75,6 @@ function CreatorLinks({
             <li key={key}>
               <Link
                 href={CREATOR_NAV[key].href}
-                prefetch={shellPrefetch(key)}
                 aria-current={isCurrent ? "page" : undefined}
                 className={cn(
                   // hit-44: a short label ("Inbox") is under 44 px wide (07 D152); the hit area grows, nothing shows.

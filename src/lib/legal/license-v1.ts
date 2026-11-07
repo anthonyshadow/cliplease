@@ -30,7 +30,8 @@ export const LICENSE_V1_PEOPLE_CLAUSE =
 
 /**
  * Header rows (license.md §4.2 with 07 D98 and D113). Per license only: PDF page 1 and /l (P20). The QR is [H6].
- * {rights_label} is "Non-exclusive" or "Exclusive until {end_date}", from snapshot.exclusive.
+ * {rights_label} is the kind only, "Non-exclusive" or "Exclusive", from snapshot.exclusive (05 §9 region 2); the PDF's
+ * Rights row carries "Exclusive until {end_date}" (07 D113).
  */
 export const LICENSE_V1_HEADER = [
   ["License code", "{license_code}"],
@@ -40,6 +41,7 @@ export const LICENSE_V1_HEADER = [
     "{creator_display_name} ({creator_handle} on {app_name}) — {ownership_label}",
   ],
   ["Licensee", "{licensee_name}"],
+  // 05 §9 draws `"{video_title}" ({source_url})`; P20 kept research §4.2's dash.
   ["Video", "{video_title} — {source_url}"],
   ["Use", "{use_label}"],
   ["Term", "{term_label}: {start_date} to {end_date}"],
