@@ -1,7 +1,7 @@
 import "server-only";
 import { and, asc, eq, isNotNull, isNull, lt, sql } from "drizzle-orm";
 import { db, type Tx } from "@/db/client";
-import { licenseRequest, video } from "@/db/schema";
+import { licenseRequest } from "@/db/schema";
 import type { LicenseRequest, NewLicenseRequest } from "@/db/schema/types";
 import { isOneOf, type LicenseRequestStatus } from "@/lib/domain/values";
 import {
@@ -21,6 +21,12 @@ import { licenseApprovedSubject } from "../email/subjects";
 import { errorName, logEvent } from "../log";
 import { cancel, getAuthorization } from "../payments";
 import type { StripeCallOutcome } from "../payments/driver";
+import {
+  assertStillLicensable,
+  declineReasonFor,
+  lockVideoForLicensing,
+  requestVideoId,
+} from "./availability";
 import { afterResponse, runEffects } from "./effects";
 import { issueLicense } from "./issue";
 import { sendCreatorTransfer, transferSourceOf } from "./money";
@@ -74,8 +80,12 @@ export type LicenseRequestPatch = Pick<
   | "statusReason"
 > & { incrementStripeAttempt: boolean };
 
-/** The status_reason values each ending of a waiting request takes (07 §2.1). P19g adds the exclusive conflict. */
-const DECLINE_REASONS = ["creator", "video_disabled"] as const;
+/** The status_reason values each ending of a waiting request takes (07 §2.1, D111). */
+const DECLINE_REASONS = [
+  "creator",
+  "video_disabled",
+  "exclusive_conflict",
+] as const;
 export type DeclineReason = (typeof DECLINE_REASONS)[number];
 const EXPIRE_REASONS = ["deadline", "hold_released"] as const;
 /** A Stripe error code as a capture failure stores it (03 T7): lowercase words, never free text. */
@@ -280,6 +290,9 @@ export type ClaimedRequest = LicenseRequest & {
   paymentActionAt: Date;
 };
 
+/** A capture claim refused under the video's lock (07 D111): the video can't take this request now. Nothing was written. */
+export type ClaimConflict = { conflict: "exclusive_conflict" };
+
 /** A claim older than this is stuck: its holder died between the claim and the finish (07 D26). */
 export const STUCK_CLAIM_MINUTES = 2;
 
@@ -328,18 +341,34 @@ const sameClaim = (a: PaymentClaim, b: PaymentClaim | undefined | null) =>
   a.claimedAt.getTime() === b.claimedAt.getTime();
 
 /**
- * Claims waiting request `requestId` for `action` before any Stripe call (03 §5.1): one conditional UPDATE … RETURNING
- * that sets the claim and stripe_attempt + 1, only while nobody holds it and within the action's time (capture before
- * the deadline, expire at or after it). A refused claim reconciles a stuck one (07 D26) and tries once more. Null when
- * refused. `autoApproveOnly`: the auto-approve system actor's capture also needs an auto_approve request that hasn't
- * fallen back (03 T4; 07 D81): a fallback committed after its read wins, and the fallback needs no claim, so only one of
- * them ever applies (P19g keeps this in its claim).
+ * Claims waiting request `requestId` for `action` before any Stripe call (03 §5.1): sets the claim and stripe_attempt +
+ * 1, only while nobody holds it and within the action's time (capture before the deadline, expire at or after it). A
+ * decline or expiry is one conditional UPDATE … RETURNING. A capture (03 T4; 07 D111) runs in one short transaction:
+ * the video's lock first, then the request's row, then assertStillLicensable: a conflict returns `{ conflict }` and
+ * writes nothing; only a row the claim could take is checked. A refused claim reconciles a stuck one (07 D26) and tries
+ * once more. Null when refused. `autoApproveOnly`: the auto-approve system actor's capture also needs an auto_approve
+ * request that hasn't fallen back (03 T4; 07 D81): a fallback committed after its read wins, and the fallback needs no
+ * claim, so only one of them ever applies.
  */
+export async function claimPaymentAction(
+  requestId: string,
+  action: "capture",
+  opts?: { autoApproveOnly?: boolean },
+): Promise<ClaimedRequest | ClaimConflict | null>;
+export async function claimPaymentAction(
+  requestId: string,
+  action: "decline" | "expire",
+): Promise<ClaimedRequest | null>;
+export async function claimPaymentAction(
+  requestId: string,
+  action: RequestAction,
+  opts?: { autoApproveOnly?: boolean },
+): Promise<ClaimedRequest | ClaimConflict | null>;
 export async function claimPaymentAction(
   requestId: string,
   action: RequestAction,
   { autoApproveOnly = false }: { autoApproveOnly?: boolean } = {},
-): Promise<ClaimedRequest | null> {
+): Promise<ClaimedRequest | ClaimConflict | null> {
   const claimed = await takeClaim(requestId, action, autoApproveOnly);
   if (claimed) return claimed;
   const resolved = await reconcileStuckClaims({
@@ -349,13 +378,69 @@ export async function claimPaymentAction(
   return resolved > 0 ? takeClaim(requestId, action, autoApproveOnly) : null;
 }
 
-async function takeClaim(
+/** The rows `action`'s claim may take: waiting, held by nobody, in the action's time, and open to auto-approve if asked. */
+function claimable(action: RequestAction, autoApproveOnly: boolean) {
+  return and(
+    heldBy(null),
+    action === "capture"
+      ? sql`now() < ${licenseRequest.expiresAt}`
+      : action === "expire"
+        ? sql`now() >= ${licenseRequest.expiresAt}`
+        : undefined,
+    autoApproveOnly ? autoApproveOpen : undefined,
+  );
+}
+
+function takeClaim(
+  requestId: string,
+  action: RequestAction,
+  autoApproveOnly: boolean,
+): Promise<ClaimedRequest | ClaimConflict | null> {
+  return action === "capture"
+    ? takeCaptureClaim(requestId, autoApproveOnly)
+    : writeClaim(db, requestId, action, autoApproveOnly);
+}
+
+/**
+ * T4's claim (03 §5.1; 07 D110, D111): the video's lock, the request's row FOR UPDATE, then the re-check, in one short
+ * transaction with no Stripe call. The video id never changes, so it is read before the transaction: the lock is its
+ * first statement.
+ */
+async function takeCaptureClaim(
+  requestId: string,
+  autoApproveOnly: boolean,
+): Promise<ClaimedRequest | ClaimConflict | null> {
+  const videoId = await requestVideoId(db, requestId);
+  if (!videoId) return null;
+  return db.transaction(async (tx) => {
+    await lockVideoForLicensing(tx, videoId);
+    const [open] = await tx
+      .select({ id: licenseRequest.id })
+      .from(licenseRequest)
+      .where(
+        and(
+          eq(licenseRequest.id, requestId),
+          claimable("capture", autoApproveOnly),
+        ),
+      )
+      .for("update");
+    if (!open) return null;
+    if (!(await assertStillLicensable(tx, requestId)).ok) {
+      return { conflict: "exclusive_conflict" } as const;
+    }
+    return writeClaim(tx, requestId, "capture", autoApproveOnly);
+  });
+}
+
+/** The claim's UPDATE … RETURNING, timed after any lock wait so the claim (and a license's start) is now. */
+async function writeClaim(
+  q: Pick<typeof db, "update">,
   requestId: string,
   action: RequestAction,
   autoApproveOnly: boolean,
 ): Promise<ClaimedRequest | null> {
   const claimedAt = new Date();
-  const [claimed] = await db
+  const [claimed] = await q
     .update(licenseRequest)
     .set({
       paymentAction: action,
@@ -363,16 +448,7 @@ async function takeClaim(
       stripeAttempt: sql`${licenseRequest.stripeAttempt} + 1`,
     })
     .where(
-      and(
-        eq(licenseRequest.id, requestId),
-        heldBy(null),
-        action === "capture"
-          ? sql`now() < ${licenseRequest.expiresAt}`
-          : action === "expire"
-            ? sql`now() >= ${licenseRequest.expiresAt}`
-            : undefined,
-        autoApproveOnly ? autoApproveOpen : undefined,
-      ),
+      and(eq(licenseRequest.id, requestId), claimable(action, autoApproveOnly)),
     )
     .returning();
   return claimed
@@ -510,7 +586,8 @@ const NOT_CHARGED: ReadonlySet<LicenseRequestStatus> = new Set([
  * caller's own `claim` is released (the caller says retry), unless its capture failed for good (`captureOutcome`
  * permanent): then T7 cancels the hold (cancelFailedCapture). A claim the caller doesn't hold is left alone. A retrieve
  * that throws throws: the claim stays for the next reconcile, and a webhook delivery fails, so Stripe sends it again.
- * Requests without a PaymentIntent are left as they are.
+ * Requests without a PaymentIntent are left as they are. `declineReason`: the decline's own reason, when the caller's
+ * `claim` is that decline (declineReasonFor's fallback, so a conflict decline keeps its reason once the conflict ends).
  */
 export async function reconcileFromStripe(
   requestId: string,
@@ -518,6 +595,7 @@ export async function reconcileFromStripe(
     actor?: Actor;
     claim?: PaymentClaim | null;
     captureOutcome?: StripeCallOutcome;
+    declineReason?: DeclineReason;
   } = {},
 ): Promise<ReconcileOutcome> {
   const actor = opts.actor ?? LAZY;
@@ -549,11 +627,18 @@ export async function reconcileFromStripe(
         });
       }
       return "unchanged";
-    case "canceled":
+    case "canceled": {
       if (!waiting) return "unchanged";
-      return (await finishCanceled(requestId, { claim, actor })) !== null
+      const ours = claim?.action === "decline" && sameClaim(claim, opts.claim);
+      const declineReason = ours ? opts.declineReason : undefined;
+      return (await finishCanceled(requestId, {
+        claim,
+        actor,
+        declineReason,
+      })) !== null
         ? "finished"
         : "unchanged";
+    }
     case "requires_capture": {
       if (!waiting || !claim || !sameClaim(claim, opts.claim)) {
         return "unchanged";
@@ -709,11 +794,12 @@ export function canceledEventFor(
 
 /**
  * Stripe canceled the hold of a waiting request (03 T6–T10; 07 D25): the claimed action's ending, fenced on `claim`, in
- * one transaction, then its effects. A decline becomes declined (`statusReason`, else video_disabled when the video was
- * disabled, else creator); an expiry, expired (deadline); a capture, capture_failed (`statusReason`, else
- * pi_canceled_during_capture); no claim, expired (hold_released). Every ending of a waiting request that isn't an
- * approval goes through here, so later work hooks in once (P19g's audit, P22c's saved card). Null when another actor
- * resolved the request first.
+ * one transaction, then its effects. A decline becomes declined (`statusReason`, else declineReasonFor's: video_disabled,
+ * exclusive_conflict, else `declineReason` or creator); an expiry, expired (deadline); a capture, capture_failed
+ * (`statusReason`, else pi_canceled_during_capture); no claim, expired (hold_released). A decline that ends as
+ * exclusive_conflict is audited `license_request.exclusive_conflict` in the same transaction, the admin Events flag (07
+ * D127). Every ending of a waiting request that isn't an approval goes through here, so later work hooks in once
+ * (P22c's saved card). Null when another actor resolved the request first.
  */
 export async function finishCanceled(
   requestId: string,
@@ -721,23 +807,35 @@ export async function finishCanceled(
     claim,
     actor,
     statusReason,
+    declineReason,
   }: {
     claim: PaymentClaim | null;
     actor: Actor;
     statusReason?: DeclineReason | CaptureFailedReason;
+    declineReason?: DeclineReason;
   },
 ): Promise<TransitionResult | null> {
   const at = new Date();
   const event = canceledEventFor(claim);
   const result = await db.transaction(async (tx) => {
-    // The patch before the request's lock: P19g's decline reason locks the video, and the video's lock comes first.
+    // The patch before the request's lock: the decline reason locks the video, and the video's lock comes first.
     const patch = await canceledPatch(tx, requestId, event, {
       claim,
       statusReason,
+      declineReason,
       at,
     });
     if (!(await lockHeld(tx, requestId, claim))) return null;
-    return applyTransition(tx, requestId, event, patch, actor);
+    const moved = await applyTransition(tx, requestId, event, patch, actor);
+    if (moved.changed && moved.row.statusReason === "exclusive_conflict") {
+      await writeAudit(tx, actor, {
+        action: "license_request.exclusive_conflict",
+        entityType: "license_request",
+        entityId: requestId,
+        data: { exclusive: moved.row.exclusive },
+      });
+    }
+    return moved;
   });
   if (!result) return null;
   if (!result.changed) throw new Error("finishCanceled: no transition");
@@ -753,14 +851,22 @@ async function canceledPatch(
   {
     claim,
     statusReason,
+    declineReason,
     at,
-  }: { claim: PaymentClaim | null; statusReason?: string; at: Date },
+  }: {
+    claim: PaymentClaim | null;
+    statusReason?: string;
+    declineReason?: DeclineReason;
+    at: Date;
+  },
 ): Promise<Partial<LicenseRequestPatch>> {
   switch (event) {
     case "declined":
       return {
         declinedAt: at,
-        statusReason: statusReason ?? (await declineReasonFor(tx, requestId)),
+        statusReason:
+          statusReason ??
+          (await declineReasonFor(tx, requestId, declineReason)),
       };
     case "capture_failed":
       return {
@@ -773,17 +879,4 @@ async function canceledPatch(
         statusReason: statusReason ?? (claim ? "deadline" : "hold_released"),
       };
   }
-}
-
-/** Why a decline claim ended (07 D28): the video was disabled meanwhile, or the creator declined. */
-async function declineReasonFor(
-  tx: Tx,
-  requestId: string,
-): Promise<"video_disabled" | "creator"> {
-  const [row] = await tx
-    .select({ status: video.status })
-    .from(licenseRequest)
-    .innerJoin(video, eq(video.id, licenseRequest.videoId))
-    .where(eq(licenseRequest.id, requestId));
-  return row?.status === "disabled" ? "video_disabled" : "creator";
 }

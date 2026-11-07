@@ -3,13 +3,13 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/db/client";
 import { license, licenseRequest, video } from "@/db/schema";
 import type { ApproveResult } from "@/lib/licensing/request-dto";
-import { type Actor, LAZY } from "../auth/actor";
+import { type Actor, AUTO_APPROVE, LAZY } from "../auth/actor";
 import { type PayoutsRow, refreshPayoutsStatus } from "../creators/profile";
 import { errorName, logEvent } from "../log";
 import { capture } from "../payments";
 import { overdueColumn } from "./deadline";
 import { afterResponse } from "./effects";
-import { expireLicenseRequest } from "./requests";
+import { declineLicenseRequest, expireLicenseRequest } from "./requests";
 import {
   autoApproveOpen,
   type ClaimedRequest,
@@ -22,8 +22,8 @@ import {
 // Approve (02 §8.2; 03 T4–T6; 07 D24–D26, D29, D33, D74, D77): one tap claims the request, captures the hold outside any
 // transaction under the claim's key, and the fenced T5 finish issues the license. Never "not charged" while money may
 // have moved: a request whose capture outcome is unknown reads as claimed ("Processing…") until it is reconciled.
-// Auto-approve (P19c; 07 D81) approves as the system actor through the same path. The video lock and availability check
-// (07 D110) arrive with P19f and P19g (owner answer Q-122 a).
+// Auto-approve (P19c; 07 D81) approves as the system actor through the same path. The capture claim takes the video's
+// lock and re-checks availability (07 D110, D111): a conflict declines the request, never charges it.
 
 /**
  * Whose requests `actor` may approve (02 §8.2; 03 T4): a creator their own; the auto-approve system actor only an
@@ -45,6 +45,7 @@ async function approveState(requestId: string, scope: ApproveScope) {
     .select({
       creatorId: licenseRequest.creatorId,
       status: licenseRequest.status,
+      statusReason: licenseRequest.statusReason,
       paymentAction: licenseRequest.paymentAction,
       paymentActionAt: licenseRequest.paymentActionAt,
       overdue: overdueColumn,
@@ -143,9 +144,13 @@ async function approve(
       status: "awaiting_approval",
     };
   }
+  const auto = "autoApproveOpen" in scope;
   const claimed = await claimPaymentAction(requestId, "capture", {
-    autoApproveOnly: "autoApproveOpen" in scope,
+    autoApproveOnly: auto,
   });
+  if (claimed && "conflict" in claimed) {
+    return declineConflict(requestId, creatorId, auto ? AUTO_APPROVE : LAZY);
+  }
   if (!claimed) {
     const now = await stateOf(requestId, creatorId);
     return (
@@ -157,6 +162,29 @@ async function approve(
     );
   }
   return captureClaimed(claimed, actor);
+}
+
+/**
+ * 02 §8.2 step 1c (07 D111; 03 T8): the claim's re-check found the video taken, so nothing was claimed or captured. The
+ * request is declined through the ordinary decline claim as `system`, which the caller passes: auto_approve for
+ * auto-approve's own attempt, else lazy (work a creator's tap set off). The result carries the status as it then is:
+ * declined only once Stripe confirmed the cancel. A request another ending got to first (the creator's own decline in
+ * another tab, a video disabled meanwhile) reports that race lost, as not_actionable with its status.
+ */
+async function declineConflict(
+  requestId: string,
+  creatorId: string,
+  system: Actor,
+): Promise<ApproveResult> {
+  await declineLicenseRequest(requestId, system, "exclusive_conflict");
+  const now = await stateOf(requestId, creatorId);
+  const theirs =
+    now.status === "declined" && now.statusReason !== "exclusive_conflict";
+  return {
+    ok: false,
+    reason: theirs ? "not_actionable" : "exclusive_conflict",
+    status: now.status,
+  };
 }
 
 /** Approve's state after a step that may have changed it; the request was the creator's a moment ago. */

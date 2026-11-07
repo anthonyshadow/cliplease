@@ -4,6 +4,7 @@ import { APP_NAME } from "../app-name";
 import type { TermKey, TerritoryKey, UseKey } from "../domain/values";
 import {
   fillLicenseV1,
+  LICENSE_V1_EXCLUSIVE_SECTION_ID,
   LICENSE_V1_SUMMARY,
   type LicenseSummaryRow,
 } from "../legal/license-v1-summary";
@@ -44,7 +45,9 @@ const FOOTER = /^(.+?\.) (.+): (\/\S+)$/;
 
 /**
  * The summary for a standard or exclusive license (the renewal row is P22c's): rows show when they have no condition,
- * match the license's kind, or match the video's music or people flag; a group with no rows is left out.
+ * match the license's kind, or match the video's music or people flag; a group with no rows is left out. An exclusive
+ * summary names its type in the heading, opens with "You get" and links the legal text's "Exclusive licenses" section
+ * (04 §9.5; 07 D113).
  */
 export function licenseSummary(input: SummaryInput): FilledSummary {
   const phrase = input.termPhrase ?? termPhrase(input.termKey);
@@ -69,8 +72,15 @@ export function licenseSummary(input: SummaryInput): FilledSummary {
   const fill = (text: string) => fillLicenseV1(text, values);
   const footer = FOOTER.exec(fill(LICENSE_V1_SUMMARY.footer));
   if (!footer) throw new Error("License v1: the summary footer changed shape");
+  const href = input.exclusive
+    ? `${footer[3]}#${LICENSE_V1_EXCLUSIVE_SECTION_ID}`
+    : footer[3];
   return {
-    heading: fill(LICENSE_V1_SUMMARY.heading),
+    heading: fill(
+      input.exclusive
+        ? LICENSE_V1_SUMMARY.exclusiveHeading
+        : LICENSE_V1_SUMMARY.heading,
+    ),
     groups: LICENSE_V1_SUMMARY.groups
       .map((group) => ({
         title: group.title,
@@ -79,6 +89,6 @@ export function licenseSummary(input: SummaryInput): FilledSummary {
           .map((row) => ({ label: row.label, text: fill(row.text) })),
       }))
       .filter((group) => group.rows.length > 0),
-    footer: { note: footer[1], link: { text: footer[2], href: footer[3] } },
+    footer: { note: footer[1], link: { text: footer[2], href } },
   };
 }

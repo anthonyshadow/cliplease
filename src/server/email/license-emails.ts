@@ -11,7 +11,7 @@ import { revealBuyerToken } from "../tokens/buyer-token";
 
 // The emails a license sends (05 §8; 07 D34): license-approved, to the buyer. The state machine's T5 queues it after
 // the license is issued (its subject names the code); the outbox composes it when it is sent, from the request and the
-// license as they are then. The amounts come from the license's snapshot, which holds the request's.
+// license as they are then. The amounts, and an exclusive license's end, come from the license's snapshot.
 
 /** The request and its license, in one read; null before the license exists. */
 async function licenseEmailFacts(executor: typeof db, requestId: string) {
@@ -56,6 +56,8 @@ export async function composeLicenseApprovedEmail(
       currency: s.amounts.currency,
       url: `${env.APP_URL}${licensePath(token)}`,
       verifyUrl: `${env.APP_URL}${verifyPath(f.code)}`,
+      // The record's own end: an exclusive license always has one (I35).
+      exclusiveEndsAt: s.exclusive && s.endsAt ? new Date(s.endsAt) : null,
     }),
   };
 }

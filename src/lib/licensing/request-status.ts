@@ -11,6 +11,9 @@ const autoApproves = (handle: string) =>
 /** 04 §11.3: under the waiting countdown, and the last sentence of /r's auto-approving body. */
 const UPDATES_ITSELF = "This page updates by itself.";
 
+const exclusiveWhileDeciding = (handle: string) =>
+  `Exclusive request. While @${handle} decides, no one else can request this video.`;
+
 /** The words with nothing to fill in, and the ones a view builds from the request. */
 export const REQUEST_STATUS_COPY = {
   /** S27's "Buyer link dead" (05 §10): the 404 title, with no hint that the request exists. */
@@ -42,8 +45,13 @@ export const REQUEST_STATUS_COPY = {
   /** 01 J7.6, 05 §4.3 callout 9, 05 §8 (07 D81): "@{handle} approves requests automatically." */
   autoApproves,
   /** 04 §11.2 (owner answer Q-173): an exclusive request while the creator decides; the license page and request-received. */
-  exclusiveWhileDeciding: (handle: string) =>
-    `Exclusive request. While @${handle} decides, no one else can request this video.`,
+  exclusiveWhileDeciding,
+  /**
+   * An exclusive request's line while it waits (owner answers Q-173, Q-178): /r's waiting and auto-approving views and
+   * request-received say the same; while auto-approve may still run, only its kind.
+   */
+  exclusiveWaiting: (handle: string, autoApproving: boolean) =>
+    autoApproving ? "Exclusive request." : exclusiveWhileDeciding(handle),
   /** 05 §4.3 callouts 8–9 (proposed): /r while the automatic approval runs; no deadline. */
   autoApprovingBody: (handle: string, total: string) =>
     sentences(
@@ -61,6 +69,9 @@ export const REQUEST_STATUS_COPY = {
     `@${handle} didn't approve this request. You haven't been charged, and the hold on your card has been released.`,
   videoDisabledBody:
     "This video is no longer available. You haven't been charged, and the hold on your card has been released.",
+  /** 01 §4.8, 04 §11.3, 05 §8 (07 D111): declined because the video was licensed exclusively meanwhile. */
+  exclusiveConflictBody:
+    "This video was licensed exclusively to someone else. You weren't charged, and the hold on your card has been released.",
   expiredTitle: "No answer in time",
   /** Like waitingBody, the sentence naming the deadline waits for the viewer's zone. */
   expiredBody: (handle: string, deadline: string | null) =>
@@ -149,6 +160,11 @@ export const VIEW_COPY = {
     body: fixed(COPY.videoDisabledBody),
     backLink: false,
   },
+  exclusive_conflict: {
+    title: fixed(COPY.declinedTitle),
+    body: fixed(COPY.exclusiveConflictBody),
+    backLink: false,
+  },
   expired: {
     title: fixed(COPY.expiredTitle),
     body: (f) => COPY.expiredBody(f.handle, f.deadline),
@@ -164,15 +180,21 @@ export const VIEW_COPY = {
 export type RequestView = keyof typeof VIEW_COPY;
 
 /** The "Not approved" views, one per reason a buyer is told (01 §4.8): /r and the request-declined email share them. */
-export type DeclinedView = "declined" | "video_disabled";
+export type DeclinedView = "declined" | "video_disabled" | "exclusive_conflict";
 
 /**
- * A declined request's view, from its status_reason: a disabled video says so (07 D28); the creator's decline, or a
- * reason it doesn't know, is the creator's body. P19g adds the exclusive conflict here and in VIEW_COPY, so /r and
- * request-declined change together.
+ * A declined request's view, from its status_reason: a disabled video says so (07 D28), and so does an exclusive
+ * conflict (07 D111); the creator's decline, or a reason it doesn't know, is the creator's body. VIEW_COPY and
+ * request-declined share these, so /r and the email change together.
  */
 export function declinedView(statusReason: string | null): DeclinedView {
-  return statusReason === "video_disabled" ? "video_disabled" : "declined";
+  switch (statusReason) {
+    case "video_disabled":
+    case "exclusive_conflict":
+      return statusReason;
+    default:
+      return "declined";
+  }
 }
 
 /**

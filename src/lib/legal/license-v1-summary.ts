@@ -28,14 +28,37 @@ export type LicenseSummaryGroup = {
 
 export type LicenseSummary = {
   readonly heading: string;
+  /** An exclusive license's heading names its type (04 §9.5; 07 D113). */
+  readonly exclusiveHeading: string;
   readonly groups: readonly LicenseSummaryGroup[];
   readonly footer: string;
 };
 
+/** License v1's "Exclusive licenses" section: its id is the anchor an exclusive summary links to (07 D113). */
+export const LICENSE_V1_EXCLUSIVE_SECTION_ID = "exclusive-licenses";
+
 /** The license summary (license.md §3). It is not the license. */
 export const LICENSE_V1_SUMMARY: LicenseSummary = {
   heading: "License summary · {use_label} · {term_label} · {territory_label}",
+  exclusiveHeading:
+    "License summary · Exclusive · {use_label} · {term_label} · {territory_label}",
   groups: [
+    {
+      // The exclusive variant, the first group (04 §9.5; 07 D113, the Renewal row as amended by D142).
+      title: "You get",
+      rows: [
+        {
+          label: "Exclusivity",
+          text: "{creator_handle} won't license this video to anyone else, for any use or place, {exclusive_phrase}.",
+          when: "exclusive",
+        },
+        {
+          label: "Renewal",
+          text: "Renews {renewal_interval} for {renewal_total} unless you turn it off. A higher price needs your OK.",
+          when: "auto_renew",
+        },
+      ],
+    },
     {
       title: "You can",
       rows: [
@@ -50,22 +73,6 @@ export const LICENSE_V1_SUMMARY: LicenseSummary = {
         {
           label: "Brief your team",
           text: "Editors and agencies working for you may handle the file, only for your use.",
-        },
-      ],
-    },
-    {
-      // The exclusive variant (07 D113, the Renewal row as amended by D142).
-      title: "You get",
-      rows: [
-        {
-          label: "Exclusivity",
-          text: "{creator_handle} won't license this video to anyone else, for any use or place, {exclusive_phrase}.",
-          when: "exclusive",
-        },
-        {
-          label: "Renewal",
-          text: "Renews {renewal_interval} for {renewal_total} unless you turn it off. A higher price needs your OK.",
-          when: "auto_renew",
         },
       ],
     },

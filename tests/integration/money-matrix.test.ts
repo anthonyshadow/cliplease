@@ -1149,7 +1149,7 @@ describe("around the matrix (07 D24–D26, D30; 03 T7; 01 J8.9)", () => {
   it("E7: a permanent capture failure reported under a stale claim cancels nothing (03 T7: the caller's own claim only)", async () => {
     const s = await subject("capture");
     const claimed = await claimPaymentAction(s.id, "capture");
-    if (!claimed) throw new Error("not claimed");
+    if (!claimed || "conflict" in claimed) throw new Error("not claimed");
     const stale = {
       action: "capture" as const,
       claimedAt: new Date(claimed.paymentActionAt.getTime() - MINUTE_MS),

@@ -28,6 +28,24 @@ export function computeEndsAt(startsAt: Date, term: TermKey): Date | null {
 }
 
 /**
+ * I35 (07 D111, D112): an exclusive license's term is at most one calendar year. True when `endsAt` falls after
+ * `startsAt` and no later than its 1-year end (the same UTC month arithmetic, so 29 Feb plus a year is 28 Feb); false
+ * for a perpetual (null) end.
+ */
+export function isExclusiveTermWithinLimit(
+  startsAt: Date,
+  endsAt: Date | null,
+): boolean {
+  const limit = computeEndsAt(startsAt, "y1");
+  return (
+    endsAt !== null &&
+    limit !== null &&
+    endsAt > startsAt &&
+    endsAt.getTime() <= limit.getTime()
+  );
+}
+
+/**
  * When a stored request's license would end if approved at `now` (the Inbox and request-new, 07 D111); null for a
  * perpetual term, and for a key that isn't a term.
  */

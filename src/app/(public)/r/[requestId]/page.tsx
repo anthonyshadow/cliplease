@@ -114,6 +114,12 @@ export default async function RequestStatusPage(
         </>
       ) : null}
       <RequestSummary request={request} />
+      {/* Under the summary card (05 §4.3 callout 11; owner answer Q-178). */}
+      {(waiting || autoApproving) && request.exclusive ? (
+        <p className="text-footnote text-ink-2">
+          {COPY.exclusiveWaiting(request.handle, autoApproving)}
+        </p>
+      ) : null}
       {VIEW_COPY[view].backLink ? (
         <Button asChild variant="secondary">
           <Link href={videoUrl(request.handle, request.slug)}>

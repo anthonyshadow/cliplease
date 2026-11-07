@@ -125,7 +125,9 @@ async function subject(creatorOverrides: Partial<NewCreatorProfile> = {}) {
 /** Claims request `id` for `action` as a holder would, before any Stripe call (03 §5.1). */
 async function claim(id: string, action: RequestAction) {
   const claimed = await claimPaymentAction(id, action);
-  if (!claimed) throw new Error(`no ${action} claim on ${id}`);
+  if (!claimed || "conflict" in claimed) {
+    throw new Error(`no ${action} claim on ${id}`);
+  }
   return claimed;
 }
 

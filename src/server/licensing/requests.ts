@@ -592,18 +592,26 @@ export async function reconcileCheckoutReturn(
   await markAuthorized(row.id, { kind: "system", source: "return_url" });
 }
 
-/** Who may decline, and why (07 D28): the request's creator, as `creator`. P21 adds the admin with `video_disabled`. */
+/**
+ * Who may decline, and why (07 D28, D111; 03 T8): the request's creator, as `creator`; the system, only as
+ * `exclusive_conflict` (Approve's re-check found the video taken). P21 adds the admin with `video_disabled`.
+ */
+type DeclineScope = { creatorId: string } | { system: true };
+
 function declineScope(
   actor: Actor,
   reason: DeclineReason,
-): { creatorId: string } | null {
-  return actor.kind === "creator" && reason === "creator"
-    ? { creatorId: actor.creatorId }
+): DeclineScope | null {
+  if (actor.kind === "creator") {
+    return reason === "creator" ? { creatorId: actor.creatorId } : null;
+  }
+  return actor.kind === "system" && reason === "exclusive_conflict"
+    ? { system: true }
     : null;
 }
 
-/** Decline's view of a request, scoped to the creator: null when it isn't theirs. */
-async function declineState(requestId: string, creatorId: string) {
+/** Decline's view of a request in `scope`: null when it is out of it. */
+async function declineState(requestId: string, scope: DeclineScope) {
   const [row] = await db
     .select({
       status: licenseRequest.status,
@@ -615,7 +623,9 @@ async function declineState(requestId: string, creatorId: string) {
     .where(
       and(
         eq(licenseRequest.id, requestId),
-        eq(licenseRequest.creatorId, creatorId),
+        "creatorId" in scope
+          ? eq(licenseRequest.creatorId, scope.creatorId)
+          : undefined,
       ),
     );
   return row ?? null;
@@ -623,12 +633,12 @@ async function declineState(requestId: string, creatorId: string) {
 
 type DeclineState = NonNullable<Awaited<ReturnType<typeof declineState>>>;
 
-/** Decline's state after a step that may have changed it; the request was the creator's a moment ago. */
+/** Decline's state after a step that may have changed it; the request was in scope a moment ago. */
 async function declineStateOf(
   requestId: string,
-  creatorId: string,
+  scope: DeclineScope,
 ): Promise<DeclineState> {
-  const state = await declineState(requestId, creatorId);
+  const state = await declineState(requestId, scope);
   if (!state) throw new Error("declineLicenseRequest: the request is gone");
   return state;
 }
@@ -644,7 +654,9 @@ const notActionable = (s: DeclineState): DeclineResult => ({
  * reconciled first, and past its deadline the request expires instead (T9). Otherwise: the decline claim, the cancel
  * (requested_by_customer, `pi-cancel:<id>:decline:<attempt>`) outside any transaction, the fenced finish, or Stripe's
  * word when the cancel isn't ok. ok only once the request is stored declined: a released claim says retry, a claim
- * still held reads Processing…, and a late capture that won reports approved. `reason` is the server's (declineScope).
+ * still held reads Processing…, and a late capture that won reports approved. `reason` is the server's (declineScope):
+ * the creator's own, or the system's exclusive_conflict, which Stripe's word keeps (reconcileFromStripe's
+ * declineReason).
  */
 export async function declineLicenseRequest(
   requestId: string,
@@ -653,11 +665,10 @@ export async function declineLicenseRequest(
 ): Promise<DeclineResult> {
   const scope = declineScope(actor, reason);
   if (!scope) return { ok: false, reason: "not_actionable", status: null };
-  const { creatorId } = scope;
-  let state = await declineState(requestId, creatorId);
+  let state = await declineState(requestId, scope);
   if (!state) return { ok: false, reason: "not_actionable", status: null };
   if (await reconcileIfStuck(requestId, state, actor)) {
-    state = await declineStateOf(requestId, creatorId);
+    state = await declineStateOf(requestId, scope);
   }
   if (
     state.status === "awaiting_approval" &&
@@ -666,14 +677,13 @@ export async function declineLicenseRequest(
   ) {
     // T8: the deadline passed, so the request expires; it reads expired only once Stripe has released the hold.
     await expireLicenseRequest(requestId, LAZY);
-    return notActionable(await declineStateOf(requestId, creatorId));
+    return notActionable(await declineStateOf(requestId, scope));
   }
   const claimed = await claimPaymentAction(requestId, "decline");
-  if (!claimed)
-    return notActionable(await declineStateOf(requestId, creatorId));
+  if (!claimed) return notActionable(await declineStateOf(requestId, scope));
   const done = await cancelClaimed(claimed, actor, reason);
   if (done?.to === "declined") return { ok: true };
-  const after = await declineStateOf(requestId, creatorId);
+  const after = await declineStateOf(requestId, scope);
   if (after.status === "declined") return { ok: true };
   return after.status === "awaiting_approval" && !after.paymentAction
     ? { ok: false, reason: "retry", status: after.status }
@@ -710,7 +720,11 @@ async function cancelClaimed(
     if (outcome.ok) {
       return await finishCanceled(claimed.id, { claim, actor, statusReason });
     }
-    await reconcileFromStripe(claimed.id, { actor, claim });
+    await reconcileFromStripe(claimed.id, {
+      actor,
+      claim,
+      declineReason: statusReason,
+    });
   } catch (error) {
     logEvent("warn", "license_request.cancel_claim_failed", {
       requestId: claimed.id,

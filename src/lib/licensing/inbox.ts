@@ -83,6 +83,9 @@ export const INBOX_COPY = {
     "Payment didn't go through. No license was issued and the buyer wasn't charged.",
   videoDisabledLine:
     "This video was disabled, so the request was declined. The buyer wasn't charged.",
+  /** 04 §11.5 (07 D111): Approve's re-check found the video licensed exclusively; the row's line and toast, no seal. */
+  exclusiveConflictLine:
+    "This video now has an exclusive license, so this request was declined. The buyer wasn't charged.",
   approve: "Approve",
   approving: "Approving…",
   decline: "Decline",
@@ -132,8 +135,8 @@ export function requestPill(
 }
 
 /**
- * The line under a decided request (04 §11.5): an expiry, a failed capture (danger text) or a disabled video. Approved
- * and plainly declined requests have none.
+ * The line under a decided request (04 §11.5): an expiry, a failed capture (danger text), a disabled video or an
+ * exclusive conflict (07 D111). Approved and plainly declined requests have none.
  */
 export function outcomeLine(
   r: Pick<CreatorRequest, "status" | "statusReason">,
@@ -147,6 +150,9 @@ export function outcomeLine(
   }
   if (r.status === "declined" && r.statusReason === "video_disabled") {
     return { text: INBOX_COPY.videoDisabledLine, danger: false };
+  }
+  if (r.status === "declined" && r.statusReason === "exclusive_conflict") {
+    return { text: INBOX_COPY.exclusiveConflictLine, danger: false };
   }
   return null;
 }
@@ -232,7 +238,9 @@ function lostTo(status: LicenseRequestStatus | null): RowOutcome {
  * and the toast; capture_failed and a race lost to a decision settle with that status's pill and no toast (J8.8); the
  * deadline settles with the neutral Expired pill (the database's clock said so; owner answer Q-142 a) and only "This
  * request expired." until the expiry is stored (07 D25; Q-140 a); retry, payouts and a missing original leave the row
- * live with their line; a claim still running settles nothing (the refresh shows Processing…).
+ * live with their line; a claim still running settles nothing (the refresh shows Processing…). An exclusive conflict
+ * (07 D111) settles with the Declined pill, its line and the same toast, no seal, only once the request is stored
+ * declined; stored expired, as Decline's; else Stripe didn't confirm the cancel yet: try again.
  */
 export function approveOutcome(
   result: ApproveResult | null,
@@ -275,8 +283,42 @@ export function approveOutcome(
       return outcome({ line: { kind: "original_missing" } });
     case "not_actionable":
       return lostTo(result.status);
+    case "exclusive_conflict":
+      return conflictOutcome(result.status);
   }
 }
+
+/** Approve's exclusive conflict by the request's status (07 D25, D111): "wasn't charged" only once Stripe canceled. */
+function conflictOutcome(status: LicenseRequestStatus | null): RowOutcome {
+  switch (status) {
+    case "declined": {
+      const text = INBOX_COPY.exclusiveConflictLine;
+      return outcome({
+        settles: true,
+        pill: "declined",
+        line: { kind: "text", text, danger: false, recorded: true },
+        toast: text,
+      });
+    }
+    case "expired":
+      return expiredNotCharged();
+    default:
+      return tryAgain();
+  }
+}
+
+/** A request found stored expired: the Expired pill and that ending's sentence, recorded, no toast (Q-143 a). */
+const expiredNotCharged = () =>
+  outcome({
+    settles: true,
+    pill: "expired",
+    line: {
+      kind: "text",
+      text: INBOX_COPY.expiredNotCharged,
+      danger: false,
+      recorded: true,
+    },
+  });
 
 /**
  * Decline's result (or the action's own failure, `null`), as a row shows it (05 §6.3 States; 01 J8.4): declined with
@@ -297,16 +339,7 @@ export function declineOutcome(result: DeclineResult | null): RowOutcome {
   }
   if (result.reason === "retry") return tryAgain();
   if (result.status !== "expired") return lostTo(result.status);
-  return outcome({
-    settles: true,
-    pill: "expired",
-    line: {
-      kind: "text",
-      text: INBOX_COPY.expiredNotCharged,
-      danger: false,
-      recorded: true,
-    },
-  });
+  return expiredNotCharged();
 }
 
 /**

@@ -707,6 +707,8 @@ describe("the buyer's pages: the fake checkout and /r (05 §4.3, §10; owner ans
       status: "checkout_pending",
       displayStatus: "checkout_pending",
       statusReason: null,
+      // Its waiting line's one fact (owner answer Q-178).
+      exclusive: false,
       scope: "Paid social ads · 1 year · Worldwide",
       licensePriceCents: 157500,
       amountTotalCents: DEMO_TOTAL,

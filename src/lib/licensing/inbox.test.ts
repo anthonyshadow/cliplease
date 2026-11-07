@@ -139,6 +139,18 @@ describe("outcomeLine (04 §11.5)", () => {
     );
   });
 
+  it("explains a request declined for an exclusive conflict, in History and on the page (07 D111)", () => {
+    expect(
+      outcomeLine(
+        { status: "declined", statusReason: "exclusive_conflict" },
+        null,
+      ),
+    ).toEqual({
+      text: "This video now has an exclusive license, so this request was declined. The buyer wasn't charged.",
+      danger: false,
+    });
+  });
+
   it.each([
     ["approved", null],
     ["declined", "creator"],
@@ -295,6 +307,65 @@ describe("approveOutcome (04 §11.5; 05 §6.3 States)", () => {
       });
     },
   );
+
+  it("settles an exclusive conflict with the Declined pill, its line and toast and no seal, once declined (07 D111)", () => {
+    const text = INBOX_COPY.exclusiveConflictLine;
+    expect(text).toBe(
+      "This video now has an exclusive license, so this request was declined. The buyer wasn't charged.",
+    );
+    const o = approveOutcome(
+      { ok: false, reason: "exclusive_conflict", status: "declined" },
+      request,
+    );
+    expect(o).toEqual({
+      settles: true,
+      pill: "declined",
+      line: { kind: "text", text, danger: false, recorded: true },
+      toast: text,
+    });
+    expect(showsSeal(o)).toBe(false);
+  });
+
+  it("says an exclusive conflict found the request expired, as Decline does (Q-143 a)", () => {
+    expect(
+      approveOutcome(
+        { ok: false, reason: "exclusive_conflict", status: "expired" },
+        request,
+      ),
+    ).toEqual({
+      settles: true,
+      pill: "expired",
+      line: {
+        kind: "text",
+        text: INBOX_COPY.expiredNotCharged,
+        danger: false,
+        recorded: true,
+      },
+      toast: null,
+    });
+  });
+
+  it("never says 'wasn't charged' for a conflict whose cancel Stripe hasn't confirmed: try again (07 D25)", () => {
+    expect(
+      approveOutcome(
+        {
+          ok: false,
+          reason: "exclusive_conflict",
+          status: "awaiting_approval",
+        },
+        request,
+      ),
+    ).toEqual({
+      settles: false,
+      pill: null,
+      line: {
+        kind: "text",
+        text: "Couldn't reach the payment service. Try again.",
+        danger: false,
+      },
+      toast: null,
+    });
+  });
 
   it("settles nothing while another claim runs: the refresh shows Processing…", () => {
     expect(

@@ -1,10 +1,12 @@
 import { expect, type Locator, test } from "@playwright/test";
 import { formatMoney } from "../../src/lib/format";
 import { CHECKOUT_COPY } from "../../src/lib/licensing/checkout-copy";
+import { INBOX_COPY } from "../../src/lib/licensing/inbox";
 import { LICENSE_PAGE_COPY } from "../../src/lib/licensing/license-page";
 import { REQUEST_STATUS_COPY } from "../../src/lib/licensing/request-status";
 import { BUYER_POSTINGS_COPY } from "../../src/lib/postings/buyer-rows";
 import { BADGE_COPY } from "../../src/lib/videos/ownership";
+import { videoHref } from "../../src/lib/videos/steps";
 import {
   availabilityNotice,
   choose,
@@ -47,7 +49,11 @@ import {
   TIERS,
   tierAt,
 } from "./helpers/layout";
-import { pressAndSettle, pressLocator } from "./helpers/press";
+import {
+  pressAndSettle,
+  pressAndSettleIn,
+  pressLocator,
+} from "./helpers/press";
 import { cleanCreatedVideos } from "./helpers/videos";
 
 // G.6 for the license page (P15; 05 §1.6 S01; 07 D145–D149, D153, D154) on all four projects, logged out at each
@@ -516,6 +522,99 @@ test("G.6, owner answer Q-176: the fake checkout's clock and Extend stay in the 
   });
 
   await context.close();
+  expect(errors).toEqual([]);
+  expect(creatorErrors).toEqual([]);
+});
+
+test("G.6, 07 D110, D111, owner answer Q-178: an exclusive request's line on /r, then once approved the licensed-exclusively notice, the public card and the creator's lines, at every tier", async ({
+  page,
+  browser,
+  baseURL,
+}, testInfo) => {
+  test.setTimeout(600_000);
+  const creatorErrors = collectConsoleErrors(page);
+  const { handle, shareUrl, videoId } = await publishDemoVideo(page);
+  await offerExclusive(page);
+  const bought = await buyLicense(browser, shareUrl, {
+    ...CHOICE,
+    exclusive: true,
+  });
+  await bought.context.close();
+
+  // /r while the creator decides: the exclusive line inside the reading column.
+  const context = await browser.newContext({ baseURL });
+  const buyer = await context.newPage();
+  const errors = collectConsoleErrors(buyer);
+  await buyer.goto(bought.statusUrl);
+  const waitingLine = buyer.getByText(
+    REQUEST_STATUS_COPY.exclusiveWaiting(handle, false),
+    { exact: true },
+  );
+  await expect(waitingLine).toBeVisible();
+  const summary = buyer.locator("main section", {
+    has: buyer.getByText(REQUEST_STATUS_COPY.total, { exact: true }),
+  });
+  await atEveryWidth(buyer, testInfo, async ({ width }) => {
+    await expectReadingPage(buyer, width);
+    await expectInside(
+      waitingLine,
+      buyer.locator("main .max-w-reading").first(),
+    );
+    // Under the summary card (05 §4.3 callout 11).
+    await expectAbove(summary, waitingLine);
+  });
+  // Off /r before the creator's work outlasts its 30 s refresh: WebKit cancels one in flight and a goto is cut short.
+  await buyer.goto("about:blank");
+
+  // The creator approves it with one tap.
+  await page.goto("/dashboard");
+  const row = page.locator("[data-inbox-row]");
+  await pressAndSettleIn(page, row, INBOX_COPY.approve);
+  await expect(
+    row.locator("[data-row-status]").getByText("Approved", { exact: true }),
+  ).toBeVisible();
+
+  // The license page: the notice above "What you get", with no option and no bar.
+  await buyer.goto(shareUrl);
+  const notice = availabilityNotice(buyer);
+  await expect(notice).toContainText(
+    /This video is licensed exclusively until /,
+  );
+  const whatYouGet = buyer.getByText(LICENSE_PAGE_COPY.whatYouGet.title, {
+    exact: true,
+  });
+  await atEveryWidth(buyer, testInfo, async () => {
+    await expect(buyer.locator("[data-pricebar]")).toHaveCount(0);
+    await expect(buyer.locator('input[type="radio"]')).toHaveCount(0);
+    await expectNoHorizontalScroll(buyer);
+    await expectNoBareDollar(buyer);
+    await expectAbove(notice, whatYouGet);
+  });
+
+  // The public card: its line inside the card, never a name.
+  await buyer.goto(`/@${handle}`);
+  const card = buyer.locator("[data-video-card]");
+  const publicLine = card.getByText(/^Licensed exclusively until /);
+  await expect(publicLine).toBeVisible();
+  await atEveryWidth(buyer, testInfo, async () => {
+    await expectNoHorizontalScroll(buyer);
+    await expectInside(publicLine, card);
+  });
+  await context.close();
+
+  // The creator's list and video page: the licensee's line inside the page.
+  const main = page.locator("main");
+  for (const path of ["/dashboard/videos", videoHref(videoId)]) {
+    await page.goto(path);
+    const creatorLine = main.getByText(/^Licensed exclusively to .+ until /);
+    await expect(creatorLine).toBeVisible();
+    await atEveryWidth(page, testInfo, async () => {
+      await expectNoHorizontalScroll(page);
+      await expectNoBareDollar(page);
+      await expectInside(creatorLine, main);
+    });
+  }
+
   expect(errors).toEqual([]);
   expect(creatorErrors).toEqual([]);
 });

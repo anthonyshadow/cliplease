@@ -13,6 +13,7 @@ export default function LicenseApprovedPreview() {
       currency="cad"
       url="http://localhost:3000/l/preview"
       verifyUrl="http://localhost:3000/verify/CL-7K3M-9QXA"
+      exclusiveEndsAt={null}
     />
   );
 }

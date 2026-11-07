@@ -177,6 +177,8 @@ export type LicenseSnapshotInput = {
     platformFeeCents: number;
     amountTotalCents: number;
     currency: Currency;
+    /** The request's `exclusive`: copied to `license.exclusive` and the snapshot (07 D111). */
+    exclusive: boolean;
   };
   video: {
     id: string;
@@ -221,8 +223,8 @@ function entryOf(p: SnapshotPosting): LicenseSnapshotV1["postings"][number] {
 /**
  * The license's immutable record (03 §3.7.2; 07 D71, D93, D94): the scope's labels, the postings (verified first, then
  * the creator's order, as the license page shows them), the ownership and credit line from the primary verified posting
- * (is_source, else the lowest-position verified one), and the request's amounts in its currency. Standard licenses only: P19g sets
- * `exclusive` from the request, and the renewal engine sets `renewalOfCode`.
+ * (is_source, else the lowest-position verified one), the request's amounts in its currency, and its `exclusive` (07
+ * D111). `renewalOfCode` is null: a first term; the renewal engine sets it for renewal terms (P22e).
  */
 export function buildLicenseSnapshot(
   i: LicenseSnapshotInput,
@@ -270,7 +272,7 @@ export function buildLicenseSnapshot(
       amountTotalCents: r.amountTotalCents,
       currency: r.currency,
     },
-    exclusive: false,
+    exclusive: r.exclusive,
     renewalOfCode: null,
   };
 }

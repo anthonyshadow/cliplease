@@ -173,6 +173,8 @@ describe("InboxRow (04 §9.11; 05 §6.3)", () => {
 
 describe("InboxRow's exclusive tag and line (04 §11.5; 07 D111; AD-72)", () => {
   const exclusive = WAITING_EXCLUSIVE_REQUEST;
+  const CONFLICT_LINE =
+    "This video now has an exclusive license, so this request was declined. The buyer wasn't charged.";
   /** The row of `request`, with an action's `outcome` if it has one. */
   function rowOf(request: CreatorRequest, outcome?: RowOutcome) {
     const { container } = render(
@@ -257,6 +259,46 @@ describe("InboxRow's exclusive tag and line (04 §11.5; 07 D111; AD-72)", () => 
       expect(within(row).queryByText(WAITING_EXCLUSIVE_LINE)).toBeNull();
     },
   );
+
+  it("a row held after an exclusive conflict: the Declined pill and the Exclusive tag in its status, the line where the actions were, no seal (07 D111)", () => {
+    const row = rowOf(
+      WAITING_REQUEST,
+      approveOutcome(
+        { ok: false, reason: "exclusive_conflict", status: "declined" },
+        WAITING_REQUEST,
+      ),
+    );
+    expect(within(statusOf(row)).getByText("Declined")).toBeTruthy();
+    expect(within(row).queryByRole("button", { name: "Approve" })).toBeNull();
+    expect(within(row).queryByRole("button", { name: "Decline" })).toBeNull();
+    expect(within(row).getAllByText(CONFLICT_LINE)).toHaveLength(1);
+    const price = within(row).getByText("First snow · CA$1,575.00");
+    expect(price.querySelector("svg")).toBeNull();
+    expect(within(row).queryByText(/You get/)).toBeNull();
+    expect(within(row).queryAllByRole("button")).toHaveLength(0);
+    const held = rowOf(
+      exclusive,
+      approveOutcome(
+        { ok: false, reason: "exclusive_conflict", status: "declined" },
+        exclusive,
+      ),
+    );
+    expect(within(held).getByText("Exclusive").parentElement).toBe(
+      statusOf(held),
+    );
+  });
+
+  it("a History row declined for an exclusive conflict says why, once", () => {
+    const row = rowOf({
+      ...decided("declined"),
+      statusReason: "exclusive_conflict",
+    });
+    expect(within(statusOf(row)).getByText("Declined")).toBeTruthy();
+    expect(within(row).getAllByText(CONFLICT_LINE)).toHaveLength(1);
+    expect(within(row).getByText("Exclusive").parentElement).toBe(
+      statusOf(row),
+    );
+  });
 
   it.each([
     ["waiting", WAITING_REQUEST],

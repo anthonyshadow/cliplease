@@ -8,7 +8,9 @@ import { refreshPayoutsStatus } from "../creators/profile";
 import { errorName, logEvent } from "../log";
 import { getAuthorization } from "../payments";
 import { approveLicenseRequest } from "./approve";
+import { hasExclusiveConflict } from "./availability";
 import { runEffects } from "./effects";
+import { declineLicenseRequest } from "./requests";
 import {
   awaitingAutoApproval,
   queueRequestEmails,
@@ -96,8 +98,9 @@ export async function retryAutoApprovals({
 
 /**
  * One request's automatic approval (prompt steps 1–4). `giveUpFirst`, for a retry (owner answer Q-154): a request reached
- * 10 minutes or more after authorization falls back with gave_up, no guard, no Stripe call. A retry, returned or thrown,
- * gives up once the attempt ends 10 minutes or more after authorization, read on the database's clock as it is then.
+ * 10 minutes or more after authorization gives up (giveUp: falls back with gave_up, no guard, no capture). A retry,
+ * returned or thrown, gives up once the attempt ends 10 minutes or more after authorization, read on the database's
+ * clock as it is then.
  */
 async function settle(
   requestId: string,
@@ -106,17 +109,13 @@ async function settle(
   try {
     const state = await autoState(requestId);
     if (!state?.eligible) return "skipped";
-    if (giveUpFirst && state.pastGiveUp) {
-      return await fallBack(requestId, "gave_up");
-    }
+    if (giveUpFirst && state.pastGiveUp) return await giveUp(requestId);
     const outcome = await attempt(requestId, state).catch((error: unknown) => {
       logFailure(requestId, error);
       return "retry" as const;
     });
     if (outcome !== "retry") return outcome;
-    return (await pastGiveUpNow(requestId))
-      ? await fallBack(requestId, "gave_up")
-      : "retry";
+    return (await pastGiveUpNow(requestId)) ? await giveUp(requestId) : "retry";
   } catch (error) {
     logFailure(requestId, error);
     return "retry";
@@ -189,14 +188,29 @@ async function attempt(
     case "not_actionable":
     case "expired":
     case "capture_failed":
+    case "exclusive_conflict":
       // A held claim (an ok capture whose finish failed) is the stuck-claim reconcile's to finish; capture_failed is
-      // T7's ending, which emails nobody in CORE (07 D34).
+      // T7's ending, which emails nobody in CORE (07 D34). A conflict was declined, never handed over (07 D111): a
+      // decline whose cancel was released is retried, and giveUp declines it again.
       return "skipped";
     default: {
       const unknown: never = result.reason;
       throw new Error(`autoApproveRequest: ${String(unknown)}`);
     }
   }
+}
+
+/**
+ * The 10 minutes are up (owner answer Q-154): the request falls back with gave_up, with no guard and no capture. Unless
+ * it no longer fits its video (owner answer Q-179; 07 D111, a conflict is never a fallback): then it is declined as
+ * auto-approve, a cancel that can only release the hold, and nothing is handed to the creator.
+ */
+async function giveUp(requestId: string): Promise<AutoApproveOutcome> {
+  if (await hasExclusiveConflict(requestId)) {
+    await declineLicenseRequest(requestId, AUTO_APPROVE, "exclusive_conflict");
+    return "skipped";
+  }
+  return fallBack(requestId, "gave_up");
 }
 
 /**

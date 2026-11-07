@@ -92,6 +92,7 @@ describe("requestView (05 §4.3, 07 D27)", () => {
     ["declined", null, "declined"],
     ["declined", "creator", "declined"],
     ["declined", "video_disabled", "video_disabled"],
+    ["declined", "exclusive_conflict", "exclusive_conflict"],
     ["expired", null, "expired"],
     ["capture_failed", "capture_error:card_declined", "capture_failed"],
   ] as const)(
@@ -136,6 +137,7 @@ describe("declinedView (01 §4.8, 07 D28): /r's and request-declined's reason ru
   it.each([
     ["creator", "declined"],
     ["video_disabled", "video_disabled"],
+    ["exclusive_conflict", "exclusive_conflict"],
     [null, "declined"],
     ["something_new", "declined"],
   ] as const)("a decline for %s is %s, on /r too", (statusReason, view) => {
@@ -207,6 +209,12 @@ describe("the views' words, verbatim from 01 §4.8 (07 D27, D28)", () => {
       false,
     ],
     [
+      "exclusive_conflict",
+      "Not approved",
+      "This video was licensed exclusively to someone else. You weren't charged, and the hold on your card has been released.",
+      false,
+    ],
+    [
       "capture_failed",
       "Payment didn't go through",
       "@maya approved, but your card couldn't be charged, so no license was issued. You haven't been charged. You can try again from the license link.",
@@ -258,5 +266,17 @@ describe("the views' words, verbatim from 01 §4.8 (07 D27, D28)", () => {
     expect(COPY.processing).toBe("Processing…");
     expect([COPY.scope, COPY.total]).toEqual(["Scope", "Total"]);
     expect(COPY.backToLicense).toBe("Back to the license page");
+  });
+});
+
+describe("exclusiveWaiting (owner answers Q-173, Q-178)", () => {
+  it("names the creator while they decide, and only the kind while auto-approve may run", () => {
+    expect(COPY.exclusiveWaiting("maya", false)).toBe(
+      "Exclusive request. While @maya decides, no one else can request this video.",
+    );
+    expect(COPY.exclusiveWaiting("maya", false)).toBe(
+      COPY.exclusiveWhileDeciding("maya"),
+    );
+    expect(COPY.exclusiveWaiting("maya", true)).toBe("Exclusive request.");
   });
 });

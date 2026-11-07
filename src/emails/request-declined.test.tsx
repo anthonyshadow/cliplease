@@ -62,6 +62,17 @@ describe("request-declined (05 §8, to the buyer; 01 §4.8; 07 D28)", () => {
     expect(text).toContain("Not approved: you weren't charged");
   });
 
+  it("says the video went exclusively to someone else on an exclusive conflict (07 D111)", async () => {
+    const { text } = await renderEmail(
+      <RequestDeclined {...declined} statusReason="exclusive_conflict" />,
+    );
+    expect(text).toContain(
+      "This video was licensed exclusively to someone else. You weren't charged, and the hold on your card has been released.",
+    );
+    expect(text).not.toContain("didn't approve");
+    expect(text).toContain("Not approved: you weren't charged");
+  });
+
   it("opens with /r's Not approved body for every reason, word for word (05 §8 callout 3)", () => {
     const facts = { handle: "maya", total: "CA$1,732.50", deadline: null };
     for (const view of Object.keys(COPY.declinedBody) as DeclinedView[]) {

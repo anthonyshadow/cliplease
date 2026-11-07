@@ -14,6 +14,7 @@ import {
   VENUE,
 } from "../app-name";
 import { formatPostDate } from "../format";
+import { LICENSE_V1_EXCLUSIVE_SECTION_ID } from "./license-v1-summary";
 import type { LegalSection } from "./types";
 
 export const LICENSE_V1_UPDATED = "2026-10-15";
@@ -222,7 +223,7 @@ export const LICENSE_V1_SECTIONS: readonly LegalSection[] = [
     ],
   },
   {
-    id: "exclusive-licenses",
+    id: LICENSE_V1_EXCLUSIVE_SECTION_ID,
     title: "21. Exclusive licenses",
     blocks: [
       // 07 D113, verbatim (DRAFT).

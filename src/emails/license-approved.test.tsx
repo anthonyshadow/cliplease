@@ -18,7 +18,11 @@ const approved: LicenseApprovedProps = {
   currency: "cad",
   url: LICENSE_URL,
   verifyUrl: VERIFY_URL,
+  exclusiveEndsAt: null,
 };
+
+const EXCLUSIVE_LINE =
+  "This license is exclusive: no one else can license this video until 20 Nov 2027, 15:00 UTC.";
 
 const BODY =
   "@maya approved. You were charged CA$1,732.50. Your file and license are ready.";
@@ -64,6 +68,32 @@ describe("license-approved (05 §8, to the buyer; 01 J9.3; 07 D98)", () => {
     expect(html.match(/Get file and license/g)).toHaveLength(1);
     // The period stays outside the record's link, so a copied URL normalizes.
     expect(html).not.toContain(`href="${VERIFY_URL}."`);
+  });
+
+  it("gives an exclusive license its line after the amounts, with the end in UTC (05 §8 callout 11; 07 D84, D113)", async () => {
+    const { text, html } = await renderEmail(
+      <LicenseApproved
+        {...approved}
+        amountTotalCents={519750}
+        exclusiveEndsAt={new Date("2027-11-20T15:00:00Z")}
+      />,
+    );
+    const order = [
+      "@maya approved. You were charged CA$5,197.50.",
+      "Amounts in Canadian dollars (CAD).",
+      EXCLUSIVE_LINE,
+      "First snow",
+    ];
+    const at = order.map((part) => text.indexOf(part));
+    expect(at.every((i) => i >= 0)).toBe(true);
+    expect([...at].sort((a, b) => a - b)).toEqual(at);
+    expect(text).not.toMatch(BARE_DOLLAR);
+    expect(html).not.toMatch(BARE_DOLLAR);
+  });
+
+  it("gives a standard license no exclusive line", async () => {
+    const { text } = await renderEmail(<LicenseApproved {...approved} />);
+    expect(text).not.toContain("exclusive");
   });
 
   it("names a USD license's currency (07 D98)", async () => {

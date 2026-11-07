@@ -1,26 +1,12 @@
 import { expect, type Page } from "@playwright/test";
-import { Client } from "pg";
 import { CHECKOUT_COPY } from "../../../src/lib/licensing/checkout-copy";
 import { REQUEST_STATUS_COPY } from "../../../src/lib/licensing/request-status";
-import { checkTestDatabaseFiles } from "../../helpers/test-database";
 import { isRouterRefresh, requestEnded } from "./press";
+import { withTestDb } from "./test-db";
 
 // The unpaid hold on the fake checkout (owner answers Q-170, Q-175, Q-176; AD-74, AD-76). The last minute is ten minutes
 // away, and page.clock moves only the browser while Extend asks the server, so a spec moves the row's times on the
-// database's clock. Plain Node, like read-latest-email.ts: the runner has no app environment, so it reaches the database
-// through the guard and the URL playwright.config.ts uses, and .env.local can't be reached.
-
-async function withTestDb<T>(run: (client: Client) => Promise<T>): Promise<T> {
-  const client = new Client({
-    connectionString: checkTestDatabaseFiles(".").DATABASE_URL_UNPOOLED,
-  });
-  await client.connect();
-  try {
-    return await run(client);
-  } finally {
-    await client.end();
-  }
-}
+// database's clock (withTestDb).
 
 /**
  * Moves an unpaid request's hold, and its session when given, to that many seconds from the database's now: a negative

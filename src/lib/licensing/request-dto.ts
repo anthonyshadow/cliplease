@@ -15,6 +15,8 @@ type RequestFacts = {
   displayStatus: DisplayStatus;
   /** Why it ended (07 D27, D28): the copy for abandoned and declined requests depends on it. */
   statusReason: string | null;
+  /** An exclusive request (07 D111): the creator's tag and License type fact, /r's waiting line (owner answer Q-178). */
+  exclusive: boolean;
   /** "Paid social ads · 1 year · France" (scopeLabel), built on the server: the pages' client code loads no countries. */
   scope: string;
   licensePriceCents: number;
@@ -48,8 +50,6 @@ export type BuyerStatus = RequestFacts & {
  * its kind (04 §11.5).
  */
 export type CreatorRequest = RequestFacts & {
-  /** An exclusive request (07 D111): its tag and its License type fact. */
-  exclusive: boolean;
   /** The premium stored at T1: ×1.00 on a standard request. */
   exclusiveMultiplierBps: number;
   /** When its license would end if approved now, for the "If you approve" line (ISO); null unless exclusive and waiting. */
@@ -71,18 +71,21 @@ export type CreatorRequest = RequestFacts & {
 export const INBOX_VIEWS = ["waiting", "history"] as const;
 export type InboxView = (typeof INBOX_VIEWS)[number];
 
-/** Why Approve didn't approve (02 §5.7, §8.2; 04 §11.5). P19g adds the exclusive conflict. */
+/** Why Approve didn't approve (02 §5.7, §8.2; 04 §11.5; 07 D111). */
 export type ApproveRefusal =
   | "not_actionable"
   | "expired"
   | "retry"
   | "capture_failed"
   | "payouts_not_active"
-  | "original_missing";
+  | "original_missing"
+  | "exclusive_conflict";
 
 /**
  * What Approve returns (02 §5.7): the license's code, or why not with the request's status as it is now (null when the
- * request isn't the caller's to approve: nothing about it is told).
+ * request isn't the caller's to approve: nothing about it is told). exclusive_conflict (07 D111): the video can't take
+ * the request now, so it was declined without a charge: `declined` once Stripe confirmed the cancel, else still
+ * `awaiting_approval` (the decline's claim released, or held), or `expired` when the deadline came first.
  */
 export type ApproveResult =
   | { ok: true; licenseCode: string }

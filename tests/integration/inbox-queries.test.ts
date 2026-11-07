@@ -73,12 +73,16 @@ const CREATOR_KEYS = [
   "videoId",
 ];
 
-/** The keys /r's request carries, and nothing else: of auto-approve, only whether it may still run (P19c). */
+/**
+ * The keys /r's request carries, and nothing else: of auto-approve, only whether it may still run (P19c); whether it is
+ * exclusive, for its waiting line (owner answer Q-178).
+ */
 const BUYER_KEYS = [
   "amountTotalCents",
   "autoApproving",
   "currency",
   "displayStatus",
+  "exclusive",
   "expiresAt",
   "handle",
   "id",

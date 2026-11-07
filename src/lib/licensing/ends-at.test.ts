@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
-import type { TermKey } from "@/lib/domain/values";
+import { EXCLUSIVE_TERM_KEYS, type TermKey } from "@/lib/domain/values";
 import { formatPostDate } from "@/lib/format";
-import { computeEndsAt, endsAtIfApprovedNow } from "./ends-at";
+import {
+  computeEndsAt,
+  endsAtIfApprovedNow,
+  isExclusiveTermWithinLimit,
+} from "./ends-at";
 
 // 07 D33's goldens. The Verify step runs this file under TZ=America/Los_Angeles and TZ=Pacific/Auckland too: the result
 // never depends on the process's zone.
@@ -46,6 +50,37 @@ describe("computeEndsAt (07 D33)", () => {
     expect(computeEndsAt(new Date("2026-10-15T14:32:00Z"), "perpetual")).toBe(
       null,
     );
+  });
+});
+
+describe("isExclusiveTermWithinLimit (I35; 07 D111, D112)", () => {
+  const START = new Date("2026-11-20T15:00:00Z");
+  const end = (term: TermKey) => computeEndsAt(START, term);
+  const y1 = end("y1");
+
+  it.each(EXCLUSIVE_TERM_KEYS)(
+    "a %s term from its start is within a year",
+    (term) => {
+      expect(isExclusiveTermWithinLimit(START, end(term))).toBe(true);
+    },
+  );
+
+  it("refuses an end 1 ms past the year, a perpetual end and an end at the start", () => {
+    expect(y1).not.toBeNull();
+    const past = y1 && new Date(y1.getTime() + 1);
+    expect(isExclusiveTermWithinLimit(START, past)).toBe(false);
+    expect(isExclusiveTermWithinLimit(START, null)).toBe(false);
+    expect(isExclusiveTermWithinLimit(START, new Date(START))).toBe(false);
+  });
+
+  it("from 29 Feb, a year ends on 28 Feb", () => {
+    const leap = new Date("2028-02-29T10:00:00Z");
+    expect(
+      isExclusiveTermWithinLimit(leap, new Date("2029-02-28T10:00:00Z")),
+    ).toBe(true);
+    expect(
+      isExclusiveTermWithinLimit(leap, new Date("2029-03-01T10:00:00Z")),
+    ).toBe(false);
   });
 });
 

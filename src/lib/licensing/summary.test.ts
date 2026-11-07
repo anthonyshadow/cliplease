@@ -109,11 +109,12 @@ describe("licenseSummary (01 §4.7)", () => {
     ]);
   });
 
-  it("gives an exclusive license the exclusivity row in place of the standard one (07 D113)", () => {
+  it("gives an exclusive license the exclusivity row first, in place of the standard one (04 §9.5; 07 D113)", () => {
     const exclusive = { ...PAID_WORLDWIDE, exclusive: true };
-    expect(licenseSummary(exclusive).groups.map((g) => g.title)).toEqual([
-      "You can",
+    const summary = licenseSummary(exclusive);
+    expect(summary.groups.map((g) => g.title)).toEqual([
       "You get",
+      "You can",
       "You must",
       "You can't",
     ]);
@@ -122,6 +123,21 @@ describe("licenseSummary (01 §4.7)", () => {
       "Exclusivity — @maya won't license this video to anyone else, for any use or place, for 1 year from approval.",
     ]);
     expect(rows["Not included"]).toBeUndefined();
+    expect(rows["You can"]).toEqual(rowsOf(PAID_WORLDWIDE)["You can"]);
+  });
+
+  it("names the type in an exclusive heading and links the Exclusive licenses section", () => {
+    const summary = licenseSummary({ ...PAID_WORLDWIDE, exclusive: true });
+    expect(summary.heading).toBe(
+      "License summary · Exclusive · Paid social ads · 1 year · Worldwide",
+    );
+    expect(summary.footer).toEqual({
+      note: "This summary is not the license.",
+      link: {
+        text: `The ${APP_NAME} Video License v1 is the legal text`,
+        href: "/legal/license/v1#exclusive-licenses",
+      },
+    });
   });
 
   it("keeps the music and people rows on an exclusive license", () => {

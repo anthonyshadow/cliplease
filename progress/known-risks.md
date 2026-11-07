@@ -64,12 +64,8 @@ Terms: the *hold* is `license_request.checkout_hold_until` (10 minutes, extendab
 - **When revisiting:** a separate standard wording if buyers misread it.
 - **Brings it back:** buyer feedback, or a copy pass before launch.
 
-## 9. Until P19g, approving an exclusive request issues an ordinary license at the premium
-- **What can happen:** the buyer pays ×3 and gets a license with `license.exclusive = false`, and the video isn't blocked afterwards. An auto-approve creator would hit this through T2's `after()` with no tap.
-- **How likely, how bad:** certain if anyone approves in that window; serious, but the window is development only.
-- **What stops it today:** nothing is deployed. P19f's checks never approve an exclusive request, and its e2e keep auto-approve off.
-- **When revisiting:** P19g fixes it. Don't deploy between P19f and P19g.
-- **Brings it back:** P19g.
+## 9. Until P19g, approving an exclusive request issues an ordinary license at the premium (closed, P19g)
+- **Closed 2026-11-07 by P19g:** `issueLicense` copies `license.exclusive` from the request and asserts the 1-year limit (I35); the snapshot carries `exclusive`. The capture claim takes the video's lock and re-checks availability first, so a conflict declines without a charge. Pinned by `tests/integration/exclusive-approve.test.ts` and `tests/e2e/exclusive.spec.ts`.
 
 ## 10. A crash between commit and `createCheckout` leaves a row with no session
 - **What can happen:** the process dies after T1 commits and before the driver is called. The row holds for up to 10 minutes and no one can pay it; for an exclusive row the video reads reserved.
@@ -92,12 +88,9 @@ Terms: the *hold* is `license_request.checkout_hold_until` (10 minutes, extendab
 - **When revisiting:** a `BroadcastChannel`, or count open pages on the server, if it matters at P25.
 - **Brings it back:** P25.
 
-## 13. Nothing lints the video-lock rule
-- **What can happen:** a future path could create, authorize or approve a request without `lockVideoForLicensing`. Types can't see it, and `lint:invariants` has no rule for it.
-- **How likely, how bad:** likely over time if unguarded; it would break exclusivity silently, the worst outcome for the feature.
-- **What stops it today:** AGENTS §5, the grep in each prompt's Step 0, and the lock-proof and race tests of `tests/integration/availability.test.ts`.
-- **When revisiting:** add a `video-lock` invariant rule once P19g's capture claim exists, allowing `declineReasonFor`.
-- **Brings it back:** P19g.
+## 13. Nothing lints the video-lock rule (closed, P19g)
+- **Closed 2026-11-07 by P19g:** `lint:invariants` has a `video-lock` rule (`scripts/lint-invariants.ts`, fixtures in `tests/unit/lint-invariants.test.ts`). An insert into `license_request`, and every `assertStillLicensable` or `getLicenseAvailability` call not given `db`, must come after `lockVideoForLicensing` in its function, or sit in a same-file helper every call of which does. In a function that takes the lock, no request row lock, transition or write may come before it. Each path in `LOCKED_PATHS` (`saveRequest`, `decideAuthorization`, `extendCheckoutHold`, `takeCaptureClaim`, `declineReasonFor`, `hasExclusiveConflict`) must keep both the lock and the read. Deleting the capture claim's lock fails the lint (checked by hand).
+- **What it can't see:** ordering across functions (a caller that takes a row lock and then calls a function that takes the video's lock), and a new path that reads availability some other way. A renewal insert (P22b) will fail it until that path takes the lock or is listed. An "authorized" transition must be under the lock too; a lock counts only in its own function; an exported helper takes the lock itself.
 
 ## 14. Two requests from one buyer
 - **What can happen:** nothing ties a buyer's requests together, and each load of the license page is a new submission. A buyer who starts again on the same video while an older Checkout is open has two live requests. Two standard rows can both be paid: two card holds and two Inbox rows. On an exclusive row, the older request's Extend answers "Someone else has reserved this video. Nothing was charged." about the buyer's own newer request.
@@ -126,3 +119,14 @@ Terms: the *hold* is `license_request.checkout_hold_until` (10 minutes, extendab
 - **What stops it today:** T2's own check. T1's check under the lock is status-only as well (AD-57), so Extend matches that one.
 - **When revisiting:** one publicity check in `src/server/licensing/availability.ts` for T1's locked read, T2 and Extend. It changes a refusal, so it was left out of the simplify pass.
 - **Brings it back:** a deploy that changes `ENABLED_SOCIAL_PROVIDERS`, or P25.
+
+## 18. A conflict decline finished by someone else can lose its reason
+- **What can happen:** the system's `exclusive_conflict` decline keeps its reason when its own call finishes it (an ok cancel, or Stripe's word read right after a failed one). If the claim is left held and the webhook or the stuck-claim reconcile finishes it later, the reason is derived again; if the conflict ended meanwhile, the request is stored `declined` / `creator`, the buyer reads "@{handle} didn't approve this request", and no `license_request.exclusive_conflict` row is written.
+- **How likely, how bad:** very unlikely today: it needs a forced conflict (T1, T2 and Extend keep two incompatible requests apart under the video lock), a cancel that fails twice or a crash, and the conflict ending inside those minutes. Wrong wording, never money: the hold is released either way.
+- **What stops it today:** `reconcileFromStripe`'s `declineReason` for the decline's own call (AD-91).
+- **When revisiting:** store the intended decline reason with the claim (a schema change, an owner question).
+- **Brings it back:** P22g, whose reservations end on their own clock, so a conflict can end mid-decline.
+
+## 19. A capture claim held past the deadline stops holding the video (closed, P19g)
+- **Closed 2026-11-07 (owner answer Q-182):** `pending` counts a waiting request with a capture claim whatever its deadline, so a capture that may have taken the money holds the video until it is finished (approved), released or failed. Pinned by `tests/integration/exclusive-approve.test.ts`, which fails on the old definition (checked).
+- **What it was:** with `pending` counting `awaiting_approval` only while `expires_at` was ahead (07 D110), a capture claim taken just before the deadline whose finish didn't run stopped holding the video once the deadline passed, so a second license, exclusive in the worst case, could be approved before the stuck capture was finished.

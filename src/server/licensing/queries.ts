@@ -58,6 +58,8 @@ const FACTS = {
   // displayStatus's and isAutoApproving's (07 D81): never mapped into the shared DTO as they are.
   autoApprove: licenseRequest.autoApprove,
   autoApproveFallbackAt: licenseRequest.autoApproveFallbackAt,
+  // An exclusive request (07 D111): the creator's tag, /r's waiting line (owner answer Q-178).
+  exclusive: licenseRequest.exclusive,
   useKey: licenseRequest.useKey,
   termKey: licenseRequest.termKey,
   territoryKey: licenseRequest.territoryKey,
@@ -76,12 +78,11 @@ const FACTS = {
 /**
  * A creator's view adds the buyer's entries (never their email) and the creator transfer's status, amount and currency
  * for the payout line (P19b): never its Stripe id, its error or its claim. Never in FACTS: /r's buyer never sees it.
- * An exclusive request's kind and premium too (07 D111), with the database's clock for approveEndsAt, as the claims read
- * it; `dbNow` stops at creatorRequestOf.
+ * An exclusive request's premium too (07 D111), with the database's clock for approveEndsAt, as the claims read it;
+ * `dbNow` stops at creatorRequestOf.
  */
 const CREATOR_FACTS = {
   ...FACTS,
-  exclusive: licenseRequest.exclusive,
   exclusiveMultiplierBps: licenseRequest.exclusiveMultiplierBps,
   dbNow: sql<Date>`now()`.mapWith(licenseRequest.createdAt),
   licenseeName: licenseRequest.licenseeName,
@@ -129,6 +130,7 @@ function factsOf(r: FactsRow, posterUrl: string | null) {
     status: r.status,
     displayStatus: displayStatus(r),
     statusReason: r.statusReason,
+    exclusive: r.exclusive,
     scope: scopeLabel(r),
     licensePriceCents: r.licensePriceCents,
     amountTotalCents: r.amountTotalCents,
@@ -152,7 +154,6 @@ function creatorRequestOf(r: CreatorRow): CreatorRequest {
   return {
     ...facts,
     scope: r.exclusive ? INBOX_COPY.exclusiveScope(facts.scope) : facts.scope,
-    exclusive: r.exclusive,
     exclusiveMultiplierBps: r.exclusiveMultiplierBps,
     approveEndsAt:
       r.exclusive && r.status === "awaiting_approval"

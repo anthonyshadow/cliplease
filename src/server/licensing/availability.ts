@@ -1,6 +1,6 @@
 import "server-only";
 import { eq, inArray, sql } from "drizzle-orm";
-import type { db, Tx } from "@/db/client";
+import { db, type Tx } from "@/db/client";
 import { license, licenseRequest, video } from "@/db/schema";
 import type { VideoStatus } from "@/lib/domain/values";
 import {
@@ -15,6 +15,7 @@ import {
   VIDEO_PRICING_COLUMNS,
   videoPricingOf,
 } from "../pricing/rate-card";
+import type { DeclineReason } from "./state-machine";
 
 // Whether a video can be licensed right now (07 §9.2, D110; owner answer Q-170): the video row lock every request that
 // creates, authorizes or extends a hold takes first, and the facts deriveAvailability reads. A display read needs no
@@ -38,12 +39,14 @@ const RUNNING = sql`l.revoked_at is null and (l.ends_at is null or l.ends_at > n
 
 /**
  * A request holding the video, other than `self`: unpaid while its session and its hold both run (owner answer Q-170), or
- * paid for its whole approval window. Drizzle leaves a query over `video` unqualified, so the subquery writes its name.
+ * paid for its whole approval window, and past it while a capture claim is held (owner answer Q-182: a capture that may
+ * have taken the money holds the video until it is finished, released or failed). Drizzle leaves a query over `video`
+ * unqualified, so the subquery writes its name.
  */
 const pending = (self: string | null) =>
   sql`r.video_id = ${video}.id and r.id is distinct from ${self}::uuid
   and ((r.status = 'checkout_pending' and r.checkout_expires_at > now() and r.checkout_hold_until > now())
-    or (r.status = 'awaiting_approval' and r.expires_at > now()))`;
+    or (r.status = 'awaiting_approval' and (r.expires_at > now() or r.payment_action = 'capture')))`;
 
 /**
  * Each video's facts in one statement, one snapshot: a capture committing can't fall between licenses and requests. No
@@ -88,9 +91,22 @@ export async function loadAvailabilityFacts(
   return factsFor(videoId);
 }
 
+/** Request `requestId`'s video: a plain read (the video id never changes) that may come before the video's lock. */
+export async function requestVideoId(
+  q: Reader,
+  requestId: string,
+): Promise<string | null> {
+  const [row] = await q
+    .select({ videoId: licenseRequest.videoId })
+    .from(licenseRequest)
+    .where(eq(licenseRequest.id, requestId));
+  return row?.videoId ?? null;
+}
+
 /**
- * The video row FOR UPDATE, the first statement of any transaction that creates, authorizes or extends a request (07
- * D110): the video before any license_request row, everywhere. Its status comes with it, read under the lock.
+ * The video row FOR UPDATE, taken by any transaction that creates, authorizes, extends, claims to capture or finishes
+ * the decline of a request (07 D110, D111): the video before any license_request row lock, everywhere (a plain read of
+ * the request's video id may come first). Its status comes with it, read under the lock.
  */
 export async function lockVideoForLicensing(
   tx: Tx,
@@ -150,4 +166,38 @@ export async function assertStillLicensable(
   return availabilityRefusal(deriveAvailability(facts, true), row.exclusive)
     ? { ok: false, reason: "exclusive_conflict" }
     : { ok: true };
+}
+
+/**
+ * Whether waiting request `requestId` no longer fits its video (07 D111), read under the video's lock in a short
+ * transaction of its own, as a decision needs it. False for an unknown request.
+ */
+export async function hasExclusiveConflict(
+  requestId: string,
+): Promise<boolean> {
+  const videoId = await requestVideoId(db, requestId);
+  if (!videoId) return false;
+  return db.transaction(async (tx) => {
+    await lockVideoForLicensing(tx, videoId);
+    return !(await assertStillLicensable(tx, requestId)).ok;
+  });
+}
+
+/**
+ * Why a decline claim on request `requestId` ended, when its finish doesn't say (07 D28, D111): the video's lock first,
+ * then the video disabled → video_disabled; the request no longer fits the video → exclusive_conflict; else `fallback`,
+ * the decline's own reason (creator unless known). Inside the finish's transaction, before the request's own lock.
+ */
+export async function declineReasonFor(
+  tx: Tx,
+  requestId: string,
+  fallback: DeclineReason = "creator",
+): Promise<DeclineReason> {
+  const videoId = await requestVideoId(tx, requestId);
+  if (!videoId) throw new Error("declineReasonFor: unknown request");
+  const { status } = await lockVideoForLicensing(tx, videoId);
+  if (status === "disabled") return "video_disabled";
+  return (await assertStillLicensable(tx, requestId)).ok
+    ? fallback
+    : "exclusive_conflict";
 }

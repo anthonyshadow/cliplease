@@ -59,6 +59,7 @@ const input = (
     platformFeeCents: 15750,
     amountTotalCents: 173250,
     currency: "cad",
+    exclusive: false,
   },
   video: {
     id: "7d3c0a52-5b1e-4f7e-9f61-0d6f4a1b2c3d",
@@ -332,6 +333,14 @@ describe("buildLicenseSnapshot (07 D71)", () => {
     expect(s.renewalOfCode).toBeNull();
   });
 
+  it("copies the request's exclusive: an exclusive first term has no renewal code (07 D111)", () => {
+    const s = buildLicenseSnapshot(
+      input({ request: { ...input().request, exclusive: true } }),
+    );
+    expect(s.exclusive).toBe(true);
+    expect(s.renewalOfCode).toBeNull();
+  });
+
   it("stamps the code and dates in UTC ISO, a perpetual license with no end", () => {
     const s = buildLicenseSnapshot(input({ endsAt: null }));
     expect(s).toMatchObject({
@@ -362,6 +371,10 @@ describe("LicenseSnapshotV1Schema", () => {
     expect(LicenseSnapshotV1Schema.parse(s)).toEqual(s);
     const selfAttested = buildLicenseSnapshot(input());
     expect(LicenseSnapshotV1Schema.parse(selfAttested)).toEqual(selfAttested);
+    const exclusive = buildLicenseSnapshot(
+      input({ request: { ...input().request, exclusive: true } }),
+    );
+    expect(LicenseSnapshotV1Schema.parse(exclusive)).toEqual(exclusive);
   });
 
   it("refuses a code that isn't CL-XXXX-XXXX", () => {
@@ -369,6 +382,22 @@ describe("LicenseSnapshotV1Schema", () => {
       LicenseSnapshotV1Schema.safeParse({ ...full(), code: "CLR-7K3M-9QXA" })
         .success,
     ).toBe(false);
+  });
+
+  it.each([
+    ["exclusive", "true"],
+    ["renewalOfCode", "CLR-7K3M-9QXA"],
+    ["renewalOfCode", "CL-7K3M"],
+    ["v", 2],
+  ])("refuses %s = %o", (key, value) => {
+    expect(
+      LicenseSnapshotV1Schema.safeParse({ ...full(), [key]: value }).success,
+    ).toBe(false);
+  });
+
+  it("accepts a renewal term's code (P22e)", () => {
+    const renewal = { ...full(), renewalOfCode: "CL-7K3M-9QXA" };
+    expect(LicenseSnapshotV1Schema.parse(renewal)).toEqual(renewal);
   });
 
   it("refuses a snapshot missing a field", () => {

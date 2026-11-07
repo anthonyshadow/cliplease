@@ -178,7 +178,7 @@ const captureKeys = () => captures.mock.calls.map((call) => call[1]);
 /** A claim taken now for `action`, as the claim's holder fences with it. */
 async function claimed(requestId: string, action: "capture" | "decline") {
   const row = await claimPaymentAction(requestId, action);
-  if (!row) throw new Error("not claimed");
+  if (!row || "conflict" in row) throw new Error("not claimed");
   return { action: row.paymentAction, claimedAt: row.paymentActionAt };
 }
 

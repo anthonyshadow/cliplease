@@ -17,7 +17,10 @@ import {
   USE_KEYS,
 } from "@/lib/domain/values";
 import { LICENSE_V1_VERSION } from "@/lib/legal/license-v1-summary";
-import { computeEndsAt } from "@/lib/licensing/ends-at";
+import {
+  computeEndsAt,
+  isExclusiveTermWithinLimit,
+} from "@/lib/licensing/ends-at";
 import {
   buildLicenseSnapshot,
   LicenseSnapshotV1Schema,
@@ -30,12 +33,25 @@ import { generateLicenseCode } from "../codes/license-code";
 // Issuing a license (02 §5.7; 03 §3.7.2, T5; 07 D33, D71): inside the caller's transaction, which has already fenced the
 // request. It reads no status and decides nothing from one, so any finish that has made the request approved, before or
 // after this call, can use it. The license copies the original's key (DB13) and carries the immutable snapshot. In the
-// same transaction it leaves the creator's pending transfer (07 D75), which the caller sends after the commit.
+// same transaction it leaves the creator's pending transfer (07 D75), which the caller sends after the commit. An
+// exclusive request's license is exclusive, for at most one calendar year (07 D111, I35).
 
 /** Insert attempts before giving up: a collision of 40-bit codes is rare (research/license.md §6.1). */
 const CODE_ATTEMPTS = 5;
 
 export type IssuedLicense = { licenseId: string; code: string };
+
+/**
+ * I35's code guard: an exclusive license would run past one calendar year. CHECK license_request_exclusive_fields keeps
+ * an exclusive request to the 1-year terms, so a stored row can't reach it; the transaction rolls back and the claim
+ * stays for reconcile.
+ */
+export class ExclusiveTermTooLongError extends Error {
+  constructor() {
+    super("exclusive_term_too_long");
+    this.name = "ExclusiveTermTooLongError";
+  }
+}
 
 /**
  * The request's license: the existing one (idempotent), or a new one starting at `startsAt` with a fresh code. Each
@@ -67,6 +83,10 @@ async function licenseFor(
   const { creatorId, original, ...facts } = await issueFacts(tx, requestId);
   const issuedAt = new Date();
   const endsAt = computeEndsAt(startsAt, facts.request.termKey);
+  const { exclusive } = facts.request;
+  if (exclusive && !isExclusiveTermWithinLimit(startsAt, endsAt)) {
+    throw new ExclusiveTermTooLongError();
+  }
   for (let attempt = 0; attempt < CODE_ATTEMPTS; attempt += 1) {
     const code = generateLicenseCode();
     const snapshot = LicenseSnapshotV1Schema.parse(
@@ -83,6 +103,7 @@ async function licenseFor(
           termsVersion: LICENSE_V1_VERSION,
           startsAt,
           endsAt,
+          exclusive,
           snapshot,
           originalObjectKey: original.objectKey,
           originalBytes: original.bytes,
@@ -160,6 +181,7 @@ async function issueFacts(tx: Tx, requestId: string) {
       platformFeeCents: licenseRequest.platformFeeCents,
       amountTotalCents: licenseRequest.amountTotalCents,
       currency: licenseRequest.currency,
+      exclusive: licenseRequest.exclusive,
       title: video.title,
       durationMs: video.durationMs,
       width: video.width,
@@ -215,6 +237,7 @@ async function issueFacts(tx: Tx, requestId: string) {
       platformFeeCents: row.platformFeeCents,
       amountTotalCents: row.amountTotalCents,
       currency: row.currency,
+      exclusive: row.exclusive,
     },
     video: {
       id: row.videoId,

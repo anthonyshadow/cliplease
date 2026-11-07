@@ -14,6 +14,14 @@
 //   vitest-in-src         only test files under src import vitest.
 //   redacted-action       every function a "use server" file exports has the body `return redactErrors(event, …)`:
 //                         a failed query's bound values never reach Next's log (02 §9.9, 07 D47).
+//   video-lock            creating, authorizing or approving a request reads availability under the video's lock (07
+//                         D110, D111): an insert into license_request, an "authorized" transition, and every
+//                         assertStillLicensable or getLicenseAvailability call not given `db`, comes after a
+//                         lockVideoForLicensing call in its own function (not an earlier callback's), or sits in an
+//                         unexported same-file helper every call of which does; in a function that takes
+//                         the lock, no request row lock, transition or license_request write comes before it (the
+//                         video first, everywhere); and each path in LOCKED_PATHS still takes the lock and reads
+//                         availability, directly or through a same-file helper, and each of its files still exists.
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -30,7 +38,29 @@ const LICENSE_REQUEST = "licenseRequest";
 const POSTINGS_DIRS = ["src/server/postings/", "src/lib/postings/"];
 const TEST_FILE = /\.test\.tsx?$/;
 /** A file none of the rules' words appear in can't break one: it isn't parsed. */
-const RULE_WORDS = /transaction|licenseRequest|fetch|vitest|use server/;
+const RULE_WORDS =
+  /transaction|licenseRequest|fetch|vitest|use server|LicenseAvailability|StillLicensable|ForLicensing/;
+const VIDEO_LOCK = "lockVideoForLicensing";
+/** The availability reads a decision makes under the video's lock (07 D110). */
+const LOCKED_READS = new Set([
+  "assertStillLicensable",
+  "getLicenseAvailability",
+]);
+/** Calls that lock or write a license_request row, or move one: never before the video's lock in the same function. */
+const ROW_LOCKERS = new Set(["applyTransition", "lockHeld"]);
+/**
+ * The paths that create, authorize, extend, approve or decline under the lock (07 D110, D111), file → function: each
+ * must keep both the lock and an availability read. A renamed or moved path fails until it is listed again.
+ */
+const LOCKED_PATHS: Readonly<Record<string, readonly string[]>> = {
+  "src/server/licensing/requests.ts": ["saveRequest", "decideAuthorization"],
+  "src/server/licensing/checkout-hold.ts": ["extendCheckoutHold"],
+  "src/server/licensing/state-machine.ts": ["takeCaptureClaim"],
+  "src/server/licensing/availability.ts": [
+    "declineReasonFor",
+    "hasExclusiveConflict",
+  ],
+};
 
 function sourceFiles(): string[] {
   // A pathspec's * also matches "/": every .ts and .tsx file at any depth. A tracked file deleted but not staged is
@@ -133,19 +163,13 @@ function updatesLicenseRequest(
 ): boolean {
   let current: ts.Expression = node;
   while (ts.isCallExpression(current)) {
-    const callee = current.expression;
-    const [table, ...rest] = current.arguments;
     if (
-      ts.isPropertyAccessExpression(callee) &&
-      callee.name.text === "update" &&
-      table !== undefined &&
-      rest.length === 0 &&
-      ((ts.isIdentifier(table) && tables.has(table.text)) ||
-        (ts.isPropertyAccessExpression(table) &&
-          table.name.text === LICENSE_REQUEST))
+      touchesLicenseRequest(current, "update", tables) &&
+      current.arguments.length === 1
     ) {
       return true;
     }
+    const callee = current.expression;
     if (!ts.isPropertyAccessExpression(callee)) return false;
     current = callee.expression;
   }
@@ -350,6 +374,200 @@ export function callsOutIndex(
   return index;
 }
 
+type FunctionLike =
+  | ts.ArrowFunction
+  | ts.FunctionExpression
+  | ts.FunctionDeclaration
+  | ts.MethodDeclaration;
+
+function isFunctionLike(node: ts.Node): node is FunctionLike {
+  return (
+    ts.isArrowFunction(node) ||
+    ts.isFunctionExpression(node) ||
+    ts.isFunctionDeclaration(node) ||
+    ts.isMethodDeclaration(node)
+  );
+}
+
+/** The innermost function around `node`, or null at the top level. */
+function enclosingFunction(node: ts.Node): FunctionLike | null {
+  for (let n = node.parent; n; n = n.parent) {
+    if (isFunctionLike(n)) return n;
+  }
+  return null;
+}
+
+/** Every call under `node`, in source order. */
+function callsUnder(node: ts.Node): ts.CallExpression[] {
+  const calls: ts.CallExpression[] = [];
+  const visit = (n: ts.Node): void => {
+    if (ts.isCallExpression(n)) calls.push(n);
+    ts.forEachChild(n, visit);
+  };
+  visit(node);
+  return calls;
+}
+
+const calledName = (call: ts.CallExpression) =>
+  ts.isIdentifier(call.expression) ? call.expression.text : null;
+
+/** `.method(table)`, `table` one of `tables` or `….licenseRequest`. */
+function touchesLicenseRequest(
+  call: ts.CallExpression,
+  method: "insert" | "update",
+  tables: ReadonlySet<string>,
+): boolean {
+  const [table] = call.arguments;
+  return (
+    ts.isPropertyAccessExpression(call.expression) &&
+    call.expression.name.text === method &&
+    table !== undefined &&
+    ((ts.isIdentifier(table) && tables.has(table.text)) ||
+      (ts.isPropertyAccessExpression(table) &&
+        table.name.text === LICENSE_REQUEST))
+  );
+}
+
+/** An availability read a decision makes: assertStillLicensable, or getLicenseAvailability given anything but `db`. */
+function isLockedRead(call: ts.CallExpression): boolean {
+  const name = calledName(call);
+  const [first] = call.arguments;
+  return (
+    name !== null &&
+    LOCKED_READS.has(name) &&
+    !(first !== undefined && ts.isIdentifier(first) && first.text === "db")
+  );
+}
+
+/** An authorization (T2): applyTransition with the event "authorized". */
+function isAuthorizing(call: ts.CallExpression): boolean {
+  const event = call.arguments[2];
+  return (
+    calledName(call) === "applyTransition" &&
+    event !== undefined &&
+    ts.isStringLiteral(event) &&
+    event.text === "authorized"
+  );
+}
+
+/** A row lock, a transition or a license_request write: what the video's lock must come before. */
+function locksRequestRow(
+  call: ts.CallExpression,
+  tables: ReadonlySet<string>,
+): boolean {
+  const name = calledName(call);
+  if (name !== null && ROW_LOCKERS.has(name)) return true;
+  const callee = call.expression;
+  const [arg] = call.arguments;
+  return (
+    (ts.isPropertyAccessExpression(callee) &&
+      callee.name.text === "for" &&
+      arg !== undefined &&
+      ts.isStringLiteral(arg) &&
+      arg.text === "update") ||
+    touchesLicenseRequest(call, "insert", tables) ||
+    touchesLicenseRequest(call, "update", tables)
+  );
+}
+
+/** video-lock's three checks (07 D110, D111) on one file. */
+function videoLockViolations(
+  file: string,
+  sf: ts.SourceFile,
+  tables: ReadonlySet<string>,
+  flag: (node: ts.Node, rule: string, message: string) => void,
+): void {
+  const calls = callsUnder(sf);
+  const isLock = (call: ts.CallExpression) => calledName(call) === VIDEO_LOCK;
+  const locks = calls.filter(isLock);
+  const functions = topLevelFunctions(sf);
+
+  // A call is under the lock when its own function (not a callback inside it, whose transaction may have ended) took
+  // the lock before it, or it is an unexported same-file helper's and every call of that helper is under the lock: an
+  // exported one can be called from elsewhere, so it takes the lock itself.
+  const underLock = (node: ts.Node, seen: Set<string>): boolean => {
+    const fn = enclosingFunction(node);
+    if (!fn) return false;
+    const start = node.getStart(sf);
+    const locked = locks.some(
+      (c) => enclosingFunction(c) === fn && c.getStart(sf) < start,
+    );
+    if (locked) return true;
+    const helper = functions.find((f) => f.body === fn.body);
+    if (!helper || helper.exported || seen.has(helper.name)) return false;
+    const uses = calls.filter((c) => calledName(c) === helper.name);
+    const next = new Set([...seen, helper.name]);
+    return uses.length > 0 && uses.every((use) => underLock(use, next));
+  };
+
+  for (const call of calls) {
+    if (
+      (isLockedRead(call) ||
+        touchesLicenseRequest(call, "insert", tables) ||
+        isAuthorizing(call)) &&
+      !underLock(call, new Set())
+    ) {
+      flag(
+        call,
+        "video-lock",
+        "create, authorize or approve only after lockVideoForLicensing in the same transaction (07 D110)",
+      );
+    }
+    if (isLock(call)) {
+      const fn = enclosingFunction(call);
+      const start = call.getStart(sf);
+      const early =
+        fn !== null &&
+        hasCall(
+          fn,
+          (c) => c.getStart(sf) < start && locksRequestRow(c, tables),
+        );
+      if (early) {
+        flag(
+          call,
+          "video-lock",
+          "the video's lock comes before any license_request row lock or write (07 D110)",
+        );
+      }
+    }
+  }
+
+  for (const name of LOCKED_PATHS[file] ?? []) {
+    const fn = functions.find((f) => f.name === name);
+    if (!fn) {
+      flag(
+        sf,
+        "video-lock",
+        `${name} is a locked path (LOCKED_PATHS) and isn't in this file: list where it moved`,
+      );
+      continue;
+    }
+    const helperReads = (call: ts.CallExpression) => {
+      const helper = functions.find((f) => f.name === calledName(call));
+      return helper !== undefined && hasCall(helper.body, isLockedRead);
+    };
+    const reads = hasCall(fn.body, (c) => isLockedRead(c) || helperReads(c));
+    if (!hasCall(fn.body, isLock) || !reads) {
+      flag(
+        fn.body,
+        "video-lock",
+        `${name} must take lockVideoForLicensing and read availability under it (07 D110, D111)`,
+      );
+    }
+  }
+}
+
+/** A video-lock violation for each LOCKED_PATHS file that `files` no longer has: a moved path must be listed again. */
+export function missingLockedPathFiles(files: Iterable<string>): string[] {
+  const present = new Set(files);
+  return Object.keys(LOCKED_PATHS)
+    .filter((file) => !present.has(file))
+    .map(
+      (file) =>
+        `${file}:1: video-lock: a locked path's file (LOCKED_PATHS) is missing: list where its functions moved`,
+    );
+}
+
 /**
  * `file`'s violations, `text` its contents, as path:line: rule: message lines. `index`: the functions outside the
  * payments domain that reach Stripe (callsOutIndex over src); the file's own are marked here.
@@ -359,7 +577,7 @@ export function violationsIn(
   text: string,
   index: CallsOutIndex = new Map(),
 ): string[] {
-  if (!RULE_WORDS.test(text)) return [];
+  if (!RULE_WORDS.test(text) && !Object.hasOwn(LOCKED_PATHS, file)) return [];
   const sf = parse(file, text);
   const violations: string[] = [];
   const flag = (node: ts.Node, rule: string, message: string) => {
@@ -404,6 +622,8 @@ export function violationsIn(
       );
     }
   }
+
+  if (!isTest) videoLockViolations(file, sf, tables, flag);
 
   // The index lists only exports: a same-file helper that reaches Stripe, called inside a transaction, counts too.
   const local = new Set<string>();
@@ -477,9 +697,10 @@ if (require.main === module) {
     ]),
   );
   const index = callsOutIndex(sources);
-  const violations = [...sources].flatMap(([file, text]) =>
-    violationsIn(file, text, index),
-  );
+  const violations = [
+    ...missingLockedPathFiles(sources.keys()),
+    ...[...sources].flatMap(([file, text]) => violationsIn(file, text, index)),
+  ];
   for (const line of violations) console.log(line);
   process.exit(violations.length > 0 ? 1 : 0);
 }

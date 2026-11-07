@@ -32,11 +32,8 @@ export const REQUEST_EMAIL_COPY = {
       `Your card has a hold of ${total} until it's approved, and we'll email your file and license in a moment.`,
       `If it can't be approved automatically, @${handle} has until ${deadline} to approve.`,
     ),
-  /** Owner answer Q-173: request-received's line for an exclusive request; with auto-approve on, only its kind. */
-  exclusiveReceived: (handle: string, autoApprove: boolean) =>
-    autoApprove
-      ? "Exclusive request."
-      : REQUEST_STATUS_COPY.exclusiveWhileDeciding(handle),
+  /** Owner answer Q-173: request-received's line for an exclusive request; with auto-approve on, only its kind (as /r). */
+  exclusiveReceived: REQUEST_STATUS_COPY.exclusiveWaiting,
   /** license-approved (05 §8): the subject names the code, never a link or key (07 D34). */
   approvedSubject: (code: string) => `Approved: your license ${code} is ready`,
   /** /r's approved sentence, word for word (01 §4.8). */
@@ -47,7 +44,11 @@ export const REQUEST_EMAIL_COPY = {
   declinedBody: {
     declined: REQUEST_STATUS_COPY.declinedBody,
     video_disabled: () => REQUEST_STATUS_COPY.videoDisabledBody,
+    exclusive_conflict: () => REQUEST_STATUS_COPY.exclusiveConflictBody,
   } satisfies Record<DeclinedView, (handle: string) => string>,
+  /** 05 §8 callout 11 (07 D113): license-approved's line for an exclusive license; `endDate` formatLicenseDate's (07 D84). */
+  exclusiveApproved: (endDate: string) =>
+    `This license is exclusive: no one else can license this video until ${endDate}.`,
   /** 05 §8 callout 10, 07 D98: under the first paragraph. */
   amountsIn: (label: string) => `Amounts in ${label}.`,
   licenseLine: (code: string) => `License ${code}`,

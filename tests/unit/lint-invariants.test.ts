@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   type CallsOutIndex,
   callsOutIndex,
+  missingLockedPathFiles,
   violationsIn,
 } from "../../scripts/lint-invariants";
 
@@ -156,12 +157,13 @@ describe("status-write", () => {
         await tx.update(licenseRequest).set({ statusReason: "x" });
       }`;
     expect(rules(SERVER, text)).toEqual([]);
+    // The fixture isn't the whole state machine, so video-lock's locked paths are missing from it.
     expect(
       rules(
         "src/server/licensing/state-machine.ts",
         text.replace("statusReason", "status"),
       ),
-    ).toEqual([]);
+    ).not.toContain("status-write");
   });
 });
 
@@ -210,5 +212,166 @@ describe("postings-fetch and vitest-in-src", () => {
     expect(
       rules("src/server/example.test.ts", 'import { vi } from "vitest";'),
     ).toEqual([]);
+  });
+});
+
+describe("video-lock (07 D110, D111)", () => {
+  it("leaves reads and inserts after the lock alone, also in a helper every call of which is under it", () => {
+    const text = `
+      export async function create(db, videoId) {
+        return db.transaction(async (tx) => {
+          await lockVideoForLicensing(tx, videoId);
+          await getLicenseAvailability(tx, videoId);
+          await tx.insert(licenseRequest).values({});
+        });
+      }
+      async function fits(tx, id) {
+        return (await assertStillLicensable(tx, id)).ok;
+      }
+      export async function authorize(db, row) {
+        return db.transaction(async (tx) => {
+          await lockVideoForLicensing(tx, row.videoId);
+          if (!(await fits(tx, row.id))) return null;
+          return applyTransition(tx, row.id, "authorized", {});
+        });
+      }
+      export const shown = (videoId) => getLicenseAvailability(db, videoId);`;
+    expect(rules(SERVER, text)).toEqual([]);
+  });
+
+  it("flags a read or an insert with no lock before it, and a helper called once without it", () => {
+    const text = `
+      export async function create(db, videoId) {
+        return db.transaction(async (tx) => {
+          await getLicenseAvailability(tx, videoId);
+          await lockVideoForLicensing(tx, videoId);
+          await tx.insert(licenseRequest).values({});
+        });
+      }
+      export async function insertOnly(db) {
+        await db.insert(licenseRequest).values({});
+      }
+      async function fits(tx, id) {
+        return (await assertStillLicensable(tx, id)).ok;
+      }
+      export async function locked(db, row) {
+        return db.transaction(async (tx) => {
+          await lockVideoForLicensing(tx, row.videoId);
+          return fits(tx, row.id);
+        });
+      }
+      export async function unlocked(db, row) {
+        return db.transaction((tx) => fits(tx, row.id));
+      }`;
+    expect(rules(SERVER, text)).toEqual([
+      "video-lock",
+      "video-lock",
+      "video-lock",
+    ]);
+  });
+
+  it("flags a lock taken after a request row lock, a transition or a write, and leaves a plain read before it alone", () => {
+    const text = `
+      export async function claim(db, id, videoId) {
+        return db.transaction(async (tx) => {
+          await tx.select({ videoId: licenseRequest.videoId }).from(licenseRequest);
+          await tx.select().from(licenseRequest).for("update");
+          await lockVideoForLicensing(tx, videoId);
+        });
+      }
+      export async function finish(db, id, videoId) {
+        return db.transaction(async (tx) => {
+          await lockHeld(tx, id, null);
+          await lockVideoForLicensing(tx, videoId);
+        });
+      }
+      export async function write(db, id, videoId) {
+        return db.transaction(async (tx) => {
+          await tx.update(licenseRequest).set({ paymentAction: "capture" });
+          await lockVideoForLicensing(tx, videoId);
+        });
+      }`;
+    expect(rules(SERVER, text)).toEqual([
+      "video-lock",
+      "video-lock",
+      "video-lock",
+    ]);
+  });
+
+  it("flags a locked path that lost its lock or its read, or that moved", () => {
+    const file = "src/server/licensing/availability.ts";
+    const text = `
+      export async function declineReasonFor(tx, requestId) {
+        const { status } = await lockVideoForLicensing(tx, "v");
+        return status === "disabled" ? "video_disabled" : "creator";
+      }`;
+    expect(violationsIn(file, text)).toEqual([
+      expect.stringMatching(/:2: video-lock: declineReasonFor must take/),
+      expect.stringMatching(
+        /: video-lock: hasExclusiveConflict is a locked path/,
+      ),
+    ]);
+    const capture = `
+      async function takeCaptureClaim(requestId) {
+        return db.transaction(async (tx) => writeClaim(tx, requestId));
+      }`;
+    expect(rules("src/server/licensing/state-machine.ts", capture)).toEqual([
+      "video-lock",
+    ]);
+  });
+
+  it("flags work after an earlier transaction's lock, an exported helper's read, and an unlocked authorization", () => {
+    const text = `
+      export async function lockedThenNot(db, videoId) {
+        await db.transaction(async (tx) => {
+          await lockVideoForLicensing(tx, videoId);
+        });
+        await db.insert(licenseRequest).values({});
+      }
+      export async function insertRow(tx, values) {
+        await tx.insert(licenseRequest).values(values);
+      }
+      export async function create(db, videoId) {
+        return db.transaction(async (tx) => {
+          await lockVideoForLicensing(tx, videoId);
+          await insertRow(tx, {});
+        });
+      }
+      export async function authorize(db, id) {
+        return db.transaction((tx) =>
+          applyTransition(tx, id, "authorized", {}, actor),
+        );
+      }
+      export async function abandon(db, id) {
+        return db.transaction((tx) =>
+          applyTransition(tx, id, "checkout_failed", {}, actor),
+        );
+      }`;
+    expect(rules(SERVER, text)).toEqual([
+      "video-lock",
+      "video-lock",
+      "video-lock",
+    ]);
+  });
+
+  it("checks a locked path's file even without the other rules' words, and names a locked path's file that is gone", () => {
+    expect(
+      rules(
+        "src/server/licensing/checkout-hold.ts",
+        "export async function extendCheckoutHold() { return 1; }",
+      ),
+    ).toEqual(["video-lock"]);
+    const all = [
+      "src/server/licensing/requests.ts",
+      "src/server/licensing/checkout-hold.ts",
+      "src/server/licensing/state-machine.ts",
+      "src/server/licensing/availability.ts",
+    ];
+    expect(missingLockedPathFiles(all)).toEqual([]);
+    expect(missingLockedPathFiles(all.slice(1))).toEqual([
+      expect.stringMatching(
+        /^src\/server\/licensing\/requests\.ts:1: video-lock: /,
+      ),
+    ]);
   });
 });
