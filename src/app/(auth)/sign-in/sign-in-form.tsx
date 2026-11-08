@@ -15,8 +15,10 @@ import { INLINE_LINK } from "@/components/ui/inline-link";
 import { PRIMARY_WIDTH } from "@/components/ui/primary-width";
 import { TextField } from "@/components/ui/text-field";
 import { authClient } from "@/lib/auth-client";
+import { MY_LICENSES_COPY } from "@/lib/licensing/my-licenses-copy";
 import {
   FORM_LEVEL_ERRORS,
+  isBuyerSignIn,
   maskEmail,
   normalizeOtpInput,
   OTP_RESEND_DELAY_MS,
@@ -24,6 +26,7 @@ import {
   type SignInErrorKey,
   shouldAutoSubmit,
   signInErrorKey,
+  signInPath,
 } from "@/lib/sign-in";
 import { EMAIL_RE } from "@/lib/validation/email";
 
@@ -80,9 +83,17 @@ function MaskedAddress({ email }: { email: string }) {
 /**
  * S10 (05 §5.1): step 1 asks for the email, step 2 for the 6-digit code. Enter submits each step. Six digits that arrive
  * in one change (paste, autofill) submit once by themselves; typing keeps the Sign in button in control. On success, a
- * full navigation to `next`.
+ * full navigation back to /sign-in with the same `next` (none when it is null), whose server render sends the session on
+ * to `next` or the landing page (07 D126). A `next` under /licenses (isBuyerSignIn) gives step 1 My licenses' heading and
+ * line; step 2 reads the same for every address.
  */
-export function SignInForm({ next }: { next: string }) {
+export function SignInForm({
+  next,
+}: {
+  /** validNextPath of the requested `next`. */
+  next: string | null;
+}) {
+  const buyer = isBuyerSignIn(next);
   const [step, setStep] = useState<Step>("email");
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
@@ -114,7 +125,7 @@ export function SignInForm({ next }: { next: string }) {
   }, [focusTick]);
 
   // Back after a sign-in can restore this page from the back/forward cache (Safari), still "Signing in…". Reload it
-  // instead: the server sends a signed-in visitor on to `next`.
+  // instead: the server sends a signed-in visitor on.
   useEffect(() => {
     const onPageShow = (event: PageTransitionEvent) => {
       if (event.persisted && leaving.current) window.location.reload();
@@ -193,7 +204,7 @@ export function SignInForm({ next }: { next: string }) {
       }
       // Keep the loading state until the next page replaces this one.
       leaving.current = true;
-      window.location.assign(next);
+      window.location.assign(next === null ? "/sign-in" : signInPath(next));
     } catch {
       fail(networkFailure());
     } finally {
@@ -238,7 +249,18 @@ export function SignInForm({ next }: { next: string }) {
   if (step === "email") {
     return (
       <form noValidate onSubmit={submitEmail} className="flex flex-col gap-6">
-        <h1 className="text-title-1 text-ink">Sign in</h1>
+        {buyer ? (
+          <div className="flex flex-col gap-2">
+            <h1 className="text-title-1 text-ink">
+              {MY_LICENSES_COPY.signIn.heading}
+            </h1>
+            <p className="text-callout text-ink-2">
+              {MY_LICENSES_COPY.signIn.line}
+            </p>
+          </div>
+        ) : (
+          <h1 className="text-title-1 text-ink">Sign in</h1>
+        )}
         {notice}
         <TextField
           ref={fieldRef}

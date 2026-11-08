@@ -6,7 +6,7 @@ describe("normalizeEmail (07 D126)", () => {
     expect(normalizeEmail("  Ana.Buyer@Studio.COM ")).toBe(
       "ana.buyer@studio.com",
     );
-    expect(normalizeEmail("Ana.Buyer+ads@Studio.COM")).toBe(
+    expect(normalizeEmail("  Ana.Buyer+ads@Studio.COM ")).toBe(
       "ana.buyer+ads@studio.com",
     );
   });

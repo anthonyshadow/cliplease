@@ -20,6 +20,8 @@ import { LicenseDelivery } from "./license-delivery";
 
 const KEY = "a".repeat(43);
 const VERIFY_URL = "http://localhost:3000/verify/CL-7K3M-9QXA";
+const LICENSE_ID = "5f0c1d2e-3a4b-4c5d-8e6f-7a8b9c0d1e2f";
+const MANAGE = `/sign-in?next=%2Flicenses%2F${LICENSE_ID}`;
 
 const SNAPSHOT: LicenseSnapshotV1 = {
   ...FIRST_SNOW,
@@ -41,6 +43,7 @@ const PROPS: Props = {
     original: `/api/licenses/${KEY}/original`,
     pdf: `/api/licenses/${KEY}/pdf`,
     verify: VERIFY_URL,
+    manage: MANAGE,
   },
   fresh: false,
   downloadFailed: false,
@@ -85,12 +88,13 @@ describe("LicenseDelivery, /l (05 §4.4; 04 §10.2)", () => {
     expect(document.activeElement).toBe(heading());
   });
 
-  it("lays out 04 §10.2's order: card, downloads, credit, postings, summary, verify link, receipt", () => {
+  it("lays out 04 §10.2's order: card, downloads, Manage in My licenses, credit, postings, summary, verify link, receipt", () => {
     page();
     const order = [
       screen.getByRole("region", { name: "First snow" }),
       screen.getByRole("link", { name: "Download original · MP4 · 84 MB" }),
       screen.getByRole("link", { name: "Download license PDF" }),
+      screen.getByRole("link", { name: "Manage in My licenses" }),
       screen.getByText("Credit when you post"),
       screen.getByRole("region", { name: "Where it was posted" }),
       screen.getByRole("button", { name: "What you can do" }),
@@ -112,11 +116,10 @@ describe("LicenseDelivery, /l (05 §4.4; 04 §10.2)", () => {
       screen.getByRole("button", { name: "Copy credit line" }),
     ).toBeTruthy();
     expect(screen.getByText(VERIFY_URL)).toBeTruthy();
-    expect(
-      screen.getByText(
-        "Paid CA$1,732.50 on 15 Oct 2026. Receipt sent to s…@dailylaughs.com. Questions? Reply to the license email.",
-      ),
-    ).toBeTruthy();
+    const receipt = screen.getByText(
+      "Paid CA$1,732.50 on 15 Oct 2026. Receipt sent to s…@dailylaughs.com. Questions? Reply to the license email.",
+    );
+    expect(receipt.className).toContain("tabular-nums");
   });
 
   it("lists Where it was posted from the snapshot, a hidden link as Also posted on (07 D71)", () => {
@@ -201,6 +204,35 @@ describe("LicenseDelivery, /l (05 §4.4; 04 §10.2)", () => {
       screen.getByText("Exclusive until 15 Oct 2027, 14:32 UTC"),
     ).toBeTruthy();
   });
+
+  it.each([
+    ["valid", null, "Download license PDF"],
+    ["expired", null, "Download license PDF"],
+    [
+      "revoked",
+      new Date("2026-10-20T09:15:00.000Z"),
+      "Revoked on 20 Oct 2026, 09:15 UTC.",
+    ],
+  ] as const)(
+    "links a %s license to My licenses through the sign-in, right after its files (Q-193)",
+    (status, revokedAt, before) => {
+      page({ status, revokedAt });
+      const manage = screen.getByRole("link", {
+        name: "Manage in My licenses",
+      });
+      expect(manage.getAttribute("href")).toBe(MANAGE);
+      expect(manage.getAttribute("data-variant")).toBe("tertiary");
+      expect(
+        screen.getByText(before).compareDocumentPosition(manage) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      expect(
+        manage.compareDocumentPosition(
+          screen.getByText("Credit when you post"),
+        ) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    },
+  );
 
   it("never prints the key outside the download links", () => {
     const { container } = page();

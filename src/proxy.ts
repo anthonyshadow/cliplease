@@ -19,12 +19,12 @@ export function proxy(request: NextRequest) {
   return NextResponse.next({ request: { headers } });
 }
 
-// P20b adds "/licenses/:path*" (07 D126).
 export const config = {
   matcher: [
     "/dashboard/:path*",
     "/onboarding",
     "/admin/:path*",
+    "/licenses/:path*",
     "/verify/:path*",
   ],
 };

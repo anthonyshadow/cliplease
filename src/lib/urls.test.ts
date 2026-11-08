@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   creatorUrl,
   licenseDownloadPath,
+  myLicenseDownloadFailedPath,
+  myLicenseDownloadPath,
+  myLicensePath,
+  myLicensesPath,
   requestStatusPath,
   videoUrl,
 } from "./urls";
@@ -30,5 +34,18 @@ describe("urls", () => {
       "/api/licenses/tok/original",
     );
     expect(licenseDownloadPath("tok", "pdf")).toBe("/api/licenses/tok/pdf");
+  });
+
+  it("builds My licenses' pages, its two session downloads and the failed bounce (P20b)", () => {
+    const id = "6f4c8d7e-1a2b-4c3d-8e9f-0a1b2c3d4e5f";
+    expect(myLicensesPath).toBe("/licenses");
+    expect(myLicensePath(id)).toBe(`/licenses/${id}`);
+    expect(myLicenseDownloadPath(id, "original")).toBe(
+      `/api/my/licenses/${id}/original`,
+    );
+    expect(myLicenseDownloadPath(id, "pdf")).toBe(`/api/my/licenses/${id}/pdf`);
+    expect(myLicenseDownloadFailedPath(id)).toBe(
+      `/licenses/${id}?download=failed`,
+    );
   });
 });

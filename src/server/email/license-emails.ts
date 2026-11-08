@@ -5,7 +5,7 @@ import type { db } from "@/db/client";
 import { license, licenseRequest } from "@/db/schema";
 import { LicenseApproved } from "@/emails/license-approved";
 import { scopeLabel } from "@/lib/licensing/selection";
-import { licensePath, verifyPath } from "@/lib/urls";
+import { licensePath, myLicensesPath, verifyPath } from "@/lib/urls";
 import { env } from "../env";
 import { revealBuyerToken } from "../tokens/buyer-token";
 
@@ -55,6 +55,7 @@ export async function composeLicenseApprovedEmail(
       amountTotalCents: s.amounts.amountTotalCents,
       currency: s.amounts.currency,
       url: `${env.APP_URL}${licensePath(token)}`,
+      licensesUrl: `${env.APP_URL}${myLicensesPath}`,
       verifyUrl: `${env.APP_URL}${verifyPath(f.code)}`,
       // The record's own end: an exclusive license always has one (I35).
       exclusiveEndsAt: s.exclusive && s.endsAt ? new Date(s.endsAt) : null,

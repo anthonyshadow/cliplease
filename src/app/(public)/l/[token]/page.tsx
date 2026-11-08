@@ -1,17 +1,16 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { cache } from "react";
-import { z } from "zod";
 import { LicenseDelivery } from "@/components/cleared/license-delivery";
 import {
-  DOWNLOAD_FAILED,
+  isDownloadFailed,
   LICENSE_RECORD_COPY,
+  recordStatus,
 } from "@/lib/licensing/license-record";
-import { publicStatus } from "@/lib/licensing/public-status";
-import { maskEmail } from "@/lib/sign-in";
+import { maskEmail, signInPath } from "@/lib/sign-in";
 import { DAY_MS } from "@/lib/time";
 import { originalExtension } from "@/lib/upload/limits";
-import { licenseDownloadPath, verifyPath } from "@/lib/urls";
+import { licenseDownloadPath, myLicensePath, verifyPath } from "@/lib/urls";
 import { env } from "@/server/env";
 import { findLicenseForBuyer } from "@/server/tokens/buyer-token";
 
@@ -45,8 +44,9 @@ export async function generateMetadata({
 /**
  * S04, the buyer's file and license (01 J9; 05 §4.4): the approved request's license by its buyer key (02 §9.5), else
  * the "Buyer link dead" 404. The download routes are /api/licenses/{key}/original and /pdf; one that fails sends the
- * buyer back with `?download=failed` (owner answer Q-185). No loading.tsx: a streamed route answers 200, and a dead
- * link must be a real 404 (owner answer Q-110 a, as /r); 05's Loading state isn't built.
+ * buyer back with `?download=failed` (owner answer Q-185). **Manage in My licenses** goes through the sign-in to the
+ * license's page (owner answer Q-193): this page still reads no session and sets no cookie. No loading.tsx: a streamed
+ * route answers 200, and a dead link must be a real 404 (owner answer Q-110 a, as /r); 05's Loading state isn't built.
  */
 export default async function LicenseDeliveryPage({
   params,
@@ -57,9 +57,7 @@ export default async function LicenseDeliveryPage({
   if (!found) notFound();
   const { license, request } = found;
   const now = new Date();
-  const status = publicStatus(license, now);
-  // publicStatus answers not_found only without a license; this narrows the type for the card.
-  if (status === "not_found") notFound();
+  const status = recordStatus(license, now);
   const query = await searchParams;
   return (
     <LicenseDelivery
@@ -77,12 +75,10 @@ export default async function LicenseDeliveryPage({
         original: licenseDownloadPath(token, "original"),
         pdf: licenseDownloadPath(token, "pdf"),
         verify: `${env.APP_URL}${verifyPath(license.code)}`,
+        manage: signInPath(myLicensePath(license.id)),
       }}
       fresh={now.getTime() - license.createdAt.getTime() < DAY_MS}
-      downloadFailed={
-        z.literal(DOWNLOAD_FAILED.value).safeParse(query[DOWNLOAD_FAILED.param])
-          .success
-      }
+      downloadFailed={isDownloadFailed(query)}
     />
   );
 }

@@ -1,6 +1,7 @@
 // Pure sign-in helpers (P04): client-safe, no process.env. Copy from 04 §11.10 and 05 §5.1.
 import { GENERIC_ERROR_MESSAGE } from "./result";
 import { DAY_MS } from "./time";
+import { myLicensesPath } from "./urls";
 import { EMAIL_MESSAGE } from "./validation/email";
 
 const DEFAULT_NEXT = "/dashboard";
@@ -9,22 +10,45 @@ const DEFAULT_NEXT = "/dashboard";
 export const PAGE_PATH_HEADER = "x-page-path";
 
 /**
- * `next` when it is a same-site relative path, else /dashboard. The raw string is returned, never a normalized one
+ * `next` when it is a same-site relative path, else null. The raw string is returned, never a normalized one
  * (normalizing turns `/..//evil.com` into `//evil.com`): printable ASCII only, a single leading slash, no backslash
  * anywhere, no dot segments, never back to /sign-in, and never an API route (also percent-encoded): sign-in lands on
  * pages only, since a route's GET can start work (/api/stripe/onboarding creates a payout account).
  */
-export function safeNextPath(next: string | null | undefined): string {
-  if (typeof next !== "string" || next === "") return DEFAULT_NEXT;
-  if (!/^[\x21-\x7E]+$/.test(next)) return DEFAULT_NEXT;
-  if (!next.startsWith("/") || next.startsWith("//")) return DEFAULT_NEXT;
-  if (next.includes("\\")) return DEFAULT_NEXT;
+export function validNextPath(next: string | null | undefined): string | null {
+  if (typeof next !== "string" || next === "") return null;
+  if (!/^[\x21-\x7E]+$/.test(next)) return null;
+  if (!next.startsWith("/") || next.startsWith("//")) return null;
+  if (next.includes("\\")) return null;
   // No "." or ".." path segments (also percent-encoded): anything that normalizes them could produce "//host".
   const path = next.split(/[?#]/, 1)[0];
-  if (/(^|\/)(\.|%2e){1,2}(\/|$)/i.test(path)) return DEFAULT_NEXT;
-  if (/^\/sign-in(?:[/?#]|$)/i.test(next)) return DEFAULT_NEXT;
-  if (/^\/(a|%61)(p|%70)(i|%69)(\/|%2f|$)/i.test(path)) return DEFAULT_NEXT;
+  if (/(^|\/)(\.|%2e){1,2}(\/|$)/i.test(path)) return null;
+  if (/^\/sign-in(?:[/?#]|$)/i.test(next)) return null;
+  if (/^\/(a|%61)(p|%70)(i|%69)(\/|%2f|$)/i.test(path)) return null;
   return next;
+}
+
+/** validNextPath, or /dashboard. */
+export function safeNextPath(next: string | null | undefined): string {
+  return validNextPath(next) ?? DEFAULT_NEXT;
+}
+
+/** Whether sign-in leads to My licenses (P20b): the buyer variant of the email step. */
+export function isBuyerSignIn(next: string | null | undefined): boolean {
+  const valid = validNextPath(next);
+  return valid !== null && /^\/licenses(?:[/?#]|$)/.test(valid);
+}
+
+/** Where a sign-in with no valid `next` lands (07 D126): a creator's dashboard, else a buyer's licenses, else onboarding. */
+export function signInLanding({
+  hasCreatorProfile,
+  hasLicenses,
+}: {
+  hasCreatorProfile: boolean;
+  hasLicenses: boolean;
+}): string {
+  if (hasCreatorProfile) return DEFAULT_NEXT;
+  return hasLicenses ? myLicensesPath : "/onboarding";
 }
 
 /** `/sign-in?next=<encoded>`, the same bytes the proxy builds with URLSearchParams. */

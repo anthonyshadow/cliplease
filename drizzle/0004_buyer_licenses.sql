@@ -1,0 +1,3 @@
+UPDATE "license_request" SET "buyer_email" = lower(btrim("buyer_email")) WHERE "buyer_email" <> lower(btrim("buyer_email"));--> statement-breakpoint
+CREATE INDEX "license_request_buyer_email_created_idx" ON "license_request" USING btree ("buyer_email","created_at" DESC NULLS FIRST);--> statement-breakpoint
+ALTER TABLE "license_request" ADD CONSTRAINT "license_request_buyer_email_lower" CHECK ("license_request"."buyer_email" = lower(btrim("license_request"."buyer_email")));

@@ -5,7 +5,10 @@ import { APP_NAME } from "@/lib/app-name";
 export function Wordmark({
   href = "/",
 }: {
-  /** `/` for public pages and buyers, `/dashboard` for creators (04 §9.30). */
+  /**
+   * `/` for public and token pages, `/dashboard` for creators, `/licenses` on My licenses without a creator profile
+   * (04 §9.30).
+   */
   href?: string;
 }) {
   return (

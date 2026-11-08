@@ -29,6 +29,13 @@
       "when": 1793979448515,
       "tag": "0003_checkout_hold",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1794097007592,
+      "tag": "0004_buyer_licenses",
+      "breakpoints": true
     }
   ]
 }

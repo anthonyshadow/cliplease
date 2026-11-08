@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   FORM_LEVEL_ERRORS,
+  isBuyerSignIn,
   maskEmail,
   normalizeOtpInput,
   OTP_RESEND_DELAY_MS,
@@ -8,8 +9,10 @@ import {
   safeNextPath,
   shouldAutoSubmit,
   signInErrorKey,
+  signInLanding,
   signInPath,
   signInRateLimits,
+  validNextPath,
 } from "./sign-in";
 
 describe("safeNextPath", () => {
@@ -25,6 +28,7 @@ describe("safeNextPath", () => {
     "/dashboard?next=/api/x",
   ])("keeps the same-site path %s", (next) => {
     expect(safeNextPath(next)).toBe(next);
+    expect(validNextPath(next)).toBe(next);
   });
 
   it.each([
@@ -54,10 +58,41 @@ describe("safeNextPath", () => {
     ["an API route with an encoded slash", "/api%2Fstripe/onboarding"],
   ])("refuses %s", (_case, next) => {
     expect(safeNextPath(next)).toBe("/dashboard");
+    expect(validNextPath(next)).toBeNull();
   });
 
   it("keeps an encoded double slash raw (the browser treats it as a path)", () => {
     expect(safeNextPath("/%2F%2Fevil.com")).toBe("/%2F%2Fevil.com");
+  });
+});
+
+describe("isBuyerSignIn (P20b)", () => {
+  it.each([
+    ["/licenses", true],
+    ["/licenses/6f4c8d7e-1a2b-4c3d-8e9f-0a1b2c3d4e5f", true],
+    ["/licenses?x=1", true],
+    ["/licenses#x", true],
+    ["/licensesx", false],
+    ["/dashboard/licenses", false],
+    ["/dashboard", false],
+    ["//licenses", false],
+    ["/licenses/../dashboard", false],
+    ["", false],
+    [null, false],
+    [undefined, false],
+  ] as const)("%j → %s", (next, want) => {
+    expect(isBuyerSignIn(next)).toBe(want);
+  });
+});
+
+describe("signInLanding (07 D126)", () => {
+  it.each([
+    [{ hasCreatorProfile: true, hasLicenses: true }, "/dashboard"],
+    [{ hasCreatorProfile: true, hasLicenses: false }, "/dashboard"],
+    [{ hasCreatorProfile: false, hasLicenses: true }, "/licenses"],
+    [{ hasCreatorProfile: false, hasLicenses: false }, "/onboarding"],
+  ])("%j → %s", (input, want) => {
+    expect(signInLanding(input)).toBe(want);
   });
 });
 

@@ -43,4 +43,14 @@ describe("proxy", () => {
   it("matches /verify and its codes", () => {
     expect(config.matcher).toContain("/verify/:path*");
   });
+
+  it("gates My licenses: a signed-out buyer signs in with the license as next (07 D126)", () => {
+    expect(config.matcher).toContain("/licenses/:path*");
+    const id = "6f4c8d7e-1a2b-4c3d-8e9f-0a1b2c3d4e5f";
+    const response = proxy(request(`/licenses/${id}`));
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe(
+      `${ORIGIN}/sign-in?next=%2Flicenses%2F${id}`,
+    );
+  });
 });

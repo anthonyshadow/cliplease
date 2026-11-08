@@ -43,7 +43,7 @@ export const licenseRequest = pgTable(
     // Buyer (licensee_name is public on /verify; the rest is private)
     licenseeName: text("licensee_name").notNull(),
     contactName: text("contact_name").notNull(),
-    buyerEmail: text("buyer_email").notNull(), // normalizeEmail (trim + lowercase) from P16a; CHECK in 0003_buyer_licenses (DB22)
+    buyerEmail: text("buyer_email").notNull(), // normalizeEmail (trim + lowercase) from P16a; CHECK in 0004_buyer_licenses (DB22)
     intendedUse: text("intended_use"),
     buyerTimeZone: text("buyer_time_zone").notNull().default("UTC"), // IANA zone from the buyer's device at checkout (normalizeTimeZone); emails only (07 D84)
     buyerTokenHash: text("buyer_token_hash").notNull(), // sha256(token) lowercase hex; raw token never stored in plaintext (DB7)
@@ -134,6 +134,10 @@ export const licenseRequest = pgTable(
       t.status,
       t.createdAt.desc().nullsFirst(),
     ),
+    index("license_request_buyer_email_created_idx").on(
+      t.buyerEmail,
+      t.createdAt.desc().nullsFirst(),
+    ), // CORE · 0004_buyer_licenses (P20b) · My licenses
     index("license_request_due_idx")
       .on(t.expiresAt)
       .where(sql`${t.status} = 'awaiting_approval'`),
@@ -205,6 +209,10 @@ export const licenseRequest = pgTable(
     and (${t.intendedUse} is null or char_length(${t.intendedUse}) <= 200)
     and (${t.termsAcceptedUserAgent} is null or char_length(${t.termsAcceptedUserAgent}) <= 512)`,
     ), // CORE
+    check(
+      "license_request_buyer_email_lower",
+      sql`${t.buyerEmail} = lower(btrim(${t.buyerEmail}))`,
+    ), // CORE · 0004_buyer_licenses (P20b) · normalizeEmail
     check(
       "license_request_buyer_time_zone_len",
       sql`char_length(${t.buyerTimeZone}) between 1 and 64`,

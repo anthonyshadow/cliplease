@@ -77,6 +77,11 @@ describe("LicenseCard (04 §10.2 item 5; 05 §4.4)", () => {
     ).toBeTruthy();
   });
 
+  it("prints Paid in tabular digits", () => {
+    card();
+    expect(screen.getByText("CA$1,732.50").className).toContain("tabular-nums");
+  });
+
   it("reads Exclusive until the end in UTC for an exclusive license (07 D113)", () => {
     card({ exclusive: true });
     expect(facts().Rights).toBe("Exclusive until 15 Oct 2027, 14:32 UTC");

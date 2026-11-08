@@ -1,11 +1,11 @@
 import "server-only";
 import { getSessionCookie } from "better-auth/cookies";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import { cache } from "react";
 import { db } from "@/db/client";
-import { creatorProfile } from "@/db/schema";
+import { creatorProfile, licenseRequest } from "@/db/schema";
 import {
   APPROVAL_WINDOW_HOURS,
   type ApprovalWindowHours,
@@ -18,8 +18,10 @@ import {
   SESSION_EXPIRES_IN_S,
   SESSION_UPDATE_AGE_S,
   safeNextPath,
+  signInLanding,
   signInPath,
 } from "@/lib/sign-in";
+import { ownedBy } from "../buyers/owned-by";
 import { rethrowRedacted } from "../rethrow-redacted";
 import type { Actor } from "./actor";
 import { auth } from "./auth";
@@ -108,6 +110,28 @@ export const getCreatorContext = cache(
     };
   },
 );
+
+/**
+ * Where a signed-in user with no valid `next` lands (07 D126; P20b): /dashboard with a creator profile, else
+ * /licenses when an approved request carries their email (normalizeEmail, as it is stored), else /onboarding.
+ */
+export async function resolveSignInLanding(user: SessionUser): Promise<string> {
+  const [ctx, licensed] = await Promise.all([
+    getCreatorContext(user),
+    db
+      .select({ one: sql`1` })
+      .from(licenseRequest)
+      .where(ownedBy(user))
+      .limit(1)
+      .catch((error: unknown) =>
+        rethrowRedacted(error, "auth.sign_in_landing_failed"),
+      ),
+  ]);
+  return signInLanding({
+    hasCreatorProfile: ctx !== null,
+    hasLicenses: licensed.length > 0,
+  });
+}
 
 /** When Better Auth would extend the session again (epoch ms): a day after its last extension. Null when signed out. */
 export async function getSessionRefreshAt(): Promise<number | null> {

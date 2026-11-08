@@ -56,7 +56,7 @@ export function TabBar({
   inboxCount: fallback,
   signOut,
 }: {
-  /** Defaults to the route of the current pathname; "more" for Licenses, Pricing and Settings. */
+  /** Defaults to the route of the current pathname; "more" for MORE_SHEET_KEYS' routes. */
   current?: CreatorNavKey;
   inboxCount?: number;
   signOut?: ReactNode;

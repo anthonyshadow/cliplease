@@ -18,6 +18,7 @@ import {
   video,
 } from "../../src/db/schema";
 import type { LicenseRequest } from "../../src/db/schema/types";
+import { REQUEST_EMAIL_COPY } from "../../src/emails/request-copy";
 import type { TermKey } from "../../src/lib/domain/values";
 import { formatMoney } from "../../src/lib/format";
 import { computeEndsAt } from "../../src/lib/licensing/ends-at";
@@ -268,6 +269,9 @@ describe("Approve (02 §8.2; 01 J8.2, J9.1, J9.3)", () => {
     expect(link?.[1]).toBe(token);
     expect(hashBuyerToken(link?.[1] ?? "")).toBe(row.buyerTokenHash);
     expect(sent.text).toContain(`${env.APP_URL}/verify/${issued.code}`);
+    expect(sent.text).toContain(
+      `${REQUEST_EMAIL_COPY.seeAllLicenses} ${env.APP_URL}/licenses`,
+    );
     expect(sent.text).toContain(
       formatMoney(row.amountTotalCents, row.currency),
     );

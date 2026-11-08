@@ -1,7 +1,9 @@
 import { Music, Users } from "lucide-react";
+import Link from "next/link";
 import { READING_COLUMN } from "@/components/layout/gutter";
 import { LicenseSummary } from "@/components/license/license-summary";
 import { PostingList } from "@/components/license/posting-list";
+import { Button } from "@/components/ui/button";
 import { CopyLinkField } from "@/components/ui/copy-link-field";
 import { Disclosure } from "@/components/ui/disclosure";
 import { FocusedHeading } from "@/components/ui/focused-heading";
@@ -20,23 +22,32 @@ import { licenseSummary } from "@/lib/licensing/summary";
 import { ClearedSeal } from "./cleared-seal";
 import { CopyText } from "./copy-text";
 import { LicenseCard } from "./license-card";
-import { LicenseDownloads } from "./license-downloads";
+import { LicenseFiles } from "./license-files";
 
 const COPY = LICENSE_RECORD_COPY.buyer;
 
 const HEADING = "text-display text-ink";
 
-/** The links /l builds from the buyer's key and the code; never logged. */
-export type DeliveryLinks = { original: string; pdf: string; verify: string };
+/**
+ * The links /l builds from the buyer's key, the code and the license id; never logged. `manage` is the license in My
+ * licenses through the sign-in (owner answer Q-193): `/sign-in?next=%2Flicenses%2F{id}`.
+ */
+export type DeliveryLinks = {
+  original: string;
+  pdf: string;
+  verify: string;
+  manage: string;
+};
 
 /**
  * S04, the buyer's file and license (01 J9; 04 §10.2, §11.4; 05 §4.4; 07 D16, D98, D113): one centered column at every
  * tier, from the snapshot, the license columns and the request's facts that never change (owner answer Q-183), never
  * live data. The static seal (72, 88 from lg), the two-tone headline, which takes the focus only on a license issued in
  * the last 24 h (05 §4.4 Fresh) and not back from a failed download (Q-185), and the approval line; the LicenseCard; the
- * downloads, or for a revoked license why there are none (P21b adds the refund line); the credit line, "Where it was
- * posted", the music and people notices and the summary under "What you can do" (its currency line left out: the card
- * says "Amounts in …", 07 D98); the public record's link; the receipt.
+ * downloads, or for a revoked license why there are none (P21b adds the refund line), then the tertiary **Manage in
+ * My licenses** in every state (owner answer Q-193; P22g puts a chain's in its renewal block); the credit line, "Where
+ * it was posted", the music and people notices and the summary under "What you can do" (its currency line left out:
+ * the card says "Amounts in …", 07 D98); the public record's link; the receipt.
  */
 export function LicenseDelivery({
   snapshot,
@@ -100,16 +111,21 @@ export function LicenseDelivery({
         status={status}
         amountTotalCents={amountTotalCents}
       />
-      {status === "revoked" ? (
-        <RevokedMessage revokedAt={revokedAt} />
-      ) : (
-        <LicenseDownloads
+      <div className="flex flex-col gap-3">
+        <LicenseFiles
           status={status}
+          revokedAt={revokedAt}
           original={{ href: links.original, ...original }}
           pdfHref={links.pdf}
           failed={downloadFailed}
         />
-      )}
+        {/* Never prefetched: /l asks nothing of the sign-in until the tap, and the page reads no session (Q-193). */}
+        <Button asChild variant="tertiary" className="w-full">
+          <Link href={links.manage} prefetch={false}>
+            {LICENSE_RECORD_COPY.myLicenses.manage}
+          </Link>
+        </Button>
+      </div>
       <Notice title={COPY.credit}>
         <CopyText
           text={snapshot.creditLine}
@@ -136,23 +152,9 @@ export function LicenseDelivery({
         <CopyLinkField url={links.verify} label={COPY.verifyLink} />
         <ShareButton url={links.verify} />
       </div>
-      <p className="text-footnote text-ink-2">
+      <p className="text-footnote text-ink-2 tabular-nums">
         {COPY.receipt(total, formatPostDate(startsAt), maskedEmail)}
       </p>
-    </div>
-  );
-}
-
-/** 05 §4.4 callout 12 (owner answer Q-186): what replaces both downloads; the date in UTC (07 D84), never the reason. */
-function RevokedMessage({ revokedAt }: { revokedAt: Date | null }) {
-  if (!revokedAt)
-    throw new Error("LicenseDelivery: a revoked license has its revoked_at");
-  return (
-    <div className="flex flex-col gap-1">
-      <p className="text-body text-ink">
-        {COPY.revokedOn(formatLicenseDate(revokedAt))}
-      </p>
-      <p className="text-callout text-ink-2">{COPY.revoked}</p>
     </div>
   );
 }

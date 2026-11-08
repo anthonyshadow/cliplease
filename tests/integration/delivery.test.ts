@@ -1,47 +1,22 @@
 import { randomBytes } from "node:crypto";
-import { asc, count, eq, sql } from "drizzle-orm";
-import {
-  afterAll,
-  afterEach,
-  beforeAll,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
-import {
-  GET as originalGET,
-  HEAD as originalHEAD,
-} from "../../src/app/api/licenses/[token]/original/route";
-import {
-  GET as pdfGET,
-  HEAD as pdfHEAD,
-} from "../../src/app/api/licenses/[token]/pdf/route";
+import { eq } from "drizzle-orm";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { HEAD as originalHEAD } from "../../src/app/api/licenses/[token]/original/route";
+import { HEAD as pdfHEAD } from "../../src/app/api/licenses/[token]/pdf/route";
 import { db } from "../../src/db/client";
 import {
   creatorProfile,
-  downloadEvent,
   license,
   socialAccount,
   video,
   videoPosting,
 } from "../../src/db/schema";
-import type {
-  CreatorProfile,
-  License,
-  LicenseRequest,
-  NewLicenseRequest,
-  Video,
-} from "../../src/db/schema/types";
+import type { License, NewLicenseRequest } from "../../src/db/schema/types";
 import { SUPPORT_EMAIL } from "../../src/lib/app-name";
 import type { DownloadKind } from "../../src/lib/domain/values";
 import { formatLicenseDate } from "../../src/lib/format";
 import { publicStatus } from "../../src/lib/licensing/public-status";
-import { LicenseSnapshotV1Schema } from "../../src/lib/licensing/snapshot";
-import { DAY_MS } from "../../src/lib/time";
-import { licenseDownloadPath, verifyPath } from "../../src/lib/urls";
-import type { Actor } from "../../src/server/auth/actor";
+import { licensePath, verifyPath } from "../../src/lib/urls";
 import { env } from "../../src/server/env";
 import { listCreatorLicenses } from "../../src/server/licensing/licenses";
 import {
@@ -52,37 +27,54 @@ import {
 import { disconnectSocialAccount } from "../../src/server/social/disconnect";
 import { localDriver } from "../../src/server/storage/index";
 import { findLicenseForBuyer } from "../../src/server/tokens/buyer-token";
-import { flushAfter } from "../helpers/after";
 import {
   approvableVideo,
   approvingCreator,
-  approvingCreatorWithVideo,
   PAID_SOCIAL_YEAR_WORLDWIDE,
   waitingRequest,
 } from "../helpers/approval-fixtures";
-import { publishVideo, requestRow } from "../helpers/factories";
+import {
+  allDownloads,
+  BUYER_UA,
+  disposition,
+  download,
+  downloadsOf,
+  EXCLUSIVE_ROW,
+  endOf,
+  exclusiveOwner,
+  expectBounced,
+  expectNotFound,
+  expectPrivate,
+  expire,
+  type Issued,
+  issue,
+  KINDS,
+  type Owner,
+  originalSample,
+  REVOKED_NOTE,
+  removeOriginalsAfterAll,
+  revoke,
+  tapped,
+  uploadOwner,
+  withOriginal,
+} from "../helpers/delivery";
+import { publishVideo } from "../helpers/factories";
 import { AFTER_FAILED, captureLogEvents, recordStderr } from "../helpers/logs";
 import { pageBody, pdfPages, squash } from "../helpers/pdf-text";
 import { readyLibraryVideo } from "../helpers/ready-videos";
-import { approve, offeringVideo } from "../helpers/request-flow";
-import { onlyLicense } from "../helpers/request-outcomes";
 import {
   finishScriptedTest,
   installScriptedPayments,
 } from "../helpers/scripted-suite";
-import {
-  type Bytes,
-  fixture,
-  getSigned,
-  trackTestStorage,
-} from "../helpers/uploads";
+import { getSigned } from "../helpers/uploads";
 
 // Delivery (P20; 02 §4.2, §9.5; 01 J9, J10; 07 D16, D17, D47, D61, D71, D101, D113; owner answers Q-183–Q-188): the
 // buyer's two download routes, called with `new Request()` and the params as Next passes them; the public record
 // getPublicLicenseView builds for /verify; the creator's /dashboard/licenses list; and the license PDF's text, read back
 // out of the route's bytes. Every license is issued through approveLicenseRequest on the scripted double (the fake's
 // answers), its original the fixture MP4 in local storage at the key the license copies (DB13). Expiry and revocation
-// are forced on the license row, as no prompt before P21 can make them.
+// are forced on the license row, as no prompt before P21 can make them (tests/helpers/delivery.ts, shared with
+// buyer-licenses.test.ts).
 
 vi.mock("@/server/payments/registry", async (importOriginal) =>
   (await import("../helpers/scripted-suite")).scriptedRegistry(
@@ -120,13 +112,7 @@ vi.mock("@/server/pdf/generate", async (importOriginal) => {
   };
 });
 
-const disk = trackTestStorage();
-let sample: Bytes;
-
-beforeAll(async () => {
-  sample = await fixture("sample.mp4");
-});
-afterAll(() => disk.clean());
+removeOriginalsAfterAll();
 beforeEach(() => {
   installScriptedPayments();
   codes.next = [];
@@ -137,41 +123,14 @@ afterEach(finishScriptedTest);
 
 // --- Licenses ------------------------------------------------------------------------------------------------------------
 
-type Owner = { creator: CreatorProfile; actor: Actor; live: Video };
-type Issued = { token: string; request: LicenseRequest; license: License };
-
 /** A one-country license in the United States (the summary's "in the United States", Q-115 a). */
 const UNITED_STATES = {
   territoryKey: "country",
   territoryCode: "US",
 } as const satisfies Partial<NewLicenseRequest>;
 
-/** The exclusive request at ×3.00: CA$4,725.00 + CA$472.50 = CA$5,197.50, 1 year. */
-const EXCLUSIVE_ROW = {
-  exclusive: true,
-  exclusiveMultiplierBps: 30000,
-  licensePriceCents: 472500,
-  platformFeeCents: 47250,
-  amountTotalCents: 519750,
-} as const satisfies Partial<NewLicenseRequest>;
-
 /** A terms acceptance at a fixed time before the approval, so the PDF's {accepted_at} can't be the start date (Q-183). */
 const ACCEPTED_AT = new Date("2026-10-31T09:10:00.000Z");
-
-/** Admin-only words a public record must never carry (03: revoked_note "never public"). */
-const REVOKED_NOTE = "Admin note: lost dispute ch_lost_7781 on pi_hidden_7781";
-
-/** `owner`'s video with its original on disk: the fixture MP4 at the key the license copies (DB13), removed after the file. */
-async function withOriginal<T extends Owner>(owner: T): Promise<T> {
-  disk.creator(owner.creator.id);
-  const key = owner.live.originalObjectKey;
-  if (!key) throw new Error("withOriginal: no original key");
-  await localDriver().putSmall(key, sample, "video/mp4");
-  return owner;
-}
-
-/** A creator who can approve and their published upload (self-attested, no postings). */
-const uploadOwner = async () => withOriginal(await approvingCreatorWithVideo());
 
 /** A creator who can approve and their published Library video: a verified Demo posting (07 D43). */
 async function libraryOwner(): Promise<Owner> {
@@ -180,154 +139,11 @@ async function libraryOwner(): Promise<Owner> {
   return withOriginal({ creator, actor, live });
 }
 
-/** A creator who offers exclusive licenses at ×3.00 and their published upload. */
-const exclusiveOwner = async () => withOriginal(await offeringVideo());
-
-/**
- * A request waiting on `owner`'s video (the J4.7 quote, Worldwide, `overrides` on top), approved by its creator: the
- * buyer's key, the request as approved and its one license, once the after() work (email, transfer) is done.
- */
-async function issue(
-  owner: Owner,
-  overrides: Partial<NewLicenseRequest> = {},
-): Promise<Issued> {
-  const { row, token } = await waitingRequest(owner.live, {
-    ...PAID_SOCIAL_YEAR_WORLDWIDE,
-    ...overrides,
-  });
-  await approve(row.id, owner.actor);
-  await flushAfter();
-  return {
-    token,
-    request: await requestRow(row.id),
-    license: await onlyLicense(row.id),
-  };
-}
-
 async function licenseRow(id: string): Promise<License> {
   const [row] = await db.select().from(license).where(eq(license.id, id));
   if (!row) throw new Error("no license");
   return row;
 }
-
-const endOf = (l: Pick<License, "endsAt">): Date => {
-  if (!l.endsAt) throw new Error("the license has no end");
-  return l.endsAt;
-};
-
-/**
- * Ends `l` yesterday, as a 30-day term that started 31 days ago (license_dates: ends_at > starts_at), its snapshot's
- * dates with it so the record's words agree with its columns.
- */
-async function expire(l: License): Promise<void> {
-  const endsAt = new Date(Date.now() - DAY_MS);
-  const startsAt = new Date(endsAt.getTime() - 30 * DAY_MS);
-  const snapshot = LicenseSnapshotV1Schema.parse(l.snapshot);
-  await db
-    .update(license)
-    .set({
-      startsAt,
-      endsAt,
-      snapshot: {
-        ...snapshot,
-        startsAt: startsAt.toISOString(),
-        endsAt: endsAt.toISOString(),
-      },
-    })
-    .where(eq(license.id, l.id));
-}
-
-/** Revokes `licenseId` a minute ago on the database's clock (the list's SQL reads that clock), with a reason and a note. */
-async function revoke(licenseId: string): Promise<Date> {
-  const [row] = await db
-    .update(license)
-    .set({
-      revokedAt: sql`now() - interval '1 minute'`,
-      revokedReason: "payment_reversed",
-      revokedNote: REVOKED_NOTE,
-    })
-    .where(eq(license.id, licenseId))
-    .returning({ revokedAt: license.revokedAt });
-  if (!row?.revokedAt) throw new Error("revoke: unknown license");
-  return row.revokedAt;
-}
-
-// --- The download routes -------------------------------------------------------------------------------------------------
-
-const FORWARDED_FOR = "203.0.113.7, 10.0.0.1";
-const BUYER_UA =
-  "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 delivery-test";
-const KINDS: readonly DownloadKind[] = ["original", "pdf"];
-const ROUTES = { original: originalGET, pdf: pdfGET } as const;
-
-/** The buyer's tap on a download link: a GET through the route's handler with the params Next passes. */
-function download(
-  token: string,
-  kind: DownloadKind,
-  headers: Record<string, string> = {},
-): Promise<Response> {
-  const request = new Request(
-    new URL(licenseDownloadPath(token, kind), env.APP_URL),
-    {
-      headers: {
-        "x-forwarded-for": FORWARDED_FOR,
-        "user-agent": BUYER_UA,
-        ...headers,
-      },
-    },
-  );
-  return ROUTES[kind](request, { params: Promise.resolve({ token }) });
-}
-
-/** The license's download_event rows, oldest first, the address as host(inet) prints it. */
-const downloadsOf = (licenseId: string) =>
-  db
-    .select({
-      kind: downloadEvent.kind,
-      ip: sql<string | null>`host(${downloadEvent.ip})`,
-      userAgent: downloadEvent.userAgent,
-    })
-    .from(downloadEvent)
-    .where(eq(downloadEvent.licenseId, licenseId))
-    .orderBy(asc(downloadEvent.createdAt));
-
-/** Every download_event row in the database. */
-async function allDownloads(): Promise<number> {
-  const [row] = await db.select({ n: count() }).from(downloadEvent);
-  return row?.n ?? 0;
-}
-
-/** One tap's row, from the request's own headers (07 D47): the first x-forwarded-for hop and the user agent. */
-const tapped = (kind: DownloadKind) => ({
-  kind,
-  ip: "203.0.113.7",
-  userAgent: BUYER_UA,
-});
-
-/** Every download answer is uncached and sends no referrer (07 D61). */
-function expectPrivate(response: Response): void {
-  expect(response.headers.get("cache-control")).toBe("no-store");
-  expect(response.headers.get("referrer-policy")).toBe("no-referrer");
-}
-
-function expectNotFound(response: Response): void {
-  expect(response.status).toBe(404);
-  expectPrivate(response);
-}
-
-/** The 303 back to `/l/{token}?download=failed` on the app's origin (Q-185). */
-function expectBounced(response: Response, token: string): void {
-  expect(response.status).toBe(303);
-  expectPrivate(response);
-  const location = new URL(response.headers.get("location") ?? "");
-  expect(location.origin).toBe(new URL(env.APP_URL).origin);
-  expect(location.pathname).toBe(`/l/${token}`);
-  expect(location.search).toBe("?download=failed");
-}
-
-/** `name`'s Content-Disposition, an ASCII name in both forms. */
-const disposition = (kind: "attachment" | "inline", name: string) =>
-  `${kind}; filename="${name}"; filename*=UTF-8''${name}`;
 
 // --- The PDF's text ------------------------------------------------------------------------------------------------------
 
@@ -418,7 +234,9 @@ describe("GET /api/licenses/[token]/original (02 §4.2, §9.5; 07 D16, D61; Q-18
       disposition("attachment", `ClipLease-${issued.code}-original.mp4`),
     );
     expect(
-      Buffer.from(await file.arrayBuffer()).equals(Buffer.from(sample)),
+      Buffer.from(await file.arrayBuffer()).equals(
+        Buffer.from(await originalSample()),
+      ),
     ).toBe(true);
   });
 
@@ -594,24 +412,24 @@ describe("Download gates: HEAD, expiry, revocation and keys that open nothing (Q
     vi.spyOn(localDriver(), "presignGet").mockRejectedValueOnce(
       new Error("storage down"),
     );
-    expectBounced(await download(token, "original"), token);
+    expectBounced(await download(token, "original"), licensePath(token));
 
     render.failure = new Error("render failed");
-    expectBounced(await download(token, "pdf"), token);
+    expectBounced(await download(token, "pdf"), licensePath(token));
     render.failure = null;
 
     // The row is written last: a failed insert answers the bounce too.
     vi.spyOn(db, "insert").mockImplementationOnce(() => {
       throw new Error("database down");
     });
-    expectBounced(await download(token, "pdf"), token);
+    expectBounced(await download(token, "pdf"), licensePath(token));
 
     // A broken row (a type no upload has) fails the same way.
     await db
       .update(license)
       .set({ originalMime: "video/x-flv" })
       .where(eq(license.id, issued.id));
-    expectBounced(await download(token, "original"), token);
+    expectBounced(await download(token, "original"), licensePath(token));
 
     expect(await downloadsOf(issued.id)).toEqual([]);
     const { written, events } = logged();

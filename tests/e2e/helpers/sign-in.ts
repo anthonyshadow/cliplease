@@ -29,13 +29,16 @@ export function e2eAdminEmail(testInfo: TestInfo): string | null {
   return E2E_ADMINS[testInfo.project.name] ?? null;
 }
 
-/** Opens /sign-in?next=…, asks for a code for `email` and returns it once step 2 shows. */
+/**
+ * Opens /sign-in?next=… (plain /sign-in when `next` is null, so the landing rule decides; 07 D126), asks for a code for
+ * `email` and returns it once step 2 shows.
+ */
 export async function requestCode(
   page: Page,
   email: string,
-  next = "/dashboard",
+  next: string | null = "/dashboard",
 ): Promise<string> {
-  await page.goto(signInPath(next));
+  await page.goto(next === null ? "/sign-in" : signInPath(next));
   await page.getByLabel("Email", { exact: true }).fill(email);
   const since = Date.now();
   await page.getByRole("button", { name: "Email me a code" }).click();
@@ -52,13 +55,14 @@ export async function requestCode(
 }
 
 /**
- * Signs `email` in through the /sign-in UI and waits until it lands on its next page. The code goes in with one fill,
- * like a paste, so the form submits it by itself.
+ * Signs `email` in through the /sign-in UI (with `next`, or none when null) and waits until it lands on its next page:
+ * the form goes back to /sign-in, which sends the session on. The code goes in with one fill, like a paste, so the form
+ * submits it by itself.
  */
 export async function signInWithEmail(
   page: Page,
   email: string,
-  next = "/dashboard",
+  next: string | null = "/dashboard",
 ): Promise<void> {
   const code = await requestCode(page, email, next);
   await page.getByLabel("Code", { exact: true }).fill(code);

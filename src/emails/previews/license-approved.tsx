@@ -12,6 +12,7 @@ export default function LicenseApprovedPreview() {
       amountTotalCents={173250}
       currency="cad"
       url="http://localhost:3000/l/preview"
+      licensesUrl="http://localhost:3000/licenses"
       verifyUrl="http://localhost:3000/verify/CL-7K3M-9QXA"
       exclusiveEndsAt={null}
     />

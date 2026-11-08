@@ -1,11 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { downloadEvent } from "@/db/schema";
+import { FIRST_SNOW } from "../../../tests/helpers/license-snapshot-fixtures";
 import {
   DOWNLOAD_HEADERS,
   downloadFailed,
   downloadNotFound,
   downloadResponse,
   headNotAllowed,
+  licensePdfResponse,
+  myDownloadFailed,
   recordDownload,
 } from "./downloads";
 
@@ -13,12 +16,20 @@ import {
 // (the [int] delivery suite runs the routes against the test database).
 const mocks = vi.hoisted(() => {
   const values = vi.fn();
-  return { values, insert: vi.fn(() => ({ values })), logEvent: vi.fn() };
+  return {
+    values,
+    insert: vi.fn(() => ({ values })),
+    logEvent: vi.fn(),
+    renderLicensePdf: vi.fn(),
+  };
 });
 vi.mock("@/server/env", () => ({
   env: { APP_URL: "http://localhost:3100" },
 }));
 vi.mock("@/db/client", () => ({ db: { insert: mocks.insert } }));
+vi.mock("../pdf/generate", () => ({
+  renderLicensePdf: mocks.renderLicensePdf,
+}));
 vi.mock("../log", () => ({
   errorName: (error: unknown) =>
     error instanceof Error ? error.name : "unknown",
@@ -70,6 +81,7 @@ describe("the shared answers", () => {
       downloadNotFound(),
       headNotAllowed(),
       downloadFailed(TOKEN),
+      myDownloadFailed(LICENSE_ID),
     ]) {
       expect(headersOf(response)).toMatchObject({
         "cache-control": "no-store",
@@ -99,27 +111,91 @@ describe("the shared answers", () => {
     expect(bad.status).toBe(404);
     expect(bad.headers.get("location")).toBeNull();
   });
+
+  it("send a failed session download back to /licenses/{id} with the flag, and a non-uuid to the 404 (P20b)", () => {
+    const failed = myDownloadFailed(LICENSE_ID);
+    expect(failed.status).toBe(303);
+    expect(failed.headers.get("location")).toBe(
+      `http://localhost:3100/licenses/${LICENSE_ID}?download=failed`,
+    );
+    const bad = myDownloadFailed("not-a-uuid");
+    expect(bad.status).toBe(404);
+    expect(bad.headers.get("location")).toBeNull();
+  });
 });
 
 describe("downloadResponse (Q-185)", () => {
+  const failed = () => downloadFailed(TOKEN);
+
   it("passes the route's answer through", async () => {
     const answer = new Response("ok", { status: 200 });
-    expect(await downloadResponse(TOKEN, "pdf", async () => answer)).toBe(
+    const onFailure = vi.fn(failed);
+    expect(await downloadResponse("pdf", async () => answer, onFailure)).toBe(
       answer,
     );
+    expect(onFailure).not.toHaveBeenCalled();
     expect(mocks.logEvent).not.toHaveBeenCalled();
   });
 
-  it("turns an unexpected error into the 303, logged without the key", async () => {
-    const response = await downloadResponse(TOKEN, "original", async () => {
-      throw new TypeError(`storage down for ${TOKEN}`);
-    });
+  it("turns an unexpected error into the failure answer, logged without the key", async () => {
+    const response = await downloadResponse(
+      "original",
+      async () => {
+        throw new TypeError(`storage down for ${TOKEN}`);
+      },
+      failed,
+    );
     expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toBe(
+      `http://localhost:3100/l/${TOKEN}?download=failed`,
+    );
     expect(mocks.logEvent).toHaveBeenCalledWith(
       "error",
       "license.download_failed",
       { kind: "original", error: "TypeError" },
     );
     expect(JSON.stringify(mocks.logEvent.mock.calls)).not.toContain(TOKEN);
+  });
+});
+
+describe("licensePdfResponse (Q-183; AD-98)", () => {
+  const found = {
+    license: { id: LICENSE_ID, code: "CL-7K3M-9QXA", snapshot: FIRST_SNOW },
+    request: {
+      territoryCode: null,
+      termsAcceptedAt: new Date("2026-10-15T09:00:00Z"),
+    },
+  };
+  const request = () => new Request("http://localhost:3100/api/my/x/pdf");
+
+  it("renders from the snapshot and the two checkout facts, writes the row, then answers inline", async () => {
+    mocks.renderLicensePdf.mockResolvedValue(Buffer.from("%PDF-1.7"));
+    const response = await licensePdfResponse(request(), found);
+    expect(mocks.renderLicensePdf).toHaveBeenCalledWith(
+      found.license.snapshot,
+      {
+        territoryCode: null,
+        acceptedAt: found.request.termsAcceptedAt,
+      },
+    );
+    expect(mocks.values).toHaveBeenCalledWith(
+      expect.objectContaining({ licenseId: LICENSE_ID, kind: "pdf" }),
+    );
+    expect(response.status).toBe(200);
+    expect(headersOf(response)).toMatchObject({
+      "content-type": "application/pdf",
+      "content-disposition": expect.stringContaining(
+        'inline; filename="ClipLease-CL-7K3M-9QXA-license.pdf"',
+      ),
+      "x-content-type-options": "nosniff",
+      "cache-control": "no-store",
+    });
+    expect(await response.text()).toBe("%PDF-1.7");
+  });
+
+  it("writes no row when the render fails", async () => {
+    mocks.renderLicensePdf.mockRejectedValue(new Error("font missing"));
+    await expect(licensePdfResponse(request(), found)).rejects.toThrow();
+    expect(mocks.insert).not.toHaveBeenCalled();
   });
 });

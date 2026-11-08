@@ -14,6 +14,8 @@ export type LicenseApprovedProps = {
   currency: Currency;
   /** The buyer's /l link, with its key: never logged. */
   url: string;
+  /** My licenses, `{APP_URL}/licenses` (owner answer Q-194): a footer link, never a second button. */
+  licensesUrl: string;
   /** The license's public record, `{APP_URL}/verify/{code}`. */
   verifyUrl: string;
   /** An exclusive license's end (07 D113): its line names it; null for a standard license. */
@@ -23,8 +25,9 @@ export type LicenseApprovedProps = {
 /**
  * license-approved, to the buyer once the license is issued (05 §8; 01 J9.3; 07 D98): the body, the amounts' currency
  * under it, an exclusive license's line with its end in UTC (05 §8 callout 11; 07 D84, D113), the context with the
- * license's code, Get file and license, and the public record after the hairline (the period outside the link, so a
- * copied URL normalizes). A standard license's email has no dates, and never a posting's link (07 D70).
+ * license's code, Get file and license, then after the hairline My licenses' link (owner answer Q-194) and the public
+ * record (the period outside the link, so a copied URL normalizes). A standard license's email has no dates, and never
+ * a posting's link (07 D70).
  */
 export function LicenseApproved(p: LicenseApprovedProps) {
   return (
@@ -44,6 +47,12 @@ export function LicenseApproved(p: LicenseApprovedProps) {
       context={[p.title, p.scope, COPY.licenseLine(p.code)]}
       button={{ label: COPY.getFileAndLicense, url: p.url }}
       footerLines={[
+        <>
+          {`${COPY.seeAllLicenses} `}
+          <Link href={p.licensesUrl} style={s.link}>
+            {p.licensesUrl}
+          </Link>
+        </>,
         <>
           {`${COPY.verifyLead} `}
           <Link href={p.verifyUrl} style={s.link}>

@@ -20,8 +20,8 @@ const nextConfig: NextConfig = {
       },
     },
   },
-  // 02 §4.6. When two rules set one key the later wins, so the buyer-token rows follow /(.*). The /licenses and /api/my
-  // rows (P20b) come with their pages; CSP is [H2].
+  // 02 §4.6. When two rules set one key the later wins, so the buyer-token and My licenses rows follow /(.*). CSP is
+  // [H2].
   async headers() {
     return [
       {
@@ -53,6 +53,17 @@ const nextConfig: NextConfig = {
       { source: "/r/:path*", headers: BUYER_TOKEN },
       { source: "/l/:path*", headers: BUYER_TOKEN },
       { source: "/api/licenses/:path*", headers: BUYER_TOKEN },
+      // My licenses (P20b; 07 D126): private to the session, so no index and no referrer, as the buyer-token pages.
+      { source: "/licenses/:path*", headers: BUYER_TOKEN },
+      // Its two session downloads: never cached either (the routes also send DOWNLOAD_HEADERS).
+      {
+        source: "/api/my/:path*",
+        headers: [
+          { key: "Referrer-Policy", value: "no-referrer" },
+          { key: "X-Robots-Tag", value: "noindex" },
+          { key: "Cache-Control", value: "no-store" },
+        ],
+      },
     ];
   },
   // /@handle and /@handle/slug are served by /u/[handle] and the license page /u/[handle]/[slug] (02 §4.3; afterFiles,
@@ -70,10 +81,11 @@ const nextConfig: NextConfig = {
       ignore: [/\/api\/dev\/storage\//, /^\/(?:r|l|api\/licenses)\//],
     },
   },
-  // The license PDF reads its fonts from disk (src/server/pdf/fonts.ts), which tracing can't see: ship them with its
-  // route. Keys are route globs, so the dynamic segment's brackets are escaped.
+  // The license PDF reads its fonts from disk (src/server/pdf/fonts.ts), which tracing can't see: ship them with both
+  // of its routes. Keys are route globs, so the dynamic segment's brackets are escaped.
   outputFileTracingIncludes: {
     "/api/licenses/\\[token\\]/pdf": ["./src/server/pdf/fonts/**/*"],
+    "/api/my/licenses/\\[licenseId\\]/pdf": ["./src/server/pdf/fonts/**/*"],
   },
   experimental: {
     serverActions: {

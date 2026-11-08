@@ -1,13 +1,16 @@
 import "server-only";
 import { createHash, randomBytes } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db } from "@/db/client";
-import { license, licenseRequest } from "@/db/schema";
-import type { License, LicenseRequest } from "@/db/schema/types";
-import { LicenseSnapshotV1Schema } from "@/lib/licensing/snapshot";
+import { licenseRequest } from "@/db/schema";
+import type { LicenseRequest } from "@/db/schema/types";
 import { isUuid } from "@/lib/validation/uuid";
 import { bytesEqual } from "../crypto/hmac";
 import { decryptSecret, encryptSecret } from "../crypto/token-cipher";
+import {
+  type BuyerLicense,
+  readBuyerLicense,
+} from "../licensing/buyer-license";
 
 // The buyer's private link key (02 §5.11, §9.5; 07 D14): 32 random bytes in base64url. The row keeps its sha256 for
 // lookups and a sealed copy for building links; the key itself is never stored or logged. Only the email sender (P17)
@@ -71,82 +74,17 @@ export async function findRequestForBuyer(
   return matches ? row : null;
 }
 
-/** What /l, its two download routes and the license PDF read for a buyer link (03 §7.6, P20's part). */
-export type BuyerLicense = {
-  /** The license columns; `snapshot` checked against LicenseSnapshotV1Schema. */
-  license: Pick<
-    License,
-    | "id"
-    | "code"
-    | "startsAt"
-    | "endsAt"
-    | "revokedAt"
-    | "createdAt"
-    | "exclusive"
-    | "snapshot"
-    | "originalObjectKey"
-    | "originalBytes"
-    | "originalMime"
-  >;
-  /**
-   * The request facts the record prints next to its snapshot, which never change after checkout (owner answer Q-183).
-   * `buyerEmail` is for the masked receipt line only.
-   */
-  request: Pick<
-    LicenseRequest,
-    | "id"
-    | "territoryCode"
-    | "termsAcceptedAt"
-    | "amountTotalCents"
-    | "currency"
-    | "buyerEmail"
-  >;
-};
-
 /**
  * The license a buyer link opens (02 §9.5; 03 §7.6): the approved request whose stored hash is the key's
  * (license_request_buyer_token_hash_uidx; the hash of a 32-byte key, so the index lookup tells a guesser nothing), then
  * its license (license_license_request_uidx). null for anything that can't be a key (checked before the query), an
- * unknown key, a request that isn't approved, or no license. 03 §7.6's renewal plan and refund columns come with P22b
- * and P21b.
+ * unknown key, a request that isn't approved, or no license.
  */
 export async function findLicenseForBuyer(
   token: string,
 ): Promise<BuyerLicense | null> {
   if (!isBuyerToken(token)) return null;
-  const [row] = await db
-    .select({
-      license: {
-        id: license.id,
-        code: license.code,
-        startsAt: license.startsAt,
-        endsAt: license.endsAt,
-        revokedAt: license.revokedAt,
-        createdAt: license.createdAt,
-        exclusive: license.exclusive,
-        snapshot: license.snapshot,
-        originalObjectKey: license.originalObjectKey,
-        originalBytes: license.originalBytes,
-        originalMime: license.originalMime,
-      },
-      request: {
-        id: licenseRequest.id,
-        territoryCode: licenseRequest.territoryCode,
-        termsAcceptedAt: licenseRequest.termsAcceptedAt,
-        amountTotalCents: licenseRequest.amountTotalCents,
-        currency: licenseRequest.currency,
-        buyerEmail: licenseRequest.buyerEmail,
-      },
-    })
-    .from(licenseRequest)
-    .innerJoin(license, eq(license.licenseRequestId, licenseRequest.id))
-    .where(
-      and(
-        eq(licenseRequest.buyerTokenHash, hashBuyerToken(token)),
-        eq(licenseRequest.status, "approved"),
-      ),
-    );
-  if (!row) return null;
-  const snapshot = LicenseSnapshotV1Schema.parse(row.license.snapshot);
-  return { license: { ...row.license, snapshot }, request: row.request };
+  return readBuyerLicense(
+    eq(licenseRequest.buyerTokenHash, hashBuyerToken(token)),
+  );
 }

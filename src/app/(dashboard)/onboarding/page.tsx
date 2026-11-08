@@ -11,12 +11,14 @@ import { SignOutMenuItem } from "@/components/layout/sign-out";
 import { Button } from "@/components/ui/button";
 import { PRIMARY_WIDTH, TERTIARY } from "@/components/ui/primary-width";
 import { Stepper } from "@/components/ui/stepper";
+import { MY_LICENSES_COPY } from "@/lib/licensing/my-licenses-copy";
 import {
   ONBOARDING_STEP_LABELS,
   ONBOARDING_STEPS,
   type OnboardingStep,
   resolveOnboardingStep,
 } from "@/lib/onboarding";
+import { myLicensesPath } from "@/lib/urls";
 import { getCreatorForApi, requireUser, toActor } from "@/server/auth/session";
 import { payoutsStatusForPage } from "@/server/creators/profile";
 import { env } from "@/server/env";
@@ -93,7 +95,15 @@ export default async function OnboardingPage({
 
   let body: ReactNode;
   if (step === "profile") {
-    body = <ProfileStepForm linkHost={new URL(env.APP_URL).host} />;
+    // A buyer who reached onboarding can still find their licenses (04 §9.30, §11.11).
+    body = (
+      <>
+        <ProfileStepForm linkHost={new URL(env.APP_URL).host} />
+        <Button asChild variant="link" className="self-start">
+          <Link href={myLicensesPath}>{MY_LICENSES_COPY.onboardingLink}</Link>
+        </Button>
+      </>
+    );
   } else if (step === "connect" && ctx) {
     body = (
       <ConnectStep payoutsActive={ctx.creator.payoutsStatus === "active"}>

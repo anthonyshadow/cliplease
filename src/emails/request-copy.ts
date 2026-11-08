@@ -53,6 +53,8 @@ export const REQUEST_EMAIL_COPY = {
   /** 05 §8 callout 10, 07 D98: under the first paragraph, /l's and the PDF's line word for word. */
   amountsIn,
   licenseLine: (code: string) => `License ${code}`,
+  /** Owner answer Q-194: license-approved's footer line above verifyLead, followed by the {APP_URL}/licenses link. */
+  seeAllLicenses: "See all your licenses:",
   /** 05 §8 callout 7: followed by the {APP_URL}/verify/{code} link and a period. */
   verifyLead: "Anyone can check this license at",
   /** /r's approved button, word for word (Q-141). */

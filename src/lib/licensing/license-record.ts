@@ -14,13 +14,25 @@ import type { PublicPostingDTO, PublicPostings } from "../postings/types";
 import { licensePath } from "../urls";
 import { BADGE_COPY, type BadgeInput, publicBadge } from "../videos/ownership";
 import { DOWNLOAD_COPY, DOWNLOAD_FAILED } from "./download-copy";
-import type { PublicLicenseStatus } from "./public-status";
+import { MY_LICENSES_COPY } from "./my-licenses-copy";
+import { type PublicLicenseStatus, publicStatus } from "./public-status";
 import { territoryInSentence } from "./selection";
 import type { LicenseSnapshotV1 } from "./snapshot";
 import { type SummaryInput, termPhrase } from "./summary";
 
 /** A found license's status: publicStatus's answer for a license row (no `upcoming` until P22b, 07 D117). */
 export type RecordStatus = Exclude<PublicLicenseStatus, "not_found">;
+
+/** publicStatus for a license that exists, which is never not_found. */
+export function recordStatus(
+  l: { revokedAt: Date | null; endsAt: Date | null },
+  now: Date,
+): RecordStatus {
+  const status = publicStatus(l, now);
+  if (status === "not_found")
+    throw new Error("publicStatus: not_found for a license");
+  return status;
+}
 
 /** The record's words (owner answers Q-184–Q-186; 04 §10.2, §11.4; 05 §4.4, §4.5, §6.10, §9; research/license.md §6.4). */
 export const LICENSE_RECORD_COPY = {
@@ -134,6 +146,8 @@ export const LICENSE_RECORD_COPY = {
     },
     viewPublicRecord: "View public record",
   },
+  /** /licenses and /licenses/[licenseId] (S24, S25; P20b): a leaf module, for the client files that print it. */
+  myLicenses: MY_LICENSES_COPY,
 } as const;
 
 const COPY = LICENSE_RECORD_COPY;
@@ -374,3 +388,8 @@ export { DOWNLOAD_FAILED };
 /** `/l/{token}?download=failed`: where a download route sends the buyer when it fails unexpectedly (Q-185). Never logged. */
 export const downloadFailedPath = (token: string) =>
   `${licensePath(token)}?${DOWNLOAD_FAILED.param}=${DOWNLOAD_FAILED.value}`;
+
+/** True when a download page's query carries `?download=failed`, the flag downloadFailedPath writes (Q-185). */
+export const isDownloadFailed = (
+  query: Record<string, string | string[] | undefined>,
+): boolean => query[DOWNLOAD_FAILED.param] === DOWNLOAD_FAILED.value;

@@ -1,30 +1,31 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { BuyerLicense } from "@/server/tokens/buyer-token";
+import { downloadEvent } from "@/db/schema";
+import type { BuyerLicense } from "@/server/licensing/buyer-license";
 import { GET, HEAD } from "./route";
 
 // The original's route (07 D16, D61; owner answer Q-185): the gate, the signed URL's name, the row after the URL and the
-// failure bounce, with the lookup, the signer and the row mocked (the [int] delivery suite runs it against the test
-// database and local storage).
-const mocks = vi.hoisted(() => ({
-  findLicenseForBuyer: vi.fn(),
-  presignDownload: vi.fn(),
-  recordDownload: vi.fn(),
-  logEvent: vi.fn(),
-}));
+// failure bounce, with the lookup, the signer and the database mocked (the [int] delivery suite runs it against the
+// test database and local storage).
+const mocks = vi.hoisted(() => {
+  const values = vi.fn();
+  return {
+    findLicenseForBuyer: vi.fn(),
+    presignDownload: vi.fn(),
+    values,
+    insert: vi.fn(() => ({ values })),
+    logEvent: vi.fn(),
+  };
+});
 vi.mock("@/server/env", () => ({
   env: { APP_URL: "http://localhost:3100" },
 }));
-vi.mock("@/db/client", () => ({ db: {} }));
+vi.mock("@/db/client", () => ({ db: { insert: mocks.insert } }));
 vi.mock("@/server/tokens/buyer-token", async (actual) => ({
   ...(await actual<typeof import("@/server/tokens/buyer-token")>()),
   findLicenseForBuyer: mocks.findLicenseForBuyer,
 }));
 vi.mock("@/server/storage/uploads", () => ({
   presignDownload: mocks.presignDownload,
-}));
-vi.mock("@/server/licensing/downloads", async (actual) => ({
-  ...(await actual<typeof import("@/server/licensing/downloads")>()),
-  recordDownload: mocks.recordDownload,
 }));
 vi.mock("@/server/log", () => ({
   errorName: (error: unknown) =>
@@ -68,8 +69,7 @@ describe("GET /api/licenses/[token]/original", () => {
   it("answers a valid license with a 302 to the signed URL, never cached, named ClipLease-{code}-original.mp4", async () => {
     mocks.findLicenseForBuyer.mockResolvedValue(found());
     mocks.presignDownload.mockResolvedValue(SIGNED);
-    const req = request();
-    const response = await get(req);
+    const response = await get();
     expect(mocks.findLicenseForBuyer).toHaveBeenCalledWith(TOKEN);
     expect(response.status).toBe(302);
     expect(response.headers.get("location")).toBe(SIGNED);
@@ -81,11 +81,13 @@ describe("GET /api/licenses/[token]/original", () => {
       disposition: "attachment",
       contentType: "video/mp4",
     });
-    expect(mocks.recordDownload).toHaveBeenCalledWith(
-      req,
-      found().license.id,
-      "original",
-    );
+    expect(mocks.insert).toHaveBeenCalledWith(downloadEvent);
+    expect(mocks.values).toHaveBeenCalledWith({
+      licenseId: found().license.id,
+      kind: "original",
+      ip: "203.0.113.7",
+      userAgent: null,
+    });
   });
 
   it("names a MOV original .mov", async () => {
@@ -112,7 +114,7 @@ describe("GET /api/licenses/[token]/original", () => {
     expect(response.headers.get("location")).toBeNull();
     expect(await response.text()).toBe("");
     expect(mocks.presignDownload).not.toHaveBeenCalled();
-    expect(mocks.recordDownload).not.toHaveBeenCalled();
+    expect(mocks.insert).not.toHaveBeenCalled();
   });
 
   it("sends the buyer back to /l?download=failed when storage fails, with no row and nothing private logged", async () => {
@@ -123,7 +125,7 @@ describe("GET /api/licenses/[token]/original", () => {
     expect(response.headers.get("location")).toBe(
       `http://localhost:3100/l/${TOKEN}?download=failed`,
     );
-    expect(mocks.recordDownload).not.toHaveBeenCalled();
+    expect(mocks.insert).not.toHaveBeenCalled();
     expect(mocks.logEvent).toHaveBeenCalledWith(
       "error",
       "license.download_failed",
@@ -148,6 +150,6 @@ describe("HEAD /api/licenses/[token]/original", () => {
     expect(response.status).toBe(405);
     expect(response.headers.get("allow")).toBe("GET");
     expect(mocks.findLicenseForBuyer).not.toHaveBeenCalled();
-    expect(mocks.recordDownload).not.toHaveBeenCalled();
+    expect(mocks.insert).not.toHaveBeenCalled();
   });
 });

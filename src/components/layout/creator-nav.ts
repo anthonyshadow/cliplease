@@ -1,8 +1,9 @@
-// The creator shell's destinations (02 §4.1, 04 §9.30), shared by NavBar, TabBar and MoreSheet. Every one has its
-// page (P20 built the last, /dashboard/licenses), so each link takes Next's default prefetch: a dynamic route down to
-// its loading state, so Library, Connections and Pricing show their skeleton at once. creator-nav.test.ts fails on a
+// The signed-in shell's destinations (02 §4.1, 04 §9.30), shared by NavBar, TabBar and MoreSheet. Every one has its
+// page (P20 built /dashboard/licenses, P20b /licenses), so each link takes Next's default prefetch: a dynamic route down
+// to its loading state, so Library, Connections and Pricing show their skeleton at once. creator-nav.test.ts fails on a
 // destination with no page, whose production prefetch would log a 404.
-// P20b adds "My licenses" (/licenses) to the account Menu and the MoreSheet (07 D126).
+import { myLicensesPath } from "@/lib/urls";
+
 export const CREATOR_NAV = {
   inbox: { label: "Inbox", href: "/dashboard" },
   library: { label: "Library", href: "/dashboard/library" },
@@ -11,6 +12,11 @@ export const CREATOR_NAV = {
   pricing: { label: "Pricing", href: "/dashboard/pricing" },
   connections: { label: "Connections", href: "/dashboard/connections" },
   settings: { label: "Settings", href: "/dashboard/settings" },
+  /**
+   * The licenses this account's email bought (07 D126), a buyer page in src/app/(buyer). A Menu and MoreSheet item, never
+   * a creator NavBar link, so it doesn't compete with "Licenses" (the ones they sold; 04 §9.30).
+   */
+  myLicenses: { label: "My licenses", href: myLicensesPath },
 } as const;
 
 export type CreatorNavKey = keyof typeof CREATOR_NAV;
@@ -25,10 +31,11 @@ export const NAV_BAR_KEYS = [
   "connections",
 ] as const satisfies readonly CreatorNavKey[];
 
-/** MoreSheet rows (before Sign out). */
+/** MoreSheet rows (before Sign out), in 04 §9.30's order. */
 export const MORE_SHEET_KEYS = [
   "licenses",
   "pricing",
+  "myLicenses",
   "settings",
 ] as const satisfies readonly CreatorNavKey[];
 

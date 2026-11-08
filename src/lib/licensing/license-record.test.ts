@@ -423,6 +423,25 @@ describe("the /l and PDF copy", () => {
   });
 });
 
+describe("the My licenses copy (P20b)", () => {
+  it("reads the rows' dates, the masked email lines and the shared end-date words", () => {
+    const { myLicenses } = LICENSE_RECORD_COPY;
+    expect(myLicenses.dates("15 Oct 2026", "15 Oct 2027")).toBe(
+      "15 Oct 2026 – 15 Oct 2027 (UTC)",
+    );
+    expect(myLicenses.perpetual("15 Oct 2026")).toBe(
+      `From 15 Oct 2026 · ${LICENSE_RECORD_COPY.noEndDate}`,
+    );
+    expect(myLicenses.signedInAs("a…@studio.com")).toBe(
+      "Signed in as a…@studio.com",
+    );
+    expect(myLicenses.emptyBody("a…@studio.com")).toBe(
+      "Licenses you buy with a…@studio.com show up here.",
+    );
+    expect(myLicenses.back).toBe(myLicenses.title);
+  });
+});
+
 describe("downloadFailedPath (Q-185)", () => {
   it("sends a failed download back to /l with the flag /l reads", () => {
     const token = "a".repeat(43);

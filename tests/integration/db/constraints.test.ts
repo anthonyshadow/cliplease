@@ -351,3 +351,19 @@ describe("exclusive licenses (0002)", () => {
     expect((await insertLicense(request)).exclusive).toBe(false);
   });
 });
+
+describe("buyer emails (0004)", () => {
+  it("request: stores only a trimmed, lowercase email (normalizeEmail, DB22)", async () => {
+    const target = await newUploadVideo();
+    for (const buyerEmail of ["Ana@Studio.com", " ana@studio.com"]) {
+      await expectDbError(insertLicenseRequest(target, { buyerEmail }), {
+        code: PG_ERROR.check,
+        constraint: "license_request_buyer_email_lower",
+      });
+    }
+    const ok = await insertLicenseRequest(target, {
+      buyerEmail: "ana@studio.com",
+    });
+    expect(ok.buyerEmail).toBe("ana@studio.com");
+  });
+});

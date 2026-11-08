@@ -272,7 +272,10 @@ test.describe("signed in", () => {
 
     await page.goto("/onboarding");
     await page.getByRole("button", { name: "Account menu" }).click();
-    // Without a creator profile, Settings would only send them back here (04 §9.30).
+    // Without a creator profile, Settings would only send them back here; My licenses doesn't (04 §9.30, P04's row).
+    await expect(
+      page.getByRole("menuitem", { name: "My licenses" }),
+    ).toHaveAttribute("href", "/licenses");
     await expect(page.getByRole("menuitem", { name: "Settings" })).toHaveCount(
       0,
     );

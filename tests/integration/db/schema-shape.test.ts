@@ -4,7 +4,8 @@ import { describe, expect, it } from "vitest";
 import { db } from "../../../src/db/client";
 import * as schema from "../../../src/db/schema";
 
-// 0000_init (P03): 19 tables, 27 pgEnums; CORE CHECKs: 0000_init 56 + 0002_exclusive_licenses 3 (07 D60, D105).
+// 0000_init (P03): 19 tables, 27 pgEnums; CORE CHECKs: 0000_init 56 + 0002_exclusive_licenses 3 + 0004_buyer_licenses 1
+// (07 D60, D105).
 const TABLES = [
   "user",
   "session",
@@ -66,6 +67,7 @@ const CORE_CHECKS = [
   "license_request_money_nonneg",
   "license_request_total",
   "license_request_text_lengths",
+  "license_request_buyer_email_lower",
   "license_request_buyer_time_zone_len",
   "license_request_token_hash_format",
   "license_request_buyer_token_sealed",
@@ -187,12 +189,12 @@ describe("0000_init schema shape", () => {
     ]);
   });
 
-  it("has exactly the 59 CORE CHECKs", async () => {
+  it("has exactly the 60 CORE CHECKs", async () => {
     // Filtered to public: every database also has two information_schema domain checks.
     const { rows: checks } = await db.execute<{ name: string }>(sql`
       select conname as name from pg_constraint
       where contype = 'c' and connamespace = 'public'::regnamespace`);
-    expect(CORE_CHECKS).toHaveLength(59);
+    expect(CORE_CHECKS).toHaveLength(60);
     expect(checks.map((c) => c.name).sort()).toEqual([...CORE_CHECKS].sort());
   });
 
@@ -307,5 +309,17 @@ describe("0002_exclusive_licenses", () => {
         column_default: null,
       },
     ]);
+  });
+});
+
+describe("0004_buyer_licenses", () => {
+  it("adds the My licenses index on (buyer_email, created_at DESC) (P20b)", async () => {
+    const { rows } = await db.execute<{ indexdef: string }>(sql`
+      select indexdef from pg_indexes
+      where schemaname = 'public' and indexname = 'license_request_buyer_email_created_idx'`);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.indexdef).toContain(
+      "ON public.license_request USING btree (buyer_email, created_at DESC)",
+    );
   });
 });
