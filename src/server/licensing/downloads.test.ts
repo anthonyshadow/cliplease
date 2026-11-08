@@ -1,13 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { downloadEvent } from "@/db/schema";
-import { FIRST_SNOW } from "../../../tests/helpers/license-snapshot-fixtures";
 import {
   DOWNLOAD_HEADERS,
   downloadFailed,
   downloadNotFound,
   downloadResponse,
   headNotAllowed,
-  licensePdfResponse,
   myDownloadFailed,
   recordDownload,
 } from "./downloads";
@@ -20,16 +18,12 @@ const mocks = vi.hoisted(() => {
     values,
     insert: vi.fn(() => ({ values })),
     logEvent: vi.fn(),
-    renderLicensePdf: vi.fn(),
   };
 });
 vi.mock("@/server/env", () => ({
   env: { APP_URL: "http://localhost:3100" },
 }));
 vi.mock("@/db/client", () => ({ db: { insert: mocks.insert } }));
-vi.mock("../pdf/generate", () => ({
-  renderLicensePdf: mocks.renderLicensePdf,
-}));
 vi.mock("../log", () => ({
   errorName: (error: unknown) =>
     error instanceof Error ? error.name : "unknown",
@@ -76,7 +70,7 @@ describe("recordDownload (07 D47)", () => {
 });
 
 describe("the shared answers", () => {
-  it("are never cached and send no referrer", () => {
+  it("are never cached, send no referrer and aren't indexed", () => {
     for (const response of [
       downloadNotFound(),
       headNotAllowed(),
@@ -86,11 +80,13 @@ describe("the shared answers", () => {
       expect(headersOf(response)).toMatchObject({
         "cache-control": "no-store",
         "referrer-policy": "no-referrer",
+        "x-robots-tag": "noindex",
       });
     }
     expect(DOWNLOAD_HEADERS).toEqual({
       "Cache-Control": "no-store",
       "Referrer-Policy": "no-referrer",
+      "X-Robots-Tag": "noindex",
     });
   });
 
@@ -155,47 +151,5 @@ describe("downloadResponse (Q-185)", () => {
       { kind: "original", error: "TypeError" },
     );
     expect(JSON.stringify(mocks.logEvent.mock.calls)).not.toContain(TOKEN);
-  });
-});
-
-describe("licensePdfResponse (Q-183; AD-98)", () => {
-  const found = {
-    license: { id: LICENSE_ID, code: "CL-7K3M-9QXA", snapshot: FIRST_SNOW },
-    request: {
-      territoryCode: null,
-      termsAcceptedAt: new Date("2026-10-15T09:00:00Z"),
-    },
-  };
-  const request = () => new Request("http://localhost:3100/api/my/x/pdf");
-
-  it("renders from the snapshot and the two checkout facts, writes the row, then answers inline", async () => {
-    mocks.renderLicensePdf.mockResolvedValue(Buffer.from("%PDF-1.7"));
-    const response = await licensePdfResponse(request(), found);
-    expect(mocks.renderLicensePdf).toHaveBeenCalledWith(
-      found.license.snapshot,
-      {
-        territoryCode: null,
-        acceptedAt: found.request.termsAcceptedAt,
-      },
-    );
-    expect(mocks.values).toHaveBeenCalledWith(
-      expect.objectContaining({ licenseId: LICENSE_ID, kind: "pdf" }),
-    );
-    expect(response.status).toBe(200);
-    expect(headersOf(response)).toMatchObject({
-      "content-type": "application/pdf",
-      "content-disposition": expect.stringContaining(
-        'inline; filename="ClipLease-CL-7K3M-9QXA-license.pdf"',
-      ),
-      "x-content-type-options": "nosniff",
-      "cache-control": "no-store",
-    });
-    expect(await response.text()).toBe("%PDF-1.7");
-  });
-
-  it("writes no row when the render fails", async () => {
-    mocks.renderLicensePdf.mockRejectedValue(new Error("font missing"));
-    await expect(licensePdfResponse(request(), found)).rejects.toThrow();
-    expect(mocks.insert).not.toHaveBeenCalled();
   });
 });

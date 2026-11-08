@@ -4,8 +4,8 @@ import {
   downloadNotFound,
   downloadResponse,
   headNotAllowed,
-  licensePdfResponse,
 } from "@/server/licensing/downloads";
+import { licensePdfResponse } from "@/server/licensing/pdf-download";
 import { findLicenseForBuyer } from "@/server/tokens/buyer-token";
 
 // The buyer's license PDF by the buyer link (02 §4.2, §9.5; 07 D16, D17): licensePdfResponse's inline PDF. An expired

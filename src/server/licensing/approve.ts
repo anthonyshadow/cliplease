@@ -2,7 +2,9 @@ import "server-only";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db/client";
 import { license, licenseRequest, video } from "@/db/schema";
+import type { PayoutsStatus } from "@/lib/domain/values";
 import type { ApproveResult } from "@/lib/licensing/request-dto";
+import { isAutoApproving } from "@/lib/licensing/transitions";
 import { type Actor, AUTO_APPROVE, LAZY } from "../auth/actor";
 import { type PayoutsRow, refreshPayoutsStatus } from "../creators/profile";
 import { errorName, logEvent } from "../log";
@@ -49,6 +51,8 @@ async function approveState(requestId: string, scope: ApproveScope) {
       paymentAction: licenseRequest.paymentAction,
       paymentActionAt: licenseRequest.paymentActionAt,
       overdue: overdueColumn,
+      autoApprove: licenseRequest.autoApprove,
+      autoApproveFallbackAt: licenseRequest.autoApproveFallbackAt,
       originalStatus: video.originalStatus,
       licenseCode: license.code,
     })
@@ -81,19 +85,28 @@ function refusedResult(s: ApproveState): ApproveResult | null {
 }
 
 /**
+ * A creator's tap on a request whose automatic approval may still run (07 D81): refused as not_actionable, as the pages
+ * show it (Processing…, no buttons), so only auto-approve approves it until it falls back. Fallback is one-way, so a
+ * read that finds it open is never wrong for long: the next tap after it falls back goes through.
+ */
+const creatorWaitsForAuto = (scope: ApproveScope, s: ApproveState) =>
+  "creatorId" in scope && isAutoApproving(s);
+
+/**
  * Approves waiting request `requestId` for its creator (02 §8.2): a stuck claim reconciled first; then the request must
  * be unclaimed and before its deadline, the video's original ready (07 D33) and payouts active (07 D29, D74, D77; the
  * reading at most 10 minutes old), else nothing is claimed. A refused claim reports the request as it is. A capture
  * that isn't ok goes to reconcileFromStripe, and the result follows Stripe: approved, a released claim (retry), or
  * capture_failed (T7 cancels the hold first). A tap past the deadline schedules the expiry it found due (02 §8.4), as
  * the system's work after the response. `actor`: the request's creator, or the auto-approve system actor on an
- * auto_approve request that hasn't fallen back (approveScope). `payoutsRow`: the caller's creator context, read with the
- * session.
+ * auto_approve request that hasn't fallen back (approveScope); a creator waits while that approval may still run.
+ * `payoutsRow`: the caller's creator context, read with the session. `payouts`: a reading the caller has just made
+ * (auto-approve's own guard), so it isn't read again.
  */
 export async function approveLicenseRequest(
   requestId: string,
   actor: Actor,
-  options: { payoutsRow?: PayoutsRow } = {},
+  options: ApproveOptions = {},
 ): Promise<ApproveResult> {
   const result = await approve(requestId, actor, options);
   if (!result.ok && result.reason === "expired") {
@@ -102,10 +115,12 @@ export async function approveLicenseRequest(
   return result;
 }
 
+type ApproveOptions = { payoutsRow?: PayoutsRow; payouts?: PayoutsStatus };
+
 async function approve(
   requestId: string,
   actor: Actor,
-  { payoutsRow }: { payoutsRow?: PayoutsRow },
+  { payoutsRow, payouts: read }: ApproveOptions,
 ): Promise<ApproveResult> {
   const scope = approveScope(actor);
   let before = scope && (await approveState(requestId, scope));
@@ -119,6 +134,9 @@ async function approve(
   }
   const refused = refusedResult(before);
   if (refused) return refused;
+  if (creatorWaitsForAuto(scope, before)) {
+    return { ok: false, reason: "not_actionable", status: before.status };
+  }
   if (before.originalStatus !== "ready") {
     return {
       ok: false,
@@ -126,9 +144,10 @@ async function approve(
       status: "awaiting_approval",
     };
   }
-  let payouts: Awaited<ReturnType<typeof refreshPayoutsStatus>>;
+  let payouts: PayoutsStatus;
   try {
-    payouts = await refreshPayoutsStatus(creatorId, { row: payoutsRow });
+    payouts =
+      read ?? (await refreshPayoutsStatus(creatorId, { row: payoutsRow }));
   } catch (error) {
     // Nothing is claimed: the creator can tap again.
     logEvent("warn", "license_request.payouts_read_failed", {

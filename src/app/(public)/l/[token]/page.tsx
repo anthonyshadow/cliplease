@@ -7,6 +7,7 @@ import {
   LICENSE_RECORD_COPY,
   recordStatus,
 } from "@/lib/licensing/license-record";
+import { PRIVATE_PAGE } from "@/lib/private-page";
 import { maskEmail, signInPath } from "@/lib/sign-in";
 import { DAY_MS } from "@/lib/time";
 import { originalExtension } from "@/lib/upload/limits";
@@ -18,27 +19,22 @@ import { findLicenseForBuyer } from "@/server/tokens/buyer-token";
 const buyerLicense = cache(findLicenseForBuyer);
 
 /**
- * No referrer and no index on every answer (07 D61; 02 §9.5): a client navigation here (/r's Get file and license) never
- * gets next.config's headers. The title is 07 D100's moment word (the root template adds " · ClipLease"); a dead link
- * gets none, so it reads "ClipLease" whatever the reason.
+ * PRIVATE_PAGE on every answer (07 D61; 02 §9.5; /r's Get file and license is a client navigation). The title is 07
+ * D100's moment word (the root template adds " · ClipLease"); a dead link gets none, so it reads "ClipLease" whatever
+ * the reason.
  */
-const PRIVATE: Metadata = {
-  referrer: "no-referrer",
-  robots: { index: false, follow: false },
-};
-
 export async function generateMetadata({
   params,
 }: PageProps<"/l/[token]">): Promise<Metadata> {
   const found = await buyerLicense((await params).token);
   return found
     ? {
-        ...PRIVATE,
+        ...PRIVATE_PAGE,
         title: LICENSE_RECORD_COPY.buyer.title(
           found.license.snapshot.video.title,
         ),
       }
-    : PRIVATE;
+    : PRIVATE_PAGE;
 }
 
 /**

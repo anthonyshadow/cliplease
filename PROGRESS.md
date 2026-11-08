@@ -894,6 +894,21 @@ D5); their follow-ups for prompts still to do are under "Follow-ups from archive
   - **P23:** re-check the session original's `Content-Disposition` on R2. **P30:** both PDF routes' font tracing in the deployed bundle. **P31a:** reuse `license_request_buyer_email_created_idx`; don't create it again.
   - **Plan-kit fixes** (not applied to the kit): the migration name and counts (PROGRESS.md:775); Step 0 :24-28 → one `check:step0`, :41 → `license-record.ts`, :43-55 and :65-69 (dev psql → tests, Q-188); Ask 1 settled (Q-192); Task 1 :165 `.desc().nullsFirst()`, :174-178 (the replay test); Task 3 :210 keeps `/verify/:path*` (Q-184), :227 `px-(--gutter)` is `SHELL_GUTTER`; Task 4 :231 no amount, :239 `RecordStatus`, :244 the detail is P20's `BuyerLicense`, :246 no `requireBuyerLicense`; Task 5's Upcoming → P22b, the date helper is `formatPostDate`; Task 6 :290-293 (AD-98's order, `clientIp`, the session failure bounce); Verify (one `test:e2e`; the psql lines → tests); Wrap up: no commit before the owner asks. Docs: 05 §5.1 (the buyer line's place), §5.2 callout 28, §4.9 (Revoked on a row; Loading), §4.10 (Loading), §10 (the API 404s); 04 §9.37/§11.11 (Type row); 03 §3.7.2 (`.desc()`).
 
+### Review — Code review of P18–P20b ✅ (2026-11-08)
+> Not a plan prompt: the owner ran `/code-review` at xhigh effort over P18–P20b (042afdd..d10f5c3), then asked for all six findings fixed. No correctness or security defect in the money, locking, token or buyer-privacy paths. Status line unchanged.
+- Done:
+  - **A creator waits while auto-approve may run (07 D81):** `approveLicenseRequest` and `declineLicenseRequest` answer a creator `not_actionable` (status awaiting_approval) while `isAutoApproving`, claiming nothing, as the pages already showed (Processing…, no buttons); after the fallback the creator's taps go through. So `autoApproved` (status approved with auto-approve open) is now only ever the system's approval (AD-112).
+  - **Auto-approve reads payouts once:** its guard's reading goes to Approve (`approveLicenseRequest`'s new `payouts` option), which no longer reads again.
+  - **The PDF responder has its own module:** `licensePdfResponse` moved to `src/server/licensing/pdf-download.ts`, imported by the two PDF routes only, so the original-download routes no longer load react-pdf.
+  - **One header source for the four download routes:** `DOWNLOAD_HEADERS` gains `X-Robots-Tag: noindex`; `myDownloadResponse` no longer sets it on its own. next.config's rows still win where both set a header (Next adds a handler's header only when it is unset).
+  - **`PRIVATE_PAGE`** (`src/lib/private-page.ts`): /r, /l, /licenses and /licenses/[licenseId] spread it instead of four copies.
+  - **CopyLinkField** left-aligns a URL that fits (`text-left` beside `[direction:rtl]`, which still cuts the start of a long one).
+  - **Tests:** `auto-approve.test.ts` +1 (the creator's Approve and Decline refused, nothing claimed, then approved after the fallback, `autoApproved` false); `pdf-download.test.ts` (the two PDF cases moved from downloads.test.ts); downloads.test.ts checks the noindex header.
+- Verified: `bun run typecheck` ✅ · `bun run lint` ✅ · `bun run lint:tokens` ✅ · `bun run lint:invariants` ✅ · `bun run test` ✅ (4507 in 223 files) · `bun run test:int auto-approve approve decline delivery buyer-licenses` ✅ (194 in 8 files) · `bun run check:full` ✅ (lint 915 files; unit 4507 in 223; integration 1162 in 54; e2e 340 passed, 4 skipped, 5.3 min, all four projects), recorded in `.data/last-green` at 2026-11-08T03:09:54Z.
+- Decisions: AD-112 in `progress/decisions.md`; next Q-197, AD-113.
+- Open questions: none.
+- Follow-ups for later prompts: none new.
+
 **M6 Admin and Gate A** · P21–P22 · 5.25 h
 
 ### P21 — Admin view · [ ] to do

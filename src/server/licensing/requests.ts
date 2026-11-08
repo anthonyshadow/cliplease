@@ -25,6 +25,7 @@ import {
   scopeLabel,
 } from "@/lib/licensing/selection";
 import {
+  isAutoApproving,
   isTerminal,
   type LicenseRequestEvent,
 } from "@/lib/licensing/transitions";
@@ -618,6 +619,8 @@ async function declineState(requestId: string, scope: DeclineScope) {
       paymentAction: licenseRequest.paymentAction,
       paymentActionAt: licenseRequest.paymentActionAt,
       overdue: overdueColumn,
+      autoApprove: licenseRequest.autoApprove,
+      autoApproveFallbackAt: licenseRequest.autoApproveFallbackAt,
     })
     .from(licenseRequest)
     .where(
@@ -656,7 +659,8 @@ const notActionable = (s: DeclineState): DeclineResult => ({
  * word when the cancel isn't ok. ok only once the request is stored declined: a released claim says retry, a claim
  * still held reads Processing…, and a late capture that won reports approved. `reason` is the server's (declineScope):
  * the creator's own, or the system's exclusive_conflict, which Stripe's word keeps (reconcileFromStripe's
- * declineReason).
+ * declineReason). A creator waits while the request's automatic approval may still run (07 D81: the pages show it
+ * Processing…, with no buttons): not_actionable, until it falls back.
  */
 export async function declineLicenseRequest(
   requestId: string,
@@ -678,6 +682,9 @@ export async function declineLicenseRequest(
     // T8: the deadline passed, so the request expires; it reads expired only once Stripe has released the hold.
     await expireLicenseRequest(requestId, LAZY);
     return notActionable(await declineStateOf(requestId, scope));
+  }
+  if ("creatorId" in scope && isAutoApproving(state)) {
+    return notActionable(state);
   }
   const claimed = await claimPaymentAction(requestId, "decline");
   if (!claimed) return notActionable(await declineStateOf(requestId, scope));

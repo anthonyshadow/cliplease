@@ -10,9 +10,7 @@ import { myLicenseDownloadFailedPath } from "@/lib/urls";
 import { isUuid } from "@/lib/validation/uuid";
 import { env } from "../env";
 import { errorName, logEvent } from "../log";
-import { renderLicensePdf } from "../pdf/generate";
 import { clientIp, clientUserAgent } from "../request-context";
-import { contentDisposition } from "../storage/content-disposition";
 import { presignDownload } from "../storage/uploads";
 import { isBuyerToken } from "../tokens/buyer-token";
 import type { BuyerLicense } from "./buyer-license";
@@ -21,12 +19,17 @@ import type { BuyerLicense } from "./buyer-license";
 // by the buyer link, /api/my/licenses/[licenseId]/original and /pdf by the session (P20b). One download_event per
 // answered tap, and the answers all four routes share; each route keeps its own lookup and gate. The routes are plain
 // links, so a failure can only be shown by sending the buyer back to the page; HEAD (a scanner, `curl -I`) never runs
-// GET's work.
+// GET's work. The PDF's answer is pdf-download.ts's, so the original routes never load the PDF renderer.
 
-/** Every download answer's headers: never cached, and no referrer leaves a URL that carries the key (07 D61). */
+/**
+ * Every download answer's headers: never cached, no referrer leaves a URL that carries the key (07 D61), never indexed.
+ * next.config sends them for the four routes too, and its value wins where both set one (Next adds a handler's header
+ * only when the config left it unset); these cover a handler called on its own.
+ */
 export const DOWNLOAD_HEADERS = {
   "Cache-Control": "no-store",
   "Referrer-Policy": "no-referrer",
+  "X-Robots-Tag": "noindex",
 } as const;
 
 /**
@@ -103,21 +106,13 @@ export async function downloadResponse(
   }
 }
 
-/**
- * A session download route's answer (P20b): downloadResponse with the 303 back to `/licenses/{id}?download=failed`,
- * marked noindex (next.config's /api/my row sends it too; the handler's own answer carries it as well).
- */
-export async function myDownloadResponse(
+/** A session download route's answer (P20b): downloadResponse with the 303 back to `/licenses/{id}?download=failed`. */
+export const myDownloadResponse = (
   kind: DownloadKind,
   licenseId: string,
   respond: () => Promise<Response>,
-): Promise<Response> {
-  const response = await downloadResponse(kind, respond, () =>
-    myDownloadFailed(licenseId),
-  );
-  response.headers.set("X-Robots-Tag", "noindex");
-  return response;
-}
+): Promise<Response> =>
+  downloadResponse(kind, respond, () => myDownloadFailed(licenseId));
 
 /**
  * The original, once a route's gate let it through (only while the license is valid): a 302 to a 5-minute signed URL
@@ -143,36 +138,5 @@ export async function originalDownloadResponse(
   return new Response(null, {
     status: 302,
     headers: { ...DOWNLOAD_HEADERS, Location: url },
-  });
-}
-
-/**
- * The license PDF, once a route's gate let it through (unless revoked): rendered from the snapshot and the request's
- * two checkout facts (owner answer Q-183), sent inline as `ClipLease-CL-7K3M-9QXA-license.pdf`, never stored. The row
- * is written once the PDF is rendered (AD-98), so a failed render writes none.
- */
-export async function licensePdfResponse(
-  request: Request,
-  found: {
-    license: Pick<BuyerLicense["license"], "id" | "code" | "snapshot">;
-    request: Pick<BuyerLicense["request"], "territoryCode" | "termsAcceptedAt">;
-  },
-): Promise<Response> {
-  const { license, request: facts } = found;
-  const pdf = await renderLicensePdf(license.snapshot, {
-    territoryCode: facts.territoryCode,
-    acceptedAt: facts.termsAcceptedAt,
-  });
-  await recordDownload(request, license.id, "pdf");
-  return new Response(new Uint8Array(pdf), {
-    headers: {
-      ...DOWNLOAD_HEADERS,
-      "Content-Type": "application/pdf",
-      "Content-Disposition": contentDisposition(
-        "inline",
-        `${APP_NAME}-${license.code}-license.pdf`,
-      ),
-      "X-Content-Type-Options": "nosniff",
-    },
   });
 }

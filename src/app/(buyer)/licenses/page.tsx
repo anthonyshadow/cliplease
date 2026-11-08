@@ -4,6 +4,7 @@ import { MyLicensesTitle } from "@/components/buyer/my-licenses-title";
 import { EmptyState } from "@/components/ui/empty-state";
 import { sentences } from "@/lib/format";
 import { LICENSE_RECORD_COPY } from "@/lib/licensing/license-record";
+import { PRIVATE_PAGE } from "@/lib/private-page";
 import { maskEmail } from "@/lib/sign-in";
 import { myLicensesPath } from "@/lib/urls";
 import { requireUser } from "@/server/auth/session";
@@ -12,14 +13,10 @@ import { listBuyerLicenses } from "@/server/buyers/queries";
 const COPY = LICENSE_RECORD_COPY.myLicenses;
 
 /**
- * "My licenses" (the root template adds " · ClipLease"), with no referrer and no index (07 §9.2): a client navigation
- * here (a row's back link, onboarding's link) never gets next.config's headers.
+ * "My licenses" (the root template adds " · ClipLease") and PRIVATE_PAGE (07 §9.2; a row's back link and onboarding's
+ * link are client navigations).
  */
-export const metadata: Metadata = {
-  title: COPY.title,
-  referrer: "no-referrer",
-  robots: { index: false, follow: false },
-};
+export const metadata: Metadata = { ...PRIVATE_PAGE, title: COPY.title };
 
 /**
  * S30 `/licenses`, My licenses (05 §4.9; 04 §9.37, §11.11; 07 D126): every license whose request's buyer email is the

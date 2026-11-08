@@ -177,7 +177,10 @@ async function attempt(
   if (auth.riskLevel !== "normal") {
     return fallBack(requestId, "risk_not_normal");
   }
-  const result = await approveLicenseRequest(requestId, AUTO_APPROVE);
+  // Its guard read payouts a moment ago: Approve doesn't read them again.
+  const result = await approveLicenseRequest(requestId, AUTO_APPROVE, {
+    payouts,
+  });
   if (result.ok) return "approved";
   switch (result.reason) {
     case "retry":

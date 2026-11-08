@@ -15,6 +15,7 @@ import {
   LICENSE_RECORD_COPY,
   licenseStatusPill,
 } from "@/lib/licensing/license-record";
+import { PRIVATE_PAGE } from "@/lib/private-page";
 import { originalExtension } from "@/lib/upload/limits";
 import {
   myLicenseDownloadPath,
@@ -33,18 +34,9 @@ const BUYER = LICENSE_RECORD_COPY.buyer;
 const buyerLicense = cache(getBuyerLicense);
 
 /**
- * No referrer and no index on every answer (07 §9.2): a client navigation here (a My licenses row) never gets
- * next.config's headers.
- */
-const PRIVATE: Metadata = {
-  referrer: "no-referrer",
-  robots: { index: false, follow: false },
-};
-
-/**
- * The video's title (the root template adds " · ClipLease"), read only for the signed-in buyer's own license, so a 404
- * for another email's id never carries its title: signed out, or not theirs, the page reads "ClipLease". It never
- * redirects; the page does.
+ * PRIVATE_PAGE on every answer (07 §9.2; a My licenses row is a client navigation), with the video's title (the root
+ * template adds " · ClipLease"), read only for the signed-in buyer's own license, so a 404 for another email's id never
+ * carries its title: signed out, or not theirs, the page reads "ClipLease". It never redirects; the page does.
  */
 export async function generateMetadata({
   params,
@@ -54,8 +46,8 @@ export async function generateMetadata({
     ? await buyerLicense(user, (await params).licenseId)
     : null;
   return found
-    ? { ...PRIVATE, title: found.license.snapshot.video.title }
-    : PRIVATE;
+    ? { ...PRIVATE_PAGE, title: found.license.snapshot.video.title }
+    : PRIVATE_PAGE;
 }
 
 /**

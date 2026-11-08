@@ -15,6 +15,7 @@ import {
   VIEW_COPY,
   viewTitle,
 } from "@/lib/licensing/request-status";
+import { PRIVATE_PAGE } from "@/lib/private-page";
 import { licensePath, videoUrl } from "@/lib/urls";
 import { getBuyerRequest } from "@/server/licensing/request-status";
 
@@ -61,22 +62,16 @@ async function pageFor({ params, searchParams }: PageProps<"/r/[requestId]">) {
 export const maxDuration = 60;
 
 /**
- * No referrer and no index on every answer (05 §4.3; 02 §9.5): a client navigation here (the fake checkout's redirects)
- * never gets next.config's headers. The title names the state (owner answer Q-121 a); a dead link gets none, so it
- * reads "ClipLease" whatever the reason.
+ * PRIVATE_PAGE on every answer (05 §4.3; 02 §9.5; the fake checkout's redirects are client navigations). The title names
+ * the state (owner answer Q-121 a); a dead link gets none, so it reads "ClipLease" whatever the reason.
  */
-const PRIVATE: Metadata = {
-  referrer: "no-referrer",
-  robots: { index: false, follow: false },
-};
-
 export async function generateMetadata(
   props: PageProps<"/r/[requestId]">,
 ): Promise<Metadata> {
   const page = await pageFor(props);
   return page
-    ? { ...PRIVATE, title: viewTitle(page.view, page.request.handle) }
-    : PRIVATE;
+    ? { ...PRIVATE_PAGE, title: viewTitle(page.view, page.request.handle) }
+    : PRIVATE_PAGE;
 }
 
 /**

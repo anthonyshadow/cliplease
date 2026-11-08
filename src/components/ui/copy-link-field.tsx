@@ -106,7 +106,7 @@ export function CopyLinkField({
         <span className="sr-only">{`${label}: `}</span>
         <span
           ref={textRef}
-          className="min-w-0 flex-1 truncate text-callout text-ink tabular-nums [direction:rtl] select-all"
+          className="min-w-0 flex-1 truncate text-left text-callout text-ink tabular-nums [direction:rtl] select-all"
         >
           {/* The bidi isolate keeps the URL's own order while the start is the part that gets cut. */}
           <bdi dir="ltr">{url}</bdi>

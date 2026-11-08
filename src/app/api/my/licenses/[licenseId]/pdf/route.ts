@@ -4,9 +4,9 @@ import { getBuyerLicense } from "@/server/buyers/queries";
 import {
   downloadNotFound,
   headNotAllowed,
-  licensePdfResponse,
   myDownloadResponse,
 } from "@/server/licensing/downloads";
+import { licensePdfResponse } from "@/server/licensing/pdf-download";
 
 // The buyer's license PDF by the session (02 §4.2, §9.2; 07 D126, D16, D17; P20b): licensePdfResponse's inline PDF. An
 // expired license keeps it; a revoked one, another email's license and an unknown or malformed id get the empty 404

@@ -23,6 +23,7 @@ import {
 import { getBuyerStatus, listInbox } from "../../src/server/licensing/queries";
 import {
   createLicenseRequest,
+  declineLicenseRequest,
   markAuthorized,
 } from "../../src/server/licensing/requests";
 import { redirectTo } from "../helpers/actions";
@@ -513,6 +514,32 @@ describe("Approve as the auto-approve system actor (02 §8.2; 03 T4; 07 D81)", (
       stripeAttempt: 0,
       autoApproveFallbackAt: expect.any(Date),
     });
+  });
+});
+
+describe("the creator while the automatic approval may still run (07 D81)", () => {
+  it("their Approve and Decline are not_actionable and claim nothing, as the pages show it; once it falls back, their Approve goes through and isn't called auto-approved", async () => {
+    const { creator, actor, row } = await autoRequest();
+    const refused = {
+      ok: false,
+      reason: "not_actionable",
+      status: "awaiting_approval",
+    };
+    expect(await approveLicenseRequest(row.id, actor)).toEqual(refused);
+    expect(await declineLicenseRequest(row.id, actor)).toEqual(refused);
+    expect(await requestRow(row.id)).toMatchObject({
+      status: "awaiting_approval",
+      paymentAction: null,
+      stripeAttempt: 0,
+    });
+    expect(scripted.keys("capture")).toEqual([]);
+    expect(scripted.keys("cancel")).toEqual([]);
+
+    scripted.authorizations({ riskLevel: "elevated" });
+    expect(await autoApproveRequest(row.id)).toBe("fallback");
+    expect((await approveLicenseRequest(row.id, actor)).ok).toBe(true);
+    const [approved] = await listInbox(creator.id, "history");
+    expect(approved).toMatchObject({ id: row.id, autoApproved: false });
   });
 });
 
