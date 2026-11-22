@@ -19,6 +19,8 @@ import {
 } from "../postings/errors";
 import {
   auditNewlyVerified,
+  HOLDERS_ORDER,
+  holdsPostFor,
   isVerifiedPostingConflict,
   lockConnectedAccounts,
   refreshVideoOwnership,
@@ -106,7 +108,10 @@ async function availablePost(creatorId: string, socialPostId: string) {
   return post;
 }
 
-/** The creator's video holding a verified posting of this post (07 D72, video_posting_social_post_idx), or null. */
+/**
+ * The creator's video holding this post (07 D72, video_posting_social_post_idx; holdsPostFor: verified, or released on a
+ * video that is still disabled, owner answer Q-204), the verified one first, or null.
+ */
 async function ownVideoOnPost(
   creatorId: string,
   socialPostId: string,
@@ -118,9 +123,10 @@ async function ownVideoOnPost(
       and(
         eq(videoPosting.socialPostId, socialPostId),
         eq(videoPosting.creatorId, creatorId),
-        eq(videoPosting.verification, "verified"),
+        holdsPostFor(creatorId),
       ),
     )
+    .orderBy(HOLDERS_ORDER)
     .limit(1);
   return row?.videoId ?? null;
 }
@@ -178,7 +184,8 @@ function canonicalSourceUrl(post: {
  * Make licensable (02 §5.6, §7.7; 07 D39, D65–D68, D72): a verified_owner draft and its one locked source posting,
  * after a live ownership check. Order (1 and 2 are read together, then checked in this order):
  * 1. the creator's own `available` post with its account, else PostNotFoundError;
- * 2. a verified posting of it already on one of the creator's videos → that video (a second press opens it);
+ * 2. a posting of it already holding it on one of the creator's videos (ownVideoOnPost: verified, or released on a video
+ *    that is still disabled, Q-204) → that video (a second press opens it);
  * 3. the account must be `connected` with a handle or a name (verifiedAs), else NeedsReconnectError;
  * 4. the source posting's canonical URL from parsePostingLink (canonicalSourceUrl; a bug throws before any call);
  * 5. the live getPost, outside any transaction, through withAccessToken (07 D12 b: one retry after a concurrent

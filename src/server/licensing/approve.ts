@@ -14,6 +14,7 @@ import { afterResponse } from "./effects";
 import { declineLicenseRequest, expireLicenseRequest } from "./requests";
 import {
   autoApproveOpen,
+  type ClaimConflict,
   type ClaimedRequest,
   claimPaymentAction,
   finishCapture,
@@ -25,7 +26,8 @@ import {
 // transaction under the claim's key, and the fenced T5 finish issues the license. Never "not charged" while money may
 // have moved: a request whose capture outcome is unknown reads as claimed ("Processing…") until it is reconciled.
 // Auto-approve (P19c; 07 D81) approves as the system actor through the same path. The capture claim takes the video's
-// lock and re-checks availability (07 D110, D111): a conflict declines the request, never charges it.
+// lock and re-checks the video's status and availability (07 D110, D111; owner answer Q-197 a): a disabled video or a
+// conflict declines the request, never charges it.
 
 /**
  * Whose requests `actor` may approve (02 §8.2; 03 T4): a creator their own; the auto-approve system actor only an
@@ -168,7 +170,12 @@ async function approve(
     autoApproveOnly: auto,
   });
   if (claimed && "conflict" in claimed) {
-    return declineConflict(requestId, creatorId, auto ? AUTO_APPROVE : LAZY);
+    return declineConflict(
+      requestId,
+      creatorId,
+      auto ? AUTO_APPROVE : LAZY,
+      claimed.conflict,
+    );
   }
   if (!claimed) {
     const now = await stateOf(requestId, creatorId);
@@ -184,24 +191,30 @@ async function approve(
 }
 
 /**
- * 02 §8.2 step 1c (07 D111; 03 T8): the claim's re-check found the video taken, so nothing was claimed or captured. The
- * request is declined through the ordinary decline claim as `system`, which the caller passes: auto_approve for
- * auto-approve's own attempt, else lazy (work a creator's tap set off). The result carries the status as it then is:
- * declined only once Stripe confirmed the cancel. A request another ending got to first (the creator's own decline in
- * another tab, a video disabled meanwhile) reports that race lost, as not_actionable with its status.
+ * 02 §8.2 step 1c (07 D111; 03 T8; owner answer Q-197 a): the claim found the video disabled, or its re-check found the
+ * video taken, so nothing was claimed or captured. The request is declined with the conflict as its reason through the
+ * ordinary decline claim as `system`, which the caller passes: auto_approve for auto-approve's own attempt, else lazy
+ * (work a creator's tap set off). The result carries the status as it then is: declined only once Stripe confirmed the
+ * cancel. A disabled video answers not_actionable (the Inbox's stored-reason line says why). An exclusive conflict
+ * answers exclusive_conflict, unless another ending got there first (the creator's own decline in another tab, a video
+ * disabled meanwhile): that race lost is not_actionable with its status.
  */
 async function declineConflict(
   requestId: string,
   creatorId: string,
   system: Actor,
+  conflict: ClaimConflict["conflict"],
 ): Promise<ApproveResult> {
-  await declineLicenseRequest(requestId, system, "exclusive_conflict");
+  await declineLicenseRequest(requestId, system, conflict);
   const now = await stateOf(requestId, creatorId);
   const theirs =
     now.status === "declined" && now.statusReason !== "exclusive_conflict";
   return {
     ok: false,
-    reason: theirs ? "not_actionable" : "exclusive_conflict",
+    reason:
+      conflict === "exclusive_conflict" && !theirs
+        ? "exclusive_conflict"
+        : "not_actionable",
     status: now.status,
   };
 }

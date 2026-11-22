@@ -53,7 +53,7 @@ export async function expectNoBareDollar(page: Page) {
 
 /**
  * The box is at most `maxPx` wide and centered within 1 px. Measured with getBoundingClientRect, not boundingBox(): a box
- * can be 0 px tall (/admin's <main> holds only an sr-only h1), and Playwright treats that as not visible.
+ * can be 0 px tall (one whose only content is visually hidden), and Playwright treats that as not visible.
  */
 export async function expectWithinCap(locator: Locator, maxPx: number) {
   const { left, right, width, clientWidth } = await locator.evaluate((el) => {

@@ -44,10 +44,15 @@ type Holder = {
   linkKey: string;
 };
 
-/** A reader answering the verified-holders select with `holders`, without a database; `select` counts the reads. */
+/**
+ * A reader answering the holders select with `holders`, in HOLDERS_ORDER as given, without a database; `select` counts
+ * the reads.
+ */
 function holdersReader(holders: Holder[]) {
   const select = vi.fn(() => ({
-    from: () => ({ innerJoin: () => ({ where: async () => holders }) }),
+    from: () => ({
+      innerJoin: () => ({ where: () => ({ orderBy: async () => holders }) }),
+    }),
   }));
   return { exec: { select } as unknown as Pick<typeof db, "select">, select };
 }

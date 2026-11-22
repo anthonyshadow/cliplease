@@ -15,7 +15,7 @@ import {
   VIDEO_PRICING_COLUMNS,
   videoPricingOf,
 } from "../pricing/rate-card";
-import type { DeclineReason } from "./state-machine";
+import type { ClaimConflict, DeclineReason } from "./state-machine";
 
 // Whether a video can be licensed right now (07 §9.2, D110; owner answer Q-170): the video row lock every request that
 // creates, authorizes or extends a hold takes first, and the facts deriveAvailability reads. A display read needs no
@@ -144,22 +144,37 @@ export async function getLicenseAvailability(
   );
 }
 
+/** assertStillLicensable's answer: a refusal says why the request can't go on. */
+export type StillLicensable =
+  | { ok: true }
+  | {
+      ok: false;
+      reason: Extract<DeclineReason, "video_disabled" | "exclusive_conflict">;
+    };
+
 /**
- * Whether request `requestId` can still go on (T2, and extending its hold), under the video's lock, leaving itself out.
- * Offered is taken as true: turning the offer off never strands a request made while it was on (01 J12.13).
+ * Whether request `requestId` can still go on (T2, T4, extending its hold), under the video's lock, leaving itself out:
+ * its video disabled → video_disabled (owner answer Q-197 a; read with the request, under the lock), checked first; it
+ * no longer fits the video → exclusive_conflict (07 D111). Offered is taken as true: turning the offer off never strands
+ * a request made while it was on (01 J12.13).
  */
 export async function assertStillLicensable(
   tx: Tx,
   requestId: string,
-): Promise<{ ok: true } | { ok: false; reason: "exclusive_conflict" }> {
+): Promise<StillLicensable> {
   const [row] = await tx
     .select({
       videoId: licenseRequest.videoId,
       exclusive: licenseRequest.exclusive,
+      videoStatus: video.status,
     })
     .from(licenseRequest)
+    .innerJoin(video, eq(video.id, licenseRequest.videoId))
     .where(eq(licenseRequest.id, requestId));
   if (!row) throw new Error("assertStillLicensable: unknown request");
+  if (row.videoStatus === "disabled") {
+    return { ok: false, reason: "video_disabled" };
+  }
   const facts = await loadAvailabilityFacts(tx, row.videoId, {
     excludeRequestId: requestId,
   });
@@ -169,24 +184,27 @@ export async function assertStillLicensable(
 }
 
 /**
- * Whether waiting request `requestId` no longer fits its video (07 D111), read under the video's lock in a short
- * transaction of its own, as a decision needs it. False for an unknown request.
+ * Why waiting request `requestId` can't be approved now (assertStillLicensable's reason), read under the video's lock in
+ * a short transaction of its own, as a decision needs it; null when it can, as for an unknown request. `videoId`, when
+ * the caller has read it already, spares the read of the request's video.
  */
-export async function hasExclusiveConflict(
+export async function licensingConflict(
   requestId: string,
-): Promise<boolean> {
-  const videoId = await requestVideoId(db, requestId);
-  if (!videoId) return false;
+  videoId?: string,
+): Promise<ClaimConflict["conflict"] | null> {
+  const id = videoId ?? (await requestVideoId(db, requestId));
+  if (!id) return null;
   return db.transaction(async (tx) => {
-    await lockVideoForLicensing(tx, videoId);
-    return !(await assertStillLicensable(tx, requestId)).ok;
+    await lockVideoForLicensing(tx, id);
+    const check = await assertStillLicensable(tx, requestId);
+    return check.ok ? null : check.reason;
   });
 }
 
 /**
  * Why a decline claim on request `requestId` ended, when its finish doesn't say (07 D28, D111): the video's lock first,
- * then the video disabled → video_disabled; the request no longer fits the video → exclusive_conflict; else `fallback`,
- * the decline's own reason (creator unless known). Inside the finish's transaction, before the request's own lock.
+ * then assertStillLicensable's reason (video_disabled, else exclusive_conflict); else `fallback`, the decline's own
+ * reason (creator unless known). Inside the finish's transaction, before the request's own lock.
  */
 export async function declineReasonFor(
   tx: Tx,
@@ -195,9 +213,7 @@ export async function declineReasonFor(
 ): Promise<DeclineReason> {
   const videoId = await requestVideoId(tx, requestId);
   if (!videoId) throw new Error("declineReasonFor: unknown request");
-  const { status } = await lockVideoForLicensing(tx, videoId);
-  if (status === "disabled") return "video_disabled";
-  return (await assertStillLicensable(tx, requestId)).ok
-    ? fallback
-    : "exclusive_conflict";
+  await lockVideoForLicensing(tx, videoId);
+  const check = await assertStillLicensable(tx, requestId);
+  return check.ok ? fallback : check.reason;
 }

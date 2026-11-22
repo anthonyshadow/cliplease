@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, eq, inArray, ne, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, ne, or, type SQL, sql } from "drizzle-orm";
 import type { db } from "../../db/client";
 import { socialAccount, video, videoPosting } from "../../db/schema";
 import type { Ownership, PostingPlatform } from "../../lib/domain/values";
@@ -22,6 +22,23 @@ const VERIFIED_POSTING_INDEX = "video_posting_verified_uidx";
 export function postKey(platform: PostingPlatform, linkKey: string): string {
   return `${platform}:${linkKey}`;
 }
+
+/**
+ * Whether a posting holds its platform post for creator `creatorId` (07 D66, D72; owner answer Q-204): a verified one
+ * holds it for everyone; one a Disable released (unverified / released) holds it for its own creator only, while its
+ * video is still disabled, so that creator can't make the post licensable again (from the Library or on another of
+ * their videos) until an Enable; any other creator can verify it (07 D66). After Enable the released posting holds
+ * nothing, so its own Check again verifies it as before.
+ */
+export function holdsPostFor(creatorId: string): SQL {
+  return sql`(${videoPosting.verification} = 'verified' or (
+    ${videoPosting.creatorId} = ${creatorId} and ${videoPosting.unverifiedReason} = 'released'
+    and exists (select 1 from ${video} where ${video.id} = ${videoPosting.videoId} and ${video.status} = 'disabled')
+  ))`;
+}
+
+/** holdsPostFor's holders of one post in the order its creator sees them (Q-204): the verified one, then the newest. */
+export const HOLDERS_ORDER = sql`(${videoPosting.verification} = 'verified') desc, ${videoPosting.createdAt} desc`;
 
 /** The verified platform posts among `postings`, as `platform:link_key` strings. */
 export function verifiedKeys(
@@ -81,8 +98,9 @@ export type PostingTarget = {
 /**
  * The cross-creator rule for a pasted link (03 §7.4 "verified elsewhere", video_posting_verified_uidx; 07 D68), run
  * for every posting with a link key whether or not it would verify: verified on another creator's video →
- * AlreadyLicensableElsewhereError; on this creator's other video → AlreadyOnYourVideoError with that video's title.
- * Either carries the target's `index`. Held by this video, or by nobody: returns.
+ * AlreadyLicensableElsewhereError; held on this creator's other video (holdsPostFor: verified, or released on a video
+ * that is still disabled, owner answer Q-204) → AlreadyOnYourVideoError with that video's title. Either carries the
+ * target's `index`. Held by this video, or by nobody: returns.
  */
 export function assertPostingAvailable(
   exec: Pick<typeof db, "select">,
@@ -131,8 +149,11 @@ export async function lockConnectedAccounts(
 }
 
 /**
- * assertPostingAvailable for many targets with one read of their verified holders (the index allows one per platform
- * post), then the targets in order, the first refusal thrown. No targets: no read.
+ * assertPostingAvailable for many targets with one read of their holders (holdsPostFor the target's creator: at most one
+ * verified posting per platform post, by the index, and the creator's released ones on disabled videos), then the
+ * targets in order, the first refusal thrown: another creator's first; then, unless this video holds the post itself
+ * (verified: an editable video isn't disabled, so a Disable of another video doesn't take it back), the creator's other
+ * video, the verified one first (HOLDERS_ORDER). No targets: no read.
  */
 export async function assertPostingsAvailable(
   exec: Pick<typeof db, "select">,
@@ -150,29 +171,27 @@ export async function assertPostingsAvailable(
     .from(videoPosting)
     .innerJoin(video, eq(video.id, videoPosting.videoId))
     .where(
-      and(
-        eq(videoPosting.verification, "verified"),
-        or(
-          ...targets.map((target) =>
-            and(
-              eq(videoPosting.platform, target.platform),
-              eq(videoPosting.linkKey, target.linkKey),
-            ),
+      or(
+        ...targets.map((target) =>
+          and(
+            eq(videoPosting.platform, target.platform),
+            eq(videoPosting.linkKey, target.linkKey),
+            holdsPostFor(target.creatorId),
           ),
         ),
       ),
-    );
+    )
+    .orderBy(HOLDERS_ORDER);
   for (const target of targets) {
-    const holder = holders.find(
+    const held = holders.filter(
       (h) => h.platform === target.platform && h.linkKey === target.linkKey,
     );
-    if (!holder) continue;
-    if (holder.creatorId !== target.creatorId) {
+    if (held.some((h) => h.creatorId !== target.creatorId)) {
       throw new AlreadyLicensableElsewhereError(target.index);
     }
-    if (holder.videoId !== target.videoId) {
-      throw new AlreadyOnYourVideoError(holder.title, target.index);
-    }
+    if (held.some((h) => h.videoId === target.videoId)) continue;
+    const mine = held[0];
+    if (mine) throw new AlreadyOnYourVideoError(mine.title, target.index);
   }
 }
 

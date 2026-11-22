@@ -1,7 +1,7 @@
 "use client";
 
 import { AlertDialog } from "radix-ui";
-import { type MouseEvent, type ReactNode, useRef } from "react";
+import { type MouseEvent, type ReactNode, useEffect, useRef } from "react";
 import { Button, type ButtonLoadingProps } from "./button";
 import {
   CLOSE_BUTTON_CLASS,
@@ -27,10 +27,13 @@ export type ConfirmSheetProps = {
   title: ReactNode;
   /** Read before the buttons: linked by aria-describedby. Leave it out when the title says everything. */
   description?: ReactNode;
+  /** Above the description, outside it: a status Banner the sheet's state brings (the Disable sheet's still-open one). */
+  lead?: ReactNode;
   /** Where focus goes when the sheet closes; by default it returns to `trigger`. */
   onCloseAutoFocus?: (event: Event) => void;
   children?: ReactNode;
-  confirmLabel: string;
+  /** Left out when the sheet's state leaves only the safe action (the Disable sheet once only captures are left). */
+  confirmLabel?: string;
   confirmVariant?: "destructive" | "primary" | "secondary";
   onConfirm?: (event: MouseEvent<HTMLButtonElement>) => void;
   /** The safe action, e.g. "Keep license", "Not now". */
@@ -51,6 +54,7 @@ export function ConfirmSheet({
   onOpenChange,
   title,
   description,
+  lead,
   children,
   confirmLabel,
   confirmVariant = "destructive",
@@ -68,7 +72,12 @@ export function ConfirmSheet({
     confirmLoadingLabel === undefined
       ? {}
       : { loading: confirmLoading, loadingLabel: confirmLoadingLabel };
-  const confirm = (
+  const onlySafe = confirmLabel === undefined;
+  // A confirm that goes while the sheet is open takes the focus with it: it moves to the safe button, the one left.
+  useEffect(() => {
+    if (onlySafe) safeRef.current?.focus({ preventScroll: true });
+  }, [onlySafe]);
+  const confirm = onlySafe ? null : (
     <AlertDialog.Action asChild>
       <Button variant={confirmVariant} {...loading} onClick={onConfirm}>
         {confirmLabel}
@@ -114,6 +123,7 @@ export function ConfirmSheet({
             </AlertDialog.Cancel>
           </div>
           <div className={SHEET_BODY_CLASS}>
+            {lead ? <div className="mb-4">{lead}</div> : null}
             {description ? (
               <AlertDialog.Description className="text-body text-ink">
                 {description}

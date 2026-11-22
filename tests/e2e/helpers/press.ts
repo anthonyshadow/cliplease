@@ -67,6 +67,10 @@ export async function pressAndSettleIn(
 export const pressAndSettle = (page: Page, name: string) =>
   pressAndSettleIn(page, page, name);
 
+/** The polite toast saying `text`, as a press's outcome shows it. */
+export const toast = (page: Page, text: string) =>
+  page.locator("ol > li", { hasText: text });
+
 /** A bounded wait inside the page, for "nothing more happens" checks. */
 export const waitInPage = (page: Page, ms: number) =>
   page.evaluate(

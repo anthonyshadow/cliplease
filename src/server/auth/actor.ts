@@ -21,6 +21,7 @@ export type Actor =
     };
 
 export type CreatorActor = Extract<Actor, { kind: "creator" }>;
+export type AdminActor = Extract<Actor, { kind: "admin" }>;
 
 /** The system doing work a page load or a reconcile triggers, with no cron or webhook behind it. */
 export const LAZY: Actor = { kind: "system", source: "lazy" };
@@ -37,5 +38,17 @@ export const AUTO_APPROVE: Actor = { kind: "system", source: "auto_approve" };
 /** `a` as a creator actor; any other actor here is a programming error. */
 export function requireCreatorActor(a: Actor): CreatorActor {
   if (a.kind !== "creator") throw new Error("a creator actor is required");
+  return a;
+}
+
+/** The signed-in admin `user` (requireAdmin's) as the actor of what they do. */
+export const adminActor = (user: { id: string }): AdminActor => ({
+  kind: "admin",
+  userId: user.id,
+});
+
+/** `a` as an admin actor (adminActor built it); any other actor here is a programming error. */
+export function requireAdminActor(a: Actor): AdminActor {
+  if (a.kind !== "admin") throw new Error("an admin actor is required");
   return a;
 }

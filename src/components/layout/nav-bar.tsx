@@ -43,7 +43,7 @@ export type NavBarProps =
     }
   | {
       variant: "admin";
-      /** Rendered under the bar, not inside it: P21 puts the SegmentedControl tabs here. */
+      /** Rendered under the bar, not inside it. */
       below?: ReactNode;
     }
   | {

@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { VIDEO_DISABLED_REASONS } from "../domain/values";
 import {
   disabledLine,
   editRowLabel,
   PUBLISH_BLOCKERS,
   postingSummaryLine,
   publishBlockerRows,
+  VIDEO_DISABLED_REASON_LABELS,
 } from "./review";
 
 const ID = "00000000-0000-4000-8000-000000000002";
@@ -149,6 +151,17 @@ describe("postingSummaryLine (05 §6.5 callout 46)", () => {
         url,
       }),
     ).not.toContain(url);
+  });
+});
+
+describe("VIDEO_DISABLED_REASON_LABELS (05 §7 callout 6)", () => {
+  it("labels every reason", () => {
+    expect(Object.keys(VIDEO_DISABLED_REASON_LABELS).sort()).toEqual(
+      [...VIDEO_DISABLED_REASONS].sort(),
+    );
+    expect(
+      VIDEO_DISABLED_REASONS.map((r) => VIDEO_DISABLED_REASON_LABELS[r]),
+    ).toEqual(["Rights claim", "Prohibited content", "Other"]);
   });
 });
 

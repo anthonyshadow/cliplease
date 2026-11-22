@@ -8,7 +8,7 @@ import { refreshPayoutsStatus } from "../creators/profile";
 import { errorName, logEvent } from "../log";
 import { getAuthorization } from "../payments";
 import { approveLicenseRequest } from "./approve";
-import { hasExclusiveConflict } from "./availability";
+import { licensingConflict } from "./availability";
 import { runEffects } from "./effects";
 import { declineLicenseRequest } from "./requests";
 import {
@@ -19,12 +19,13 @@ import {
 
 // Auto-approve (07 D81; 03 T4, §7.10; research/stripe-owner-answers.md §5 option A): every Checkout still holds the card,
 // and once an auto_approve request is authorized its approval runs after the response, as the system actor through
-// Approve's own path (capture, license, license-approved, the creator transfer). Guards first (payouts active, the
-// original ready, a normal risk level); a guard that fails, or a retry still failing 10 minutes after authorization,
-// hands the request to the creator: auto_approve_fallback_at, request-new and an audit row in one transaction. Never a
-// payments call inside a transaction. requests.ts imports this file (markAuthorized schedules autoApproveRequest) and
-// this file imports approve.ts, which imports requests.ts: the licensing layer's one runtime cycle. Nothing here runs at
-// load but the constants, so it is safe; never import it dynamically.
+// Approve's own path (capture, license, license-approved, the creator transfer). A disabled video or a conflict first
+// (declined, never handed over), then the guards (payouts active, the original ready, a normal risk level); a guard
+// that fails, or a retry still failing 10 minutes after authorization, hands the request to the creator:
+// auto_approve_fallback_at, request-new and an audit row in one transaction. Never a payments call inside a
+// transaction. requests.ts imports this file (markAuthorized schedules autoApproveRequest) and this file imports
+// approve.ts, which imports requests.ts: the licensing layer's one runtime cycle. Nothing here runs at load but the
+// constants, so it is safe; never import it dynamically.
 
 /** A request still not approved this long after authorization falls back to the creator (07 §7.2). */
 export const AUTO_APPROVE_GIVE_UP_MINUTES = 10;
@@ -109,13 +110,16 @@ async function settle(
   try {
     const state = await autoState(requestId);
     if (!state?.eligible) return "skipped";
-    if (giveUpFirst && state.pastGiveUp) return await giveUp(requestId);
+    if (giveUpFirst && state.pastGiveUp)
+      return await giveUp(requestId, state.videoId);
     const outcome = await attempt(requestId, state).catch((error: unknown) => {
       logFailure(requestId, error);
       return "retry" as const;
     });
     if (outcome !== "retry") return outcome;
-    return (await pastGiveUpNow(requestId)) ? await giveUp(requestId) : "retry";
+    return (await pastGiveUpNow(requestId))
+      ? await giveUp(requestId, state.videoId)
+      : "retry";
   } catch (error) {
     logFailure(requestId, error);
     return "retry";
@@ -126,6 +130,7 @@ async function settle(
 async function autoState(requestId: string) {
   const [row] = await db
     .select({
+      videoId: licenseRequest.videoId,
       creatorId: licenseRequest.creatorId,
       currency: licenseRequest.currency,
       paymentIntentId: licenseRequest.stripePaymentIntentId,
@@ -151,13 +156,16 @@ async function pastGiveUpNow(requestId: string): Promise<boolean> {
 }
 
 /**
- * The guards, each outside any transaction, then Approve as the system actor. A hold no longer waiting for capture is
- * reconciled (captured elsewhere: finished; canceled: its ending) and skipped. Throws what a read throws.
+ * The guards, each outside any transaction, then Approve as the system actor. A request that can't be approved now (its
+ * video disabled, or it no longer fits the video) is declined before any guard, never handed over (owner answers Q-179,
+ * Q-197 a). A hold no longer waiting for capture is reconciled (captured elsewhere: finished; canceled: its ending) and
+ * skipped. Throws what a read throws.
  */
 async function attempt(
   requestId: string,
   state: AutoState,
 ): Promise<AutoApproveOutcome> {
+  if (await declinedForConflict(requestId, state.videoId)) return "skipped";
   const payouts = await refreshPayoutsStatus(state.creatorId, {
     debitsActor: AUTO_APPROVE,
   });
@@ -193,8 +201,9 @@ async function attempt(
     case "capture_failed":
     case "exclusive_conflict":
       // A held claim (an ok capture whose finish failed) is the stuck-claim reconcile's to finish; capture_failed is
-      // T7's ending, which emails nobody in CORE (07 D34). A conflict was declined, never handed over (07 D111): a
-      // decline whose cancel was released is retried, and giveUp declines it again.
+      // T7's ending, which emails nobody in CORE (07 D34). A conflict or a disabled video (not_actionable) was
+      // declined, never handed over (07 D111; owner answer Q-197 a): a decline whose cancel was released is retried,
+      // and the next attempt (or giveUp) declines it again.
       return "skipped";
     default: {
       const unknown: never = result.reason;
@@ -204,16 +213,31 @@ async function attempt(
 }
 
 /**
- * The 10 minutes are up (owner answer Q-154): the request falls back with gave_up, with no guard and no capture. Unless
- * it no longer fits its video (owner answer Q-179; 07 D111, a conflict is never a fallback): then it is declined as
- * auto-approve, a cancel that can only release the hold, and nothing is handed to the creator.
+ * The 10 minutes are up (owner answer Q-154): the request falls back with gave_up, with no guard and no capture, unless
+ * declinedForConflict declines it.
  */
-async function giveUp(requestId: string): Promise<AutoApproveOutcome> {
-  if (await hasExclusiveConflict(requestId)) {
-    await declineLicenseRequest(requestId, AUTO_APPROVE, "exclusive_conflict");
-    return "skipped";
-  }
+async function giveUp(
+  requestId: string,
+  videoId: string,
+): Promise<AutoApproveOutcome> {
+  if (await declinedForConflict(requestId, videoId)) return "skipped";
   return fallBack(requestId, "gave_up");
+}
+
+/**
+ * Whether the request was declined because its video was disabled (owner answer Q-197 a) or it no longer fits its video
+ * (owner answer Q-179; 07 D111): neither is ever a fallback, so it is declined as auto-approve with that reason, a cancel
+ * that can only release the hold, and nothing is handed to the creator. A decline whose cancel was released leaves the
+ * request waiting, so a later retry declines it again. Throws what licensingConflict throws.
+ */
+async function declinedForConflict(
+  requestId: string,
+  videoId: string,
+): Promise<boolean> {
+  const conflict = await licensingConflict(requestId, videoId);
+  if (!conflict) return false;
+  await declineLicenseRequest(requestId, AUTO_APPROVE, conflict);
+  return true;
 }
 
 /**

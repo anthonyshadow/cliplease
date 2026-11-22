@@ -271,8 +271,8 @@ export async function getVideoStepFacts(
   return row ? stepFactsOf(row) : null;
 }
 
-/** 03 §7.4's counts of a video: requests waiting for approval, and licenses sold. */
-const requestCounts = {
+/** 03 §7.4's counts of a video: requests waiting for approval (the admin's Waiting too), and licenses sold. */
+export const requestCounts = {
   pendingCount: db.$count(
     licenseRequest,
     and(

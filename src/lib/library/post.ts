@@ -36,7 +36,10 @@ export type LibraryPostDTO = {
   visibility: SocialPostVisibility | null;
   /** When a sync last saw the post: a recent sync rewrites the first page, so the grid starts over. */
   fetchedAt: string;
-  /** The creator's video holding a verified posting of this post (07 D72); unverified postings never count. */
+  /**
+   * The creator's video holding this post (07 D72): through a verified posting, or one a Disable released while that
+   * video is still disabled (owner answer Q-204); no other unverified posting counts.
+   */
   video: { id: string; status: VideoStatus } | null;
 };
 

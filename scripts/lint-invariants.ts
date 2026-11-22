@@ -58,7 +58,7 @@ const LOCKED_PATHS: Readonly<Record<string, readonly string[]>> = {
   "src/server/licensing/state-machine.ts": ["takeCaptureClaim"],
   "src/server/licensing/availability.ts": [
     "declineReasonFor",
-    "hasExclusiveConflict",
+    "licensingConflict",
   ],
 };
 

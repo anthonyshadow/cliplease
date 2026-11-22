@@ -31,6 +31,7 @@ import {
 import type { LibraryPostDTO } from "../../lib/library/post";
 import { isUuid } from "../../lib/validation/uuid";
 import { type Actor, requireCreatorActor } from "../auth/actor";
+import { HOLDERS_ORDER, holdsPostFor } from "../postings/ownership";
 import { deriveConnectionState } from "../social/connection-state";
 import {
   CONNECTIONS_ORDER,
@@ -80,6 +81,21 @@ export type AccountSummaryDTO = {
   stale: boolean;
 };
 
+/**
+ * What deriveConnectionState reads, with `now` on the database's clock, the one that set sync_blocked_until and
+ * sync_started_at (the admin's Accounts tab reads them too). A raw timestamptz comes back as text; mapWith reads it the
+ * way a timestamp column does.
+ */
+export const CONNECTION_STATE_COLUMNS = {
+  status: socialAccount.status,
+  lastSyncedAt: socialAccount.lastSyncedAt,
+  lastSyncError: socialAccount.lastSyncError,
+  lastSyncErrorAt: socialAccount.lastSyncErrorAt,
+  syncStartedAt: socialAccount.syncStartedAt,
+  syncBlockedUntil: socialAccount.syncBlockedUntil,
+  now: sql`now()`.mapWith((value: string) => new Date(value)),
+};
+
 /** The creator's linked accounts (not disconnected), in the UI's platform order, oldest connect first (03 §7.3). */
 export async function listAccountSummaries(
   a: Actor,
@@ -92,12 +108,7 @@ export async function listAccountSummaries(
       username: socialAccount.username,
       displayName: socialAccount.displayName,
       avatarUrl: socialAccount.avatarUrl,
-      status: socialAccount.status,
-      lastSyncedAt: socialAccount.lastSyncedAt,
-      lastSyncError: socialAccount.lastSyncError,
-      lastSyncErrorAt: socialAccount.lastSyncErrorAt,
-      syncStartedAt: socialAccount.syncStartedAt,
-      syncBlockedUntil: socialAccount.syncBlockedUntil,
+      ...CONNECTION_STATE_COLUMNS,
       hasOlder: socialAccount.hasOlder,
       accountType: socialAccount.accountType,
       connectedAt: socialAccount.connectedAt,
@@ -108,9 +119,6 @@ export async function listAccountSummaries(
           visiblePostsWhere(actor.creatorId),
         ),
       ),
-      // The database's clock, the one that set sync_blocked_until and sync_started_at. A raw timestamptz comes back
-      // as text; mapWith reads it the way a timestamp column does.
-      now: sql`now()`.mapWith((value: string) => new Date(value)),
     })
     .from(socialAccount)
     .where(
@@ -198,20 +206,23 @@ const POST_COLUMNS = {
   videoStatus: video.status,
 };
 
-/** Posts with their account and, through a VERIFIED posting only, their video (07 D72; video_posting_social_post_idx). */
-function selectPosts() {
+/**
+ * The creator's posts with their account and their video (07 D72; video_posting_social_post_idx): the one holding the
+ * post for them (holdsPostFor: a verified posting, or one a Disable released while its video is still disabled, owner
+ * answer Q-204), the verified one first. One at most, so each post is one row: a released posting can sit beside a
+ * verified one after an Enable and a new video.
+ */
+function selectPosts(creatorId: string) {
+  const heldVideoId = sql`(
+    select ${videoPosting.videoId} from ${videoPosting}
+    where ${videoPosting.socialPostId} = ${socialPost.id} and ${holdsPostFor(creatorId)}
+    order by ${HOLDERS_ORDER} limit 1
+  )`;
   return db
     .select(POST_COLUMNS)
     .from(socialPost)
     .innerJoin(socialAccount, eq(socialAccount.id, socialPost.socialAccountId))
-    .leftJoin(
-      videoPosting,
-      and(
-        eq(videoPosting.socialPostId, socialPost.id),
-        eq(videoPosting.verification, "verified"),
-      ),
-    )
-    .leftJoin(video, eq(video.id, videoPosting.videoId));
+    .leftJoin(video, eq(video.id, heldVideoId));
 }
 
 type PostRow = Awaited<ReturnType<typeof selectPosts>>[number];
@@ -271,7 +282,7 @@ export async function queryLibraryPage(
   const { creatorId } = requireCreatorActor(a);
   const cursor = f.cursor ? decodeLibraryCursor(f.cursor) : null;
   const pattern = f.q ? `%${escapeLike(f.q)}%` : null;
-  const rows = await selectPosts()
+  const rows = await selectPosts(creatorId)
     .where(
       and(
         visiblePostsWhere(creatorId),
@@ -380,7 +391,7 @@ export async function getLibraryPost(
 ): Promise<SourcePagePostDTO | null> {
   const { creatorId } = requireCreatorActor(a);
   if (!isUuid(postId)) return null;
-  const [row] = await selectPosts()
+  const [row] = await selectPosts(creatorId)
     .where(and(eq(socialPost.id, postId), visiblePostsWhere(creatorId)))
     .limit(1);
   return row

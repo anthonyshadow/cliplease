@@ -39,8 +39,8 @@ export const PUBLISHED_COPY = {
   backToLibrary: "Back to Library",
 } as const;
 
-/** The admin's reasons as 05's Disable select names them. */
-const VIDEO_DISABLED_REASON_LABEL = {
+/** The admin's reasons as 05 §7 callout 6's Disable select names them; the creator sees only the label. */
+export const VIDEO_DISABLED_REASON_LABELS = {
   rights_claim: "Rights claim",
   prohibited_content: "Prohibited content",
   other: "Other",
@@ -48,7 +48,7 @@ const VIDEO_DISABLED_REASON_LABEL = {
 
 /** "Disabled by ClipLease: Rights claim. Questions? {SUPPORT_EMAIL}" (P13's Review Banner). */
 export const disabledLine = (reason: VideoDisabledReason) =>
-  `Disabled by ${APP_NAME}: ${VIDEO_DISABLED_REASON_LABEL[reason]}. Questions? ${SUPPORT_EMAIL}`;
+  `Disabled by ${APP_NAME}: ${VIDEO_DISABLED_REASON_LABELS[reason]}. Questions? ${SUPPORT_EMAIL}`;
 
 /**
  * One posting in the Review summary (05 callout 46): "Demo · @demo.creator · Verified", "TikTok · Not verified" (a link

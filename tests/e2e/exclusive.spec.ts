@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { expect, type Page, test } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import { CHECKOUT_COPY } from "../../src/lib/licensing/checkout-copy";
 import { INBOX_COPY } from "../../src/lib/licensing/inbox";
 import { REQUEST_STATUS_COPY } from "../../src/lib/licensing/request-status";
@@ -24,6 +24,7 @@ import {
   pressAndSettle,
   pressAndSettleIn,
   pressLocator,
+  toast,
 } from "./helpers/press";
 import { cleanCreatedVideos } from "./helpers/videos";
 
@@ -48,10 +49,6 @@ const CHOICE = {
 const DATE = String.raw`\d{1,2} [A-Z][a-z]{2} \d{4}`;
 const LICENSE_CODE = /CL-[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}/;
 const NORTHWIND = "Northwind Brands Inc.";
-
-/** The polite toast saying `text`. */
-const toast = (page: Page, text: string) =>
-  page.locator("ol > li", { hasText: text });
 
 test("J12.7, J12.9–J12.12, J12.15: an exclusive license approved with one tap pays the premium, blocks the video with the date, names the licensee only to the creator, and emails the end in UTC", async ({
   page,

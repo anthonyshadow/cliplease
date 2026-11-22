@@ -23,15 +23,16 @@ const LIST_LIMIT = 50;
 
 /**
  * publicStatus (src/lib/licensing/public-status.ts) in SQL, on the database's clock: revoked wins over expired, and a
- * license is expired from the instant it ends. No `upcoming` until P22b adds it to both (07 D117).
+ * license is expired from the instant it ends. No `upcoming` until P22b adds it to both (07 D117). The admin's Licenses
+ * tab reads it too, so P22b changes one CASE.
  */
-const statusColumn = sql<RecordStatus>`case
+export const statusColumn = sql<RecordStatus>`case
   when ${license.revokedAt} <= now() then 'revoked'
   when ${license.endsAt} <= now() then 'expired'
   else 'valid' end`;
 
 /** Every download of either kind (J9.5: one row per tap), counted on download_event_license_created_idx. */
-const downloadsColumn = sql<number>`(select count(*)::int from ${downloadEvent} d where d.license_id = ${license}.id)`;
+export const downloadsColumn = sql<number>`(select count(*)::int from ${downloadEvent} d where d.license_id = ${license}.id)`;
 
 /** One row of the list: what the page prints, mapped field by field. */
 export type CreatorLicense = {

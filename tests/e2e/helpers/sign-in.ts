@@ -6,7 +6,11 @@ import {
   type TestInfo,
 } from "@playwright/test";
 import { signInPath } from "../../../src/lib/sign-in";
+import { DAY_MS } from "../../../src/lib/time";
 import { readSignInCode } from "../../helpers/read-latest-email";
+
+/** Better Auth's session read, which SessionRefresh calls once the sign-in's daily extension is due. */
+export const GET_SESSION_PATH = "/api/auth/get-session";
 
 /**
  * A run-unique address. Each test and project needs its own: only the newest code for an address works, so two tests
@@ -81,4 +85,18 @@ export function addStaleSessionCookie(
       url: baseURL,
     },
   ]);
+}
+
+/**
+ * Reloads `path` with the page's clock two days ahead, so the session's daily extension is due, and waits for
+ * SessionRefresh's answer from the auth route (waiting for the answer, not the request, so no later navigation cancels
+ * it). The server's clock and the cookie's lifetime are untouched. The page's clock stays installed: call it last.
+ */
+export async function expectRefreshWhenDue(page: Page, path: string) {
+  await page.clock.install({ time: Date.now() + 2 * DAY_MS });
+  const refreshed = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === GET_SESSION_PATH,
+  );
+  await page.goto(path);
+  expect((await refreshed).status()).toBe(200);
 }

@@ -546,6 +546,33 @@ describe("auto-approve and a conflict (07 D81, D111; owner answer Q-179)", () =>
     expect(calls()).toEqual([]);
   });
 
+  it.each([
+    ["payouts not active", "payouts"],
+    ["an elevated risk level", "risk"],
+  ] as const)(
+    "the conflict comes before the guards (%s): declined as auto_approve, never handed to the creator",
+    async (_, guard) => {
+      const { live } = await approvingCreatorWithVideo(
+        guard === "payouts"
+          ? { payoutsStatus: "restricted", payoutsStatusSyncedAt: new Date() }
+          : {},
+      );
+      if (guard === "risk") {
+        scripted.script({ getAuthorization: { riskLevel: "elevated" } });
+      }
+      const { row } = await autoWaitingRequest(live, 3);
+      await runningLicense(live, true);
+      const since = Date.now();
+      const calls = scripted.callsFromNow();
+      expect(await autoApproveRequest(row.id)).toBe("skipped");
+      // No guard ran: the decline's cancel is the only call (the risk guard would have read the authorization).
+      expect(calls()).toEqual(["cancel"]);
+      await expectConflictDeclined(row, { source: "auto_approve", since });
+      expect(await fallbacksOf(row.id)).toEqual([]);
+      expect(await emailTemplatesOf(row.id)).not.toContain("request-new");
+    },
+  );
+
   /** An auto request authorized `minutesAgo`, a running exclusive license, and the first run's decline released. */
   async function releasedConflict(minutesAgo: number) {
     const owner = await approvingCreatorWithVideo();
@@ -710,16 +737,20 @@ describe("a conflict decline Stripe doesn't confirm at once (07 D25, D28)", () =
 });
 
 describe("who may decline for a conflict, and which rows are re-checked (07 D28, D111)", () => {
-  it("refuses the system with another reason and the creator with exclusive_conflict: nothing changes, Stripe isn't asked", async () => {
+  it("refuses the system with the creator's reason, the creator with a system's and an admin with exclusive_conflict: nothing changes, Stripe isn't asked", async () => {
     const owner = await offeringVideo();
     const row = await paid(owner);
     await flushAfter();
     const before = await requestRow(row.id);
     const calls = scripted.callsFromNow();
+    // The system may also decline as video_disabled (owner answer Q-197 a), and an admin only as that (P21).
+    const admin: Actor = { kind: "admin", userId: owner.creator.userId };
     for (const [actor, reason] of [
       [LAZY, "creator"],
-      [AUTO_APPROVE, "video_disabled"],
+      [AUTO_APPROVE, "creator"],
       [owner.actor, "exclusive_conflict"],
+      [owner.actor, "video_disabled"],
+      [admin, "exclusive_conflict"],
     ] as const) {
       expect(await declineLicenseRequest(row.id, actor, reason)).toEqual(
         NOT_ACTIONABLE,

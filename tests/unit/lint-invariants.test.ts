@@ -307,9 +307,7 @@ describe("video-lock (07 D110, D111)", () => {
       }`;
     expect(violationsIn(file, text)).toEqual([
       expect.stringMatching(/:2: video-lock: declineReasonFor must take/),
-      expect.stringMatching(
-        /: video-lock: hasExclusiveConflict is a locked path/,
-      ),
+      expect.stringMatching(/: video-lock: licensingConflict is a locked path/),
     ]);
     const capture = `
       async function takeCaptureClaim(requestId) {

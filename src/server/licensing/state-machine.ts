@@ -26,6 +26,7 @@ import {
   declineReasonFor,
   lockVideoForLicensing,
   requestVideoId,
+  type StillLicensable,
 } from "./availability";
 import { afterResponse, runEffects } from "./effects";
 import { issueLicense } from "./issue";
@@ -290,8 +291,13 @@ export type ClaimedRequest = LicenseRequest & {
   paymentActionAt: Date;
 };
 
-/** A capture claim refused under the video's lock (07 D111): the video can't take this request now. Nothing was written. */
-export type ClaimConflict = { conflict: "exclusive_conflict" };
+/**
+ * A capture claim refused under the video's lock: an admin disabled the video (owner answer Q-197 a), or it can't take
+ * this request now (07 D111). Nothing was written; the request is declined with the conflict as its reason.
+ */
+export type ClaimConflict = {
+  conflict: Extract<StillLicensable, { ok: false }>["reason"];
+};
 
 /** A claim older than this is stuck: its holder died between the claim and the finish (07 D26). */
 export const STUCK_CLAIM_MINUTES = 2;
@@ -344,7 +350,8 @@ const sameClaim = (a: PaymentClaim, b: PaymentClaim | undefined | null) =>
  * Claims waiting request `requestId` for `action` before any Stripe call (03 §5.1): sets the claim and stripe_attempt +
  * 1, only while nobody holds it and within the action's time (capture before the deadline, expire at or after it). A
  * decline or expiry is one conditional UPDATE … RETURNING. A capture (03 T4; 07 D111) runs in one short transaction:
- * the video's lock first, then the request's row, then assertStillLicensable: a conflict returns `{ conflict }` and
+ * the video's lock first, then the request's row, then assertStillLicensable (a disabled video, owner answer Q-197 a;
+ * an unpublished one stays approvable, 01 J5.20; then the video's fit): a conflict returns `{ conflict }` and
  * writes nothing; only a row the claim could take is checked. A refused claim reconciles a stuck one (07 D26) and tries
  * once more. Null when refused. `autoApproveOnly`: the auto-approve system actor's capture also needs an auto_approve
  * request that hasn't fallen back (03 T4; 07 D81): a fallback committed after its read wins, and the fallback needs no
@@ -402,9 +409,10 @@ function takeClaim(
 }
 
 /**
- * T4's claim (03 §5.1; 07 D110, D111): the video's lock, the request's row FOR UPDATE, then the re-check, in one short
- * transaction with no Stripe call. The video id never changes, so it is read before the transaction: the lock is its
- * first statement.
+ * T4's claim (03 §5.1; 07 D110, D111): the video's lock, the request's row FOR UPDATE, then the re-check (the video's
+ * status, then its fit), in one short transaction with no Stripe call. The video id never changes, so it is read before
+ * the transaction: the lock is its first statement. Disable takes the same lock (adminSetVideoDisabled), so a claim
+ * either commits before the video is disabled or sees it disabled.
  */
 async function takeCaptureClaim(
   requestId: string,
@@ -425,9 +433,8 @@ async function takeCaptureClaim(
       )
       .for("update");
     if (!open) return null;
-    if (!(await assertStillLicensable(tx, requestId)).ok) {
-      return { conflict: "exclusive_conflict" } as const;
-    }
+    const check = await assertStillLicensable(tx, requestId);
+    if (!check.ok) return { conflict: check.reason };
     return writeClaim(tx, requestId, "capture", autoApproveOnly);
   });
 }

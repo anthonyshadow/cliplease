@@ -594,21 +594,29 @@ export async function reconcileCheckoutReturn(
 }
 
 /**
- * Who may decline, and why (07 D28, D111; 03 T8): the request's creator, as `creator`; the system, only as
- * `exclusive_conflict` (Approve's re-check found the video taken). P21 adds the admin with `video_disabled`.
+ * Who may decline, and why (07 D28, D111; 03 T8; owner answer Q-197 a): the request's creator, as `creator`; the
+ * system, as `exclusive_conflict` (Approve's re-check found the video taken) or `video_disabled` (the capture claim found
+ * it disabled); an admin, only as `video_disabled` (Disable's sweep). Any other actor never declines.
  */
-type DeclineScope = { creatorId: string } | { system: true };
+const DECLINE_REASONS_BY_ACTOR: Partial<
+  Record<Actor["kind"], readonly DeclineReason[]>
+> = {
+  creator: ["creator"],
+  system: ["exclusive_conflict", "video_disabled"],
+  admin: ["video_disabled"],
+};
+
+/** The requests a decline may reach: the creator's own, or (the system's and an admin's) any creator's. */
+type DeclineScope = { creatorId: string } | { anyCreator: true };
 
 function declineScope(
   actor: Actor,
   reason: DeclineReason,
 ): DeclineScope | null {
-  if (actor.kind === "creator") {
-    return reason === "creator" ? { creatorId: actor.creatorId } : null;
-  }
-  return actor.kind === "system" && reason === "exclusive_conflict"
-    ? { system: true }
-    : null;
+  if (!DECLINE_REASONS_BY_ACTOR[actor.kind]?.includes(reason)) return null;
+  return actor.kind === "creator"
+    ? { creatorId: actor.creatorId }
+    : { anyCreator: true };
 }
 
 /** Decline's view of a request in `scope`: null when it is out of it. */
@@ -658,9 +666,10 @@ const notActionable = (s: DeclineState): DeclineResult => ({
  * (requested_by_customer, `pi-cancel:<id>:decline:<attempt>`) outside any transaction, the fenced finish, or Stripe's
  * word when the cancel isn't ok. ok only once the request is stored declined: a released claim says retry, a claim
  * still held reads Processing…, and a late capture that won reports approved. `reason` is the server's (declineScope):
- * the creator's own, or the system's exclusive_conflict, which Stripe's word keeps (reconcileFromStripe's
- * declineReason). A creator waits while the request's automatic approval may still run (07 D81: the pages show it
- * Processing…, with no buttons): not_actionable, until it falls back.
+ * the creator's own, the system's exclusive_conflict or video_disabled, or the admin's video_disabled, which Stripe's
+ * word keeps (reconcileFromStripe's declineReason). A creator waits while the request's automatic approval may still
+ * run (07 D81: the pages show it Processing…, with no buttons): not_actionable, until it falls back. The system and an
+ * admin never wait: their decline is the request's ending whoever would approve it (07 D28).
  */
 export async function declineLicenseRequest(
   requestId: string,

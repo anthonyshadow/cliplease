@@ -1,24 +1,23 @@
 import { expect, type Page, test } from "@playwright/test";
 import { OTP_RESEND_DELAY_MS } from "../../src/lib/sign-in";
-import { DAY_MS } from "../../src/lib/time";
 import { readSignInCode, wrongCode } from "../helpers/read-latest-email";
 import { collectConsoleErrors } from "./helpers/console";
-import { atEveryWidth, expectPageFrame } from "./helpers/layout";
 import {
   addStaleSessionCookie,
-  e2eAdminEmail,
+  expectRefreshWhenDue,
+  GET_SESSION_PATH,
   requestCode,
   signInWithEmail,
   uniqueEmail,
 } from "./helpers/sign-in";
 
-// P04: /sign-in (S10), the route gates and the admin bootstrap, on both projects. Every test signs in its own address.
+// P04: /sign-in (S10) and the route gates, on both projects. Every test signs in its own address; none signs in an e2e
+// admin: the admin's sign-in, with P04's /admin checks, is admin.spec.ts's one admin test per project (P21, 07 D154).
 const BAD_CODE = "That code didn't work. Check it or send a new one.";
 const TOO_MANY = "Too many tries. Wait a minute and try again.";
 const SIGNED_OUT = "You've been signed out. Sign in again to continue.";
 const VERIFY_PATH = "/api/auth/sign-in/email-otp";
 const SEND_PATH = "/api/auth/email-otp/send-verification-otp";
-const GET_SESSION_PATH = "/api/auth/get-session";
 
 /** The visually hidden alert that announces a field error (focus may already be in the field). */
 const announced = (page: Page, text: string) =>
@@ -31,20 +30,6 @@ function countRequests(page: Page, pathname: string) {
     if (new URL(request.url()).pathname === pathname) seen.count += 1;
   });
   return seen;
-}
-
-/**
- * Reloads `path` with the page's clock two days ahead, so the session's daily extension is due, and waits for
- * SessionRefresh's answer from the auth route (waiting for the answer, not the request, so no later navigation cancels
- * it). The server's clock and the cookie's lifetime are untouched.
- */
-async function expectRefreshWhenDue(page: Page, path: string) {
-  await page.clock.install({ time: Date.now() + 2 * DAY_MS });
-  const refreshed = page.waitForResponse(
-    (response) => new URL(response.url()).pathname === GET_SESSION_PATH,
-  );
-  await page.goto(path);
-  expect((await refreshed).status()).toBe(200);
 }
 
 test.describe("signed out", () => {
@@ -284,35 +269,6 @@ test.describe("signed in", () => {
     await page.goto("/dashboard");
     await expect(page).toHaveURL("/sign-in?next=%2Fdashboard");
     await expect(page.getByText(SIGNED_OUT)).toHaveCount(0);
-    expect(errors).toEqual([]);
-  });
-
-  test("an ADMIN_EMAILS address opens the /admin placeholder", async ({
-    page,
-  }, testInfo) => {
-    const admin = e2eAdminEmail(testInfo);
-    if (admin === null) {
-      test.skip(
-        true,
-        "admin sign-in runs on chromium-desktop and webkit-iphone only (07 D88, D154)",
-      );
-      return;
-    }
-    const errors = collectConsoleErrors(page);
-    await signInWithEmail(page, admin, "/admin");
-    await expect(page).toHaveURL("/admin");
-    await expect(page).toHaveTitle("Admin · ClipLease");
-    await expect(
-      page.getByRole("heading", { level: 1, name: "Admin" }),
-    ).toBeAttached();
-    await expect(page.getByRole("banner")).toContainText("Admin");
-    // The admin shell fits every tier (07 D154). The sweep lives in this test because a second test signing in the same
-    // e2e admin would replace this one's code: only the newest code works.
-    await atEveryWidth(page, testInfo, async ({ width }) => {
-      await expectPageFrame(page, width, { banner: true });
-    });
-    // The admin shell keeps the sign-in alive too.
-    await expectRefreshWhenDue(page, "/admin");
     expect(errors).toEqual([]);
   });
 
