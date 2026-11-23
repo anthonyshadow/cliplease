@@ -61,6 +61,8 @@ export type CreatorRequest = RequestFacts & {
   transferStatus: MoneyMovementStatus | null;
   transferAmountCents: number | null;
   transferCurrency: Currency | null;
+  /** A revoke took that transfer back (07 D86): its take-back succeeded, for "Taken back". */
+  takenBack: boolean;
   /** Set once auto-approve fell back: the row's fallback line (07 D81). ISO 8601; null otherwise. */
   autoApproveFallbackAt: string | null;
   /** Approved by auto-approve: approved, auto_approve, no fallback (05 §6.3 callout 12). */

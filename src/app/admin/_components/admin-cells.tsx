@@ -6,6 +6,7 @@ import type { AdminStatusCell } from "@/lib/admin/labels";
 import { formatLicenseDate } from "@/lib/format";
 import { INBOX_COPY } from "@/lib/licensing/inbox";
 import { cn } from "@/lib/utils";
+import { focusAnchor } from "./focus-anchor";
 
 // The admin tables' shared cells and frame (05 §7; design/P21-admin-view.md §4.8, §4.10, §6): server-rendered, so each
 // cell renders once in the stacked rows and once in the table and carries no id.
@@ -63,6 +64,30 @@ export function IdValue({ id }: { id: string }) {
       className="text-footnote lg:inline-block lg:max-w-28 lg:truncate lg:align-bottom"
     >
       {id}
+    </span>
+  );
+}
+
+/**
+ * A license code on one line with its code tracking, "CL-7K3M-9QXA". `anchor`: the row's own code (the Licenses tab),
+ * in semibold and the row's focus anchor, where the focus lands when the row's action leaves it.
+ */
+export function LicenseCode({
+  code,
+  anchor = false,
+}: {
+  code: string;
+  anchor?: boolean;
+}) {
+  return (
+    <span
+      {...(anchor ? focusAnchor("row") : {})}
+      className={cn(
+        "whitespace-nowrap tracking-code tabular-nums",
+        anchor && "font-semibold outline-none",
+      )}
+    >
+      {code}
     </span>
   );
 }

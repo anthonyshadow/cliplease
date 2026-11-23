@@ -4,6 +4,7 @@ import { db } from "@/db/client";
 import { license, licenseRequest } from "@/db/schema";
 import type { License, LicenseRequest } from "@/db/schema/types";
 import { LicenseSnapshotV1Schema } from "@/lib/licensing/snapshot";
+import { movementSucceeded } from "./licenses";
 
 // A buyer's license as /l, My licenses, their download routes and the license PDF read it (03 §7.6): one column list
 // and one snapshot check for the buyer link (findLicenseForBuyer, by the key's hash) and the session (getBuyerLicense,
@@ -39,12 +40,14 @@ export type BuyerLicense = {
     | "currency"
     | "buyerEmail"
   >;
+  /** The revoke's buyer_refund succeeded (03 §7.6; 07 D86): its words only, never an id or amount. */
+  refunded: boolean;
 };
 
 /**
  * The license of the approved request that every condition in `match` picks (at least one, a unique column of
- * license_request or license among them), or null when there is none: a request that isn't approved never opens one. 03 §7.6's renewal
- * plan and refund columns come with P22b and P21b.
+ * license_request or license among them), with whether its buyer was refunded, or null when there is none: a request
+ * that isn't approved never opens one. 03 §7.6's renewal plan columns come with P22b.
  */
 export async function readBuyerLicense(
   ...match: [SQL, ...SQL[]]
@@ -72,11 +75,16 @@ export async function readBuyerLicense(
         currency: licenseRequest.currency,
         buyerEmail: licenseRequest.buyerEmail,
       },
+      refunded: movementSucceeded("buyer_refund"),
     })
     .from(licenseRequest)
     .innerJoin(license, eq(license.licenseRequestId, licenseRequest.id))
     .where(and(...match, eq(licenseRequest.status, "approved")));
   if (!row) return null;
   const snapshot = LicenseSnapshotV1Schema.parse(row.license.snapshot);
-  return { license: { ...row.license, snapshot }, request: row.request };
+  return {
+    license: { ...row.license, snapshot },
+    request: row.request,
+    refunded: row.refunded,
+  };
 }

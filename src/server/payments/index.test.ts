@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cancel, capture, transfer } from "./index";
+import { cancel, capture, refund, reverseTransfer, transfer } from "./index";
 import { CurrencyNotEnabledError, paymentsDriver } from "./registry";
 
 const ID = "6f4c8d7e-1a2b-4c3d-8e9f-0a1b2c3d4e5f";
@@ -71,6 +71,46 @@ describe("payments wrappers (02 §5.8, 07 D95)", () => {
     );
   });
 
+  it("refunds and takes back on the currency's driver under the claim's keys, and a thrown call is a transient failure (07 D86)", async () => {
+    const driver = paymentsDriver("cad");
+    const refunds = vi.spyOn(driver, "refund").mockResolvedValue({
+      ok: true,
+      refundId: `re_fake_${ID}`,
+      status: "succeeded",
+    });
+    await expect(refund("cad", ID, PI, 1)).resolves.toEqual({
+      ok: true,
+      refundId: `re_fake_${ID}`,
+      status: "succeeded",
+    });
+    expect(refunds).toHaveBeenCalledWith({
+      requestId: ID,
+      paymentIntentId: PI,
+      idempotencyKey: `refund:${ID}:1`,
+    });
+    const reversals = vi
+      .spyOn(driver, "reverseTransfer")
+      .mockResolvedValue({ ok: true, reversalId: `trr_fake_${ID}` });
+    await expect(
+      reverseTransfer("cad", ID, `tr_fake_${ID}`, 2),
+    ).resolves.toEqual({ ok: true, reversalId: `trr_fake_${ID}` });
+    expect(reversals).toHaveBeenCalledWith({
+      requestId: ID,
+      transferId: `tr_fake_${ID}`,
+      idempotencyKey: `transfer-reversal:${ID}:2`,
+    });
+    refunds.mockRejectedValue(new TypeError("x"));
+    reversals.mockRejectedValue(new RangeError("y"));
+    await expect(refund("cad", ID, PI, 2)).resolves.toEqual({
+      ok: false,
+      kind: "transient",
+      code: "TypeError",
+    });
+    await expect(
+      reverseTransfer("cad", ID, `tr_fake_${ID}`, 3),
+    ).resolves.toEqual({ ok: false, kind: "transient", code: "RangeError" });
+  });
+
   it("still throws for a currency that isn't enabled: a configuration error, not a Stripe one", async () => {
     await expect(capture("usd", ID, PI, 1)).rejects.toBeInstanceOf(
       CurrencyNotEnabledError,
@@ -80,6 +120,12 @@ describe("payments wrappers (02 §5.8, 07 D95)", () => {
     );
     await expect(
       transfer("usd", ID, `ch_fake_${ID}`, "acct_fake_x", 157500, 1),
+    ).rejects.toBeInstanceOf(CurrencyNotEnabledError);
+    await expect(refund("usd", ID, PI, 1)).rejects.toBeInstanceOf(
+      CurrencyNotEnabledError,
+    );
+    await expect(
+      reverseTransfer("usd", ID, `tr_fake_${ID}`, 1),
     ).rejects.toBeInstanceOf(CurrencyNotEnabledError);
   });
 });

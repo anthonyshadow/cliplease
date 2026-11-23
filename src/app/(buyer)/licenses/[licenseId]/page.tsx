@@ -66,7 +66,7 @@ export default async function MyLicensePage({
   const user = await requireUser(myLicensePath(licenseId));
   const found = await buyerLicense(user, licenseId);
   if (!found) notFound();
-  const { license, request, status } = found;
+  const { license, request, refunded, status } = found;
   const { snapshot } = license;
   const pill = licenseStatusPill(status);
   const query = await searchParams;
@@ -100,6 +100,11 @@ export default async function MyLicensePage({
       <LicenseFiles
         status={status}
         revokedAt={license.revokedAt}
+        refund={{
+          refunded,
+          totalCents: request.amountTotalCents,
+          currency: request.currency,
+        }}
         original={{
           href: myLicenseDownloadPath(license.id, "original"),
           type: originalExtension(license.originalMime).toUpperCase(),

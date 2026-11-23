@@ -51,7 +51,7 @@ export default async function LicenseDeliveryPage({
   const { token } = await params;
   const found = await buyerLicense(token);
   if (!found) notFound();
-  const { license, request } = found;
+  const { license, request, refunded } = found;
   const now = new Date();
   const status = recordStatus(license, now);
   const query = await searchParams;
@@ -60,6 +60,7 @@ export default async function LicenseDeliveryPage({
       snapshot={license.snapshot}
       status={status}
       revokedAt={license.revokedAt}
+      refunded={refunded}
       original={{
         type: originalExtension(license.originalMime).toUpperCase(),
         bytes: license.originalBytes,

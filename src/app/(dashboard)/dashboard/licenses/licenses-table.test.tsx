@@ -17,10 +17,12 @@ const VALID: CreatorLicense = {
   issuedAt: "2026-10-15T14:32:00.000Z",
   licensePriceCents: 157500,
   currency: "cad",
+  refunded: false,
   payout: {
     transferStatus: "succeeded",
     transferAmountCents: 157500,
     transferCurrency: "cad",
+    takenBack: false,
   },
   downloads: 2,
 };
@@ -38,6 +40,7 @@ const EXCLUSIVE_EXPIRED: CreatorLicense = {
     transferStatus: "pending",
     transferAmountCents: 472500,
     transferCurrency: "cad",
+    takenBack: false,
   },
   downloads: 1,
 };
@@ -56,8 +59,19 @@ const REVOKED: CreatorLicense = {
     transferStatus: null,
     transferAmountCents: null,
     transferCurrency: null,
+    takenBack: false,
   },
   downloads: 0,
+};
+
+/** Revoked with the refund and the take-back done (07 D86, D99). */
+const REFUNDED: CreatorLicense = {
+  ...VALID,
+  id: "4c3d2e1f-0a9b-4c8d-9e7f-6a5b4c3d2e1f",
+  code: "CL-9P2D-6HNC",
+  status: "revoked",
+  refunded: true,
+  payout: { ...VALID.payout, takenBack: true },
 };
 
 function renderTable() {
@@ -104,6 +118,35 @@ describe("LicensesTable (S22; 05 §6.10; owner answer Q-186)", () => {
     const { rows } = renderTable();
     const pill = within(cellsOf(rows[row])[6]).getByText(label);
     expect(pill.className).toContain(token);
+  });
+
+  it.each([
+    [true, "Revoked · refunded"],
+    [false, "Revoked"],
+  ] as const)(
+    "a revoked license whose buyer was refunded (%s) reads %s in danger (01 J9.8)",
+    (refunded, label) => {
+      const { container } = render(
+        <LicensesTable licenses={[{ ...REFUNDED, refunded }]} />,
+      );
+      const wide = container.querySelector("[data-table-wide]") as HTMLElement;
+      const [row] = within(wide).getAllByRole("row").slice(1);
+      const pill = within(cellsOf(row as HTMLElement)[6]).getByText(label, {
+        exact: true,
+      });
+      expect(pill.className).toContain("bg-danger-tint");
+    },
+  );
+
+  it("reads Taken back in place of Paid out once a revoke took the payout back (Q-209)", () => {
+    const { container } = render(<LicensesTable licenses={[REFUNDED]} />);
+    const wide = container.querySelector("[data-table-wide]") as HTMLElement;
+    const [row] = within(wide).getAllByRole("row").slice(1);
+    const youGot = cellsOf(row as HTMLElement)[5];
+    expect(youGot?.textContent).toBe("CA$1,575.00Taken back");
+    expect(
+      within(youGot as HTMLElement).getByText("Taken back").className,
+    ).toContain("text-ink-2");
   });
 
   it("puts «Exclusive» beside an exclusive license's status, and on no other row", () => {

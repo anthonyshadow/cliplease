@@ -34,6 +34,9 @@ export function recordStatus(
   return status;
 }
 
+/** The buyer's line in place of a revoked license's downloads (owner answer Q-186). */
+const revokedOn = (date: string) => `Revoked on ${date}.`;
+
 /** The record's words (owner answers Q-184–Q-186; 04 §10.2, §11.4; 05 §4.4, §4.5, §6.10, §9; research/license.md §6.4). */
 export const LICENSE_RECORD_COPY = {
   status: { valid: "Valid", expired: "Expired", revoked: "Revoked" },
@@ -83,8 +86,11 @@ export const LICENSE_RECORD_COPY = {
         `Receipt sent to ${maskedEmail}.`,
         "Questions? Reply to the license email.",
       ),
-    revokedOn: (date: string) => `Revoked on ${date}.`,
-    /** Q-186; P21b adds the refund line. */
+    revokedOn,
+    /** In place of revokedOn once the buyer's refund succeeded (01 J9.6; owner answer Q-209). */
+    revokedRefunded: (date: string, total: string) =>
+      `${revokedOn(date)} You were refunded ${total}.`,
+    /** Q-186: under the revoked line. */
     revoked: `This license no longer allows any use of this video. Questions? ${SUPPORT_EMAIL}`,
   },
   /** /verify (S05; research/license.md §6.4 with CL- codes, 07 D101, D113; owner answers Q-184, Q-186). */
@@ -145,6 +151,8 @@ export const LICENSE_RECORD_COPY = {
       publicRecord: "Public record",
     },
     viewPublicRecord: "View public record",
+    /** The status pill of a revoked license whose buyer was refunded (01 J9.8; 04 §9.9). */
+    revokedRefunded: "Revoked · refunded",
   },
   /** /licenses and /licenses/[licenseId] (S24, S25; P20b): a leaf module, for the client files that print it. */
   myLicenses: MY_LICENSES_COPY,

@@ -76,17 +76,16 @@ export const VIDEO_COLUMNS: readonly DataColumn<AdminVideoRow>[] = [
   {
     header: COLUMN.action,
     action: true,
+    align: "end",
     cell: (v) => (
-      <div className="lg:flex lg:justify-end">
-        <VideoRowAction
-          video={{
-            id: v.id,
-            title: v.title,
-            status: v.status,
-            waitingCount: v.waitingCount,
-          }}
-        />
-      </div>
+      <VideoRowAction
+        video={{
+          id: v.id,
+          title: v.title,
+          status: v.status,
+          waitingCount: v.waitingCount,
+        }}
+      />
     ),
   },
 ];

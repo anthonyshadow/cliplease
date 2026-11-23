@@ -1,20 +1,29 @@
-import { formatLicenseDate } from "@/lib/format";
+import type { Currency } from "@/lib/domain/values";
 import {
   LICENSE_RECORD_COPY,
   type RecordStatus,
 } from "@/lib/licensing/license-record";
+import { revokedBuyerLine } from "@/lib/licensing/revoke-display";
 import { LicenseDownloads } from "./license-downloads";
 
 const COPY = LICENSE_RECORD_COPY.buyer;
 
+/** What a revoked license's line says of the refund (01 J9.6): whether its buyer_refund succeeded, the request's total. */
+export type BuyerRefund = {
+  refunded: boolean;
+  totalCents: number;
+  currency: Currency;
+};
+
 /**
  * A license's files on /l and /licenses/[licenseId] (04 §10.2 item 6, §9.37; 05 §4.4, §4.10; 07 D16): LicenseDownloads
- * while valid or expired, through the page's own routes; for a revoked license why there are none, instead of both.
- * `failed`: a route sent the buyer back with `?download=failed` (owner answer Q-185).
+ * while valid or expired, through the page's own routes; for a revoked license why there are none, instead of both,
+ * with the refund once it succeeded. `failed`: a route sent the buyer back with `?download=failed` (owner answer Q-185).
  */
 export function LicenseFiles({
   status,
   revokedAt,
+  refund,
   original,
   pdfHref,
   failed,
@@ -22,13 +31,14 @@ export function LicenseFiles({
   status: RecordStatus;
   /** license.revoked_at. */
   revokedAt: Date | null;
+  refund: BuyerRefund;
   /** The original's route, its type as the label names it ("MP4") and its size. */
   original: { href: string; type: string; bytes: number };
   pdfHref: string;
   failed: boolean;
 }) {
   return status === "revoked" ? (
-    <RevokedMessage revokedAt={revokedAt} />
+    <RevokedMessage revokedAt={revokedAt} refund={refund} />
   ) : (
     <LicenseDownloads
       status={status}
@@ -39,14 +49,23 @@ export function LicenseFiles({
   );
 }
 
-/** 05 §4.4 callout 12 (owner answer Q-186): what replaces both downloads; the date in UTC (07 D84), never the reason. */
-function RevokedMessage({ revokedAt }: { revokedAt: Date | null }) {
+/**
+ * 05 §4.4 callout 12 (owner answers Q-186, Q-209): what replaces both downloads; the date in UTC (07 D84) and, once the
+ * refund succeeded, the total refunded (J9.6), never the reason.
+ */
+function RevokedMessage({
+  revokedAt,
+  refund,
+}: {
+  revokedAt: Date | null;
+  refund: BuyerRefund;
+}) {
   if (!revokedAt)
     throw new Error("LicenseFiles: a revoked license has its revoked_at");
   return (
     <div className="flex flex-col gap-1">
       <p className="text-body text-ink">
-        {COPY.revokedOn(formatLicenseDate(revokedAt))}
+        {revokedBuyerLine({ revokedAt, ...refund })}
       </p>
       <p className="text-callout text-ink-2">{COPY.revoked}</p>
     </div>

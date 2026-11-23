@@ -193,6 +193,7 @@ describe("Approve pays the creator, on the fake driver (07 D74, D75; 01 J4.7)", 
         transferId: sent,
         amountCents: PRICE,
         amountReversedCents: 0,
+        reversalId: null,
         destinationAccountId: s.account,
       },
     ]);

@@ -1,17 +1,17 @@
 import "server-only";
 import { and, eq } from "drizzle-orm";
-import type { Tx } from "@/db/client";
+import { db, type Tx } from "@/db/client";
 import {
   creatorProfile,
   license,
   licenseRequest,
-  moneyMovement,
   socialPost,
   video,
   videoPosting,
 } from "@/db/schema";
 import {
   isOneOf,
+  type RevokedReason,
   TERM_KEYS,
   TERRITORY_KEYS,
   USE_KEYS,
@@ -26,20 +26,47 @@ import {
   LicenseSnapshotV1Schema,
   type SnapshotPosting,
 } from "@/lib/licensing/snapshot";
+import { isUuid } from "@/lib/validation/uuid";
 import { writeAudit } from "../audit";
-import type { Actor } from "../auth/actor";
+import { type Actor, type AdminActor, requireAdminActor } from "../auth/actor";
 import { generateLicenseCode } from "../codes/license-code";
+import { afterResponse } from "./effects";
+import {
+  cancelUnsentTransfer,
+  insertMovement,
+  refundRevokedLicense,
+} from "./money";
 
 // Issuing a license (02 §5.7; 03 §3.7.2, T5; 07 D33, D71): inside the caller's transaction, which has already fenced the
 // request. It reads no status and decides nothing from one, so any finish that has made the request approved, before or
 // after this call, can use it. The license copies the original's key (DB13) and carries the immutable snapshot. In the
 // same transaction it leaves the creator's pending transfer (07 D75), which the caller sends after the commit. An
 // exclusive request's license is exclusive, for at most one calendar year (07 D111, I35).
+// Revoking one (07 D86; owner answers OQ-13, Q-207): the admin's revoke commits the four revoke fields, its audit and the
+// money movements in one short transaction, then gives the money back after the response (money.ts). It never touches
+// license_request.status, the snapshot or the video's postings, and sends no email (07 D34, D71).
 
 /** Insert attempts before giving up: a collision of 40-bit codes is rare (research/license.md §6.1). */
 const CODE_ATTEMPTS = 5;
 
 export type IssuedLicense = { licenseId: string; code: string };
+
+/**
+ * revokeLicense's answer (owner answer Q-207, a contract delta for 02 §5.7): `changed: false` when the license was
+ * already revoked (nothing written, the first reason kept); 'transfer_in_progress' when the creator transfer is in flight
+ * (nothing written: the admin tries again in a minute).
+ */
+export type RevokeResult =
+  | { ok: true; changed: boolean }
+  | { ok: false; reason: "transfer_in_progress" };
+
+/** revokeLicense's answer to an id that names no license. */
+export class LicenseNotFoundError extends Error {
+  constructor() {
+    super("license_not_found");
+    this.name = "LicenseNotFoundError";
+  }
+}
 
 /**
  * I35's code guard: an exclusive license would run past one calendar year. CHECK license_request_exclusive_fields keeps
@@ -69,6 +96,103 @@ export async function issueLicense(
   const issued = await licenseFor(tx, requestId, startsAt, opts);
   await ensureCreatorTransfer(tx, requestId);
   return issued;
+}
+
+/**
+ * Revokes license `licenseId` as admin `a` (07 D86; 03 §5.3; owner answers OQ-13, OQ-18, Q-207, Q-210). One
+ * transaction: the license row updated only while not revoked (`revoked_at` now, the reason, the trimmed note, the
+ * admin), `license.revoked { reason, code }` as the admin, and the money: unless the reason is payment_reversed, a
+ * pending buyer_refund of the request's total; a creator transfer still to send is canceled; a pending transfer_reversal
+ * of the transfer's amount whenever money may be with the creator (a sent transfer, whatever the reason, or one canceled
+ * after a call was made). A transfer a live claim holds refuses the revoke before anything is written. After the
+ * commit, refundRevokedLicense runs after the response. Admin actors only; an unknown id throws LicenseNotFoundError.
+ */
+export async function revokeLicense(
+  a: Actor,
+  licenseId: string,
+  reason: RevokedReason,
+  note?: string,
+): Promise<RevokeResult> {
+  const admin = requireAdminActor(a);
+  if (!isUuid(licenseId)) throw new LicenseNotFoundError();
+  const result = await db.transaction((tx) =>
+    revokeIn(tx, admin, licenseId, reason, note?.trim() || null),
+  );
+  if (result.ok && result.changed) {
+    afterResponse(() => refundRevokedLicense(licenseId));
+  }
+  return result;
+}
+
+/**
+ * revokeLicense's transaction: the license row locked first (as the UPDATE would lock it), then its creator transfer,
+ * so nothing is written before a transfer in flight refuses the revoke.
+ */
+async function revokeIn(
+  tx: Tx,
+  admin: AdminActor,
+  licenseId: string,
+  reason: RevokedReason,
+  note: string | null,
+): Promise<RevokeResult> {
+  const [found] = await tx
+    .select({
+      code: license.code,
+      revokedAt: license.revokedAt,
+      requestId: license.licenseRequestId,
+      currency: licenseRequest.currency,
+      amountTotalCents: licenseRequest.amountTotalCents,
+    })
+    .from(license)
+    .innerJoin(licenseRequest, eq(licenseRequest.id, license.licenseRequestId))
+    .where(eq(license.id, licenseId))
+    .for("no key update", { of: license });
+  if (!found) throw new LicenseNotFoundError();
+  if (found.revokedAt) return { ok: true, changed: false };
+  const { requestId, currency } = found;
+  const sent = await cancelUnsentTransfer(tx, requestId);
+  if (sent.transfer === "in_flight") {
+    return { ok: false, reason: "transfer_in_progress" };
+  }
+  await tx
+    .update(license)
+    .set({
+      // The app's clock, which the download gates and /verify compare it with: downloads stop at once.
+      revokedAt: new Date(),
+      revokedReason: reason,
+      revokedNote: note,
+      revokedByUserId: admin.userId,
+    })
+    .where(eq(license.id, licenseId));
+  await writeAudit(tx, admin, {
+    action: "license.revoked",
+    entityType: "license",
+    entityId: licenseId,
+    data: { reason, code: found.code },
+  });
+  // Payment reversed: the money already went back to the buyer (07 D86).
+  if (reason !== "payment_reversed") {
+    await insertMovement(tx, {
+      requestId,
+      kind: "buyer_refund",
+      currency,
+      amountCents: found.amountTotalCents,
+    });
+  }
+  // Money may be with the creator (owner answer Q-210): a sent transfer, whatever the reason, or one canceled after a
+  // call was made. The take-back reconciles before it calls, so one found reversed or never landed calls nothing.
+  if (
+    sent.transfer === "sent" ||
+    (sent.transfer === "canceled" && sent.attempt > 0)
+  ) {
+    await insertMovement(tx, {
+      requestId,
+      kind: "transfer_reversal",
+      currency,
+      amountCents: sent.amountCents,
+    });
+  }
+  return { ok: true, changed: true };
 }
 
 /** The existing license, or a new one: issueLicense without the transfer. */
@@ -141,18 +265,12 @@ async function ensureCreatorTransfer(tx: Tx, requestId: string): Promise<void> {
     .from(licenseRequest)
     .where(eq(licenseRequest.id, requestId));
   if (!request) throw new Error("issueLicense: unknown request");
-  await tx
-    .insert(moneyMovement)
-    .values({
-      licenseRequestId: requestId,
-      kind: "creator_transfer",
-      status: "pending",
-      currency: request.currency,
-      amountCents: request.licensePriceCents,
-    })
-    .onConflictDoNothing({
-      target: [moneyMovement.licenseRequestId, moneyMovement.kind],
-    });
+  await insertMovement(tx, {
+    requestId,
+    kind: "creator_transfer",
+    currency: request.currency,
+    amountCents: request.licensePriceCents,
+  });
 }
 
 async function licenseOf(

@@ -21,6 +21,7 @@ const held: Authorization = {
   chargeId: `ch_fake_${row.id}`,
   riskLevel: "normal",
   amountRefundedCents: 0,
+  refundId: null,
   captureMethod: "manual",
   metadataRequestId: row.id,
   authorizedAt: new Date("2026-10-27T10:00:00Z"),

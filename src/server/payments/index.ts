@@ -11,16 +11,18 @@ import {
   type CancelReason,
   cancelKey,
   captureKey,
+  refundKey,
   stripeCancelReason,
   transferKey,
+  transferReversalKey,
 } from "./keys";
 import { paymentsDriver } from "./registry";
 
 // The domain's payment calls (02 §5.8, 07 §8.2, D95): the currency comes first and picks that platform account's driver;
 // callers pass license_request.currency. Never called inside db.transaction (07 D24): claim and commit, then call.
-// capture, cancel and transfer never throw: a thrown call or a timeout comes back as a transient failure, and the caller
-// reads what really happened (reconcileFromStripe, findTransfers; 07 D25, D75). A configuration error (a currency not
-// enabled) still throws.
+// capture, cancel, transfer, refund and reverseTransfer never throw: a thrown call or a timeout comes back as a transient
+// failure, and the caller reads what really happened (reconcileFromStripe, findTransfers, getAuthorization; 07 D25, D75,
+// D86). A configuration error (a currency not enabled) still throws.
 
 export { type CancelReason, transferGroupFor } from "./keys";
 
@@ -102,4 +104,47 @@ export async function transfer(
 /** The request's transfers on that currency's account (at most one per transfer_group, 07 D75). Throws when unreadable. */
 export async function findTransfers(currency: Currency, requestId: string) {
   return paymentsDriver(currency).findTransfers(requestId);
+}
+
+/**
+ * Refunds the buyer in full (07 D86): `attempt` is the buyer_refund row's attempt of this claim, so a new claim gets a new
+ * key. The caller has reconciled with getAuthorization first.
+ */
+export async function refund(
+  currency: Currency,
+  requestId: string,
+  paymentIntentId: string,
+  attempt: number,
+): Promise<
+  | { ok: true; refundId: string; status: "succeeded" | "pending" }
+  | MoneyCallFailure
+> {
+  const driver = paymentsDriver(currency);
+  return settled(() =>
+    driver.refund({
+      requestId,
+      paymentIntentId,
+      idempotencyKey: refundKey(requestId, attempt),
+    }),
+  );
+}
+
+/**
+ * Takes the creator's transfer back in full (07 D86): `attempt` is the transfer_reversal row's attempt of this claim. The
+ * caller has reconciled with findTransfers first.
+ */
+export async function reverseTransfer(
+  currency: Currency,
+  requestId: string,
+  transferId: string,
+  attempt: number,
+): Promise<{ ok: true; reversalId: string } | MoneyCallFailure> {
+  const driver = paymentsDriver(currency);
+  return settled(() =>
+    driver.reverseTransfer({
+      requestId,
+      transferId,
+      idempotencyKey: transferReversalKey(requestId, attempt),
+    }),
+  );
 }

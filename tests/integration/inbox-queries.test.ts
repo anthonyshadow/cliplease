@@ -66,6 +66,7 @@ const CREATOR_KEYS = [
   "slug",
   "status",
   "statusReason",
+  "takenBack",
   "title",
   "transferAmountCents",
   "transferCurrency",
@@ -102,6 +103,7 @@ const NO_TRANSFER = {
   transferStatus: null,
   transferAmountCents: null,
   transferCurrency: null,
+  takenBack: false,
 };
 
 async function creatorWithVideo(): Promise<{

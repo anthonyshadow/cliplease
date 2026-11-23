@@ -1,7 +1,7 @@
 // The payments seam (02 §5.8, 07 §8.2): one driver per currency, so e2e runs the whole flow without Stripe (ADR-21).
 // P05 declares what Phase A uses; the renewal methods, SavedCard, the renewal checkout fields and the
 // payment_method.automatically_updated event arrive with P22c and P22e. CREATOR_FIXABLE_TRANSFER_CODES is P19b's, filled
-// by P24's spike.
+// by P24's spike. P21b adds the ids a reconcile finishes a refund or a reversal with (owner answer Q-206).
 import "server-only";
 import type { Currency, PayoutsStatus } from "@/lib/domain/values";
 import { errorName } from "../log";
@@ -33,11 +33,23 @@ export type Authorization = {
     | "unknown"
     | null;
   amountRefundedCents: number;
+  /** The newest refund on the PaymentIntent's charge, or null when none (owner answer Q-206): a reconcile finishes with it. */
+  refundId: string | null;
   captureMethod: "manual" | "automatic" | "automatic_async";
   metadataRequestId: string | null;
   authorizedAt: Date | null;
   captureBefore: Date | null;
   requestId: string | null;
+};
+
+/** One of a request's transfers as findTransfers lists it (02 §5.8). */
+export type FoundTransfer = {
+  transferId: string;
+  amountCents: number;
+  amountReversedCents: number;
+  /** The newest reversal of the transfer, or null when none (owner answer Q-206): a reconcile finishes with it. */
+  reversalId: string | null;
+  destinationAccountId: string;
 };
 
 export type StripeCallOutcome =
@@ -159,14 +171,7 @@ export interface PaymentsDriver {
     amountCents: number;
     idempotencyKey: string;
   }): Promise<{ ok: true; transferId: string } | MoneyCallFailure>;
-  findTransfers(requestId: string): Promise<
-    Array<{
-      transferId: string;
-      amountCents: number;
-      amountReversedCents: number;
-      destinationAccountId: string;
-    }>
-  >;
+  findTransfers(requestId: string): Promise<FoundTransfer[]>;
   refund(i: {
     requestId: string;
     paymentIntentId: string;

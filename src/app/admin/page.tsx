@@ -33,10 +33,13 @@ export async function generateMetadata(): Promise<Metadata> {
   return { title: "Admin" };
 }
 
-/** Disable's Server Action runs with this page's limit: its sweep declines through Stripe, within a 45 s budget (07 D26). */
+/**
+ * Disable's and Retry's Server Actions run with this page's limit: both call Stripe, Disable's sweep within a 45 s
+ * budget (07 D26).
+ */
 export const maxDuration = 60;
 
-/** The tab's table, or the Events tab's three lists, from its loader (design/P21-admin-view.md §4.6–§4.10). */
+/** The tab's table, or the Events tab's four lists, from its loader (design/P21-admin-view.md §4.6–§4.10). */
 async function tabContent(tab: AdminTab, actor: AdminActor) {
   const caption = ADMIN_TAB_LABELS[tab];
   switch (tab) {
@@ -88,7 +91,7 @@ async function tabContent(tab: AdminTab, actor: AdminActor) {
 
 /**
  * S24 `/admin?tab=…` (05 §7; 01 A.1–A.3; design/P21-admin-view.md §4, §6): the six tabs as links (Creators when the tab
- * is missing or unknown), "Newest 50", then the tab's one table (Events: its three lists), in the max-w-app column at
+ * is missing or unknown), "Newest 50", then the tab's one table (Events: its four lists), in the max-w-app column at
  * every tier. The page gates again (layouts don't re-render on every navigation) and renders in one piece, with no
  * loading.tsx or Suspense: a non-admin gets a real 404, never a streamed 200 (design §4.12).
  */

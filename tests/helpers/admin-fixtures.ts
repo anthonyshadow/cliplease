@@ -1,4 +1,5 @@
 // The admin loaders' rows as the page gets them (src/server/admin/queries.ts), for the admin view's unit tests.
+import type { AdminLicenseAction } from "@/app/admin/_components/license-row-action";
 import type { AdminVideoAction } from "@/app/admin/_components/video-row-action";
 import type { VideoStatus } from "@/lib/domain/values";
 import type {
@@ -7,6 +8,7 @@ import type {
   AdminCreatorRow,
   AdminEvents,
   AdminFailedEmailRow,
+  AdminFailedMovementRow,
   AdminLicenseRow,
   AdminRequestRow,
   AdminStripeEventRow,
@@ -118,17 +120,24 @@ export const VALID_LICENSE: AdminLicenseRow = {
   code: "CL-7K3M-9QXA",
   licenseeName: "Daily Laughs Media LLC",
   videoTitle: "First snow",
+  creatorHandle: "maya",
   status: "valid",
   exclusive: true,
   issuedAt: CREATED_AT,
   downloads: 2,
+  licensePriceCents: 157500,
+  amountTotalCents: 173250,
+  currency: "cad",
   transfer: {
+    id: "t0000000-0000-4000-8000-000000000001",
     status: "succeeded",
     amountCents: 157500,
-    currency: "cad",
     lastError: null,
   },
+  refund: null,
+  reversal: null,
   revokedAt: null,
+  revokedReason: null,
 };
 
 export const FAILED_TRANSFER_LICENSE: AdminLicenseRow = {
@@ -137,12 +146,82 @@ export const FAILED_TRANSFER_LICENSE: AdminLicenseRow = {
   code: "CL-9P2D-6HNC",
   exclusive: false,
   downloads: 0,
+  licensePriceCents: 90000,
+  amountTotalCents: 99000,
   transfer: {
+    id: "t0000000-0000-4000-8000-000000000002",
     status: "failed",
     amountCents: 90000,
-    currency: "cad",
     lastError: "account_closed",
   },
+};
+
+/** VALID_LICENSE revoked (Issued in error), its refund and take-back done: D99's "Refunded … · Taken back …". */
+export const REFUNDED_LICENSE: AdminLicenseRow = {
+  ...VALID_LICENSE,
+  id: "l0000000-0000-4000-8000-000000000003",
+  code: "CL-4F8T-2WRB",
+  status: "revoked",
+  refund: {
+    id: "f0000000-0000-4000-8000-000000000003",
+    status: "succeeded",
+    amountCents: 173250,
+    lastError: null,
+  },
+  reversal: {
+    id: "b0000000-0000-4000-8000-000000000003",
+    status: "succeeded",
+    amountCents: 157500,
+    lastError: null,
+  },
+  revokedAt: CREATED_AT,
+  revokedReason: "issued_in_error",
+};
+
+/** A revoked license whose refund and take-back both failed: two Retries. */
+export const FAILED_RETURNS_LICENSE: AdminLicenseRow = {
+  ...REFUNDED_LICENSE,
+  id: "l0000000-0000-4000-8000-000000000004",
+  code: "CL-2B7Q-K9WD",
+  refund: {
+    id: "f0000000-0000-4000-8000-000000000004",
+    status: "failed",
+    amountCents: 173250,
+    lastError: "charge_disputed",
+  },
+  reversal: {
+    id: "b0000000-0000-4000-8000-000000000004",
+    status: "failed",
+    amountCents: 157500,
+    lastError: "insufficient_funds",
+  },
+  revokedReason: "rights_claim",
+};
+
+/** A license's Revoke, from VALID_LICENSE with `transferStatus` (succeeded unless given). */
+export const licenseAction = (
+  transferStatus: AdminLicenseAction["transferStatus"] = "succeeded",
+): AdminLicenseAction => ({
+  id: VALID_LICENSE.id,
+  code: VALID_LICENSE.code,
+  creatorHandle: VALID_LICENSE.creatorHandle,
+  licensePriceCents: VALID_LICENSE.licensePriceCents,
+  amountTotalCents: VALID_LICENSE.amountTotalCents,
+  currency: VALID_LICENSE.currency,
+  transferStatus,
+});
+
+/** A failed take-back in Events' failed-movements list. */
+export const FAILED_MOVEMENT: AdminFailedMovementRow = {
+  id: "b0000000-0000-4000-8000-000000000004",
+  kind: "transfer_reversal",
+  licenseCode: "CL-2B7Q-K9WD",
+  creatorHandle: "maya",
+  amountCents: 157500,
+  currency: "cad",
+  attempt: 2,
+  lastError: "insufficient_funds",
+  updatedAt: CREATED_AT,
 };
 
 export const AUDIT_ROW: AdminAuditRow = {
@@ -193,6 +272,7 @@ export const STRIPE_EVENT: AdminStripeEventRow = {
 
 export const EVENTS: AdminEvents = {
   audit: [AUDIT_ROW, FLAGGED_AUDIT_ROW],
+  failedMovements: [FAILED_MOVEMENT],
   failedEmails: [FAILED_EMAIL],
   stripeEvents: [],
 };

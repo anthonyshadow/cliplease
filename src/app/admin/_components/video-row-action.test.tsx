@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 import {
-  act,
   cleanup,
   fireEvent,
   render,
@@ -8,11 +7,23 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { afterEach, describe, expect, it, type Mock, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { Toaster } from "@/components/ui/toast";
 import { DISABLE_COPY, ENABLE_COPY } from "@/lib/admin/copy";
 import { GENERIC_ERROR_MESSAGE } from "@/lib/result";
 import { LIVE_VIDEO, video } from "../../../../tests/helpers/admin-fixtures";
+import {
+  footer,
+  footerButtons,
+  holdAnswer,
+  inSheet,
+  label,
+  latestToast,
+  noSheet,
+  press,
+  sheet,
+  toastCount,
+} from "../../../../tests/helpers/sheet-dom";
 import { type AdminVideoAction, VideoRowAction } from "./video-row-action";
 
 const mocks = vi.hoisted(() => ({
@@ -40,29 +51,12 @@ function Row({ row }: { row: AdminVideoAction }) {
   );
 }
 
-const sheet = () => screen.getByRole("alertdialog");
-const noSheet = () => screen.queryByRole("alertdialog");
-const inSheet = () => within(sheet());
 const reasonField = () =>
   inSheet().getByRole<HTMLSelectElement>("combobox", { name: "Reason" });
 const noteField = () =>
   inSheet().getByRole<HTMLTextAreaElement>("textbox", {
     name: "Note (optional)",
   });
-/** A button's words as a screen reader gets them while it is idle: without its hidden loading layer. */
-function label(button: Element): string {
-  const copy = button.cloneNode(true) as Element;
-  for (const hidden of copy.querySelectorAll('[aria-hidden="true"]')) {
-    hidden.remove();
-  }
-  return copy.textContent ?? "";
-}
-/** The footer's buttons, primary first as the sheet lays them out below md (the header's ✕ is not one of them). */
-const footerButtons = () => [
-  ...sheet().querySelectorAll<HTMLButtonElement>("button[data-variant]"),
-];
-const footer = () =>
-  footerButtons().map((b) => [label(b), b.getAttribute("data-variant")]);
 /** Pressed and waiting: busy, its loading layer ("Disabling…") no longer hidden. */
 function expectLoading(button: HTMLElement, loadingLabel: string) {
   expect(button.getAttribute("aria-busy")).toBe("true");
@@ -71,10 +65,6 @@ function expectLoading(button: HTMLElement, loadingLabel: string) {
   );
   expect(layer).toBeTruthy();
 }
-/** The newest toast: the Toaster's last list item (the store outlives a test, so never a count). */
-const latestToast = () =>
-  [...document.querySelectorAll("ol > li")].at(-1)?.textContent ?? null;
-const toastCount = () => document.querySelectorAll("ol > li").length;
 
 function openDisable() {
   fireEvent.click(screen.getByRole("button", { name: "Disable First snow" }));
@@ -83,26 +73,6 @@ function openDisable() {
 
 function choose(reason: string) {
   fireEvent.change(reasonField(), { target: { value: reason } });
-}
-
-async function press(name: string) {
-  await act(async () => {
-    fireEvent.click(inSheet().getByRole("button", { name }));
-  });
-}
-
-/** Holds back the mocked action's answer: returns the call that gives it. */
-function holdAnswer(action: Mock) {
-  let answer: (value: unknown) => void = () => {};
-  action.mockReturnValueOnce(
-    new Promise((resolve) => {
-      answer = resolve;
-    }),
-  );
-  return (value: unknown) =>
-    act(async () => {
-      answer(value);
-    });
 }
 
 /**
@@ -222,7 +192,7 @@ describe("The Disable sheet (05 §7 callout 6; design §6.8; owner answers Q-198
     expect(sheet()).toBeTruthy();
     await answer(disabled(0));
     await waitFor(() => expect(noSheet()).toBeNull());
-    expect(latestToast()).toBe("Video disabled.");
+    expect(latestToast()?.textContent).toBe("Video disabled.");
     expect(document.activeElement).toBe(
       screen.getByRole("button", { name: "Disable First snow" }),
     );
@@ -318,7 +288,7 @@ describe("The Disable sheet (05 §7 callout 6; design §6.8; owner answers Q-198
       [{ ...fields, sweepOnly: true }],
     ]);
     await waitFor(() => expect(noSheet()).toBeNull());
-    expect(latestToast()).toBe("Video disabled.");
+    expect(latestToast()?.textContent).toBe("Video disabled.");
     expect(document.activeElement).toBe(
       screen.getByRole("button", { name: "Enable First snow" }),
     );
@@ -512,7 +482,7 @@ describe("The Enable sheet (design §6.9; owner answer Q-199 a)", () => {
     expect(sheet()).toBeTruthy();
     await answer({ ok: true, data: undefined });
     await waitFor(() => expect(noSheet()).toBeNull());
-    expect(latestToast()).toBe("Video enabled.");
+    expect(latestToast()?.textContent).toBe("Video enabled.");
     expect(document.activeElement).toBe(
       screen.getByRole("button", { name: "Enable First snow" }),
     );

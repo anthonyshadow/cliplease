@@ -35,6 +35,7 @@ const PROPS: Props = {
   snapshot: SNAPSHOT,
   status: "valid",
   revokedAt: null,
+  refunded: false,
   original: { type: "MP4", bytes: 84 * 1024 ** 2 },
   territoryCode: "US",
   amountTotalCents: 173_250,
@@ -173,6 +174,23 @@ describe("LicenseDelivery, /l (05 §4.4; 04 §10.2)", () => {
       ),
     ).toBeTruthy();
   });
+
+  it.each([
+    [false, "Revoked on 20 Oct 2026, 09:15 UTC."],
+    [true, "Revoked on 20 Oct 2026, 09:15 UTC. You were refunded CA$1,732.50."],
+  ] as const)(
+    "refunded %s, reads one revoked line: the refund only once it succeeded (01 J9.6; Q-209)",
+    (refunded, line) => {
+      page({
+        status: "revoked",
+        revokedAt: new Date("2026-10-20T09:15:00.000Z"),
+        refunded,
+      });
+      expect(screen.getByText(line, { exact: true })).toBeTruthy();
+      expect(screen.queryAllByText(/^Revoked on /)).toHaveLength(1);
+      expect(link("Download license PDF")).toBeNull();
+    },
+  );
 
   it("says a download didn't start when a route sent the buyer back", () => {
     page({ downloadFailed: true });

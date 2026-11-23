@@ -12,7 +12,12 @@ export type DataColumn<Row> = {
   empty?: ReactNode;
   /** Numbers are right-aligned with tabular figures. */
   numeric?: boolean;
-  /** A row action (a link): last in a stacked row, with no label; its table header is for screen readers only. */
+  /** "end": the table's cell (and header) right-aligned, as a row's trailing action (the admin's); start by default. */
+  align?: "end";
+  /**
+   * A row action (a link or a button): last in a stacked row, with no label; its table header is for screen readers
+   * only. A row whose action cells are all null has no actions line.
+   */
   action?: boolean;
 };
 
@@ -99,6 +104,10 @@ export function DataTable<Row>({
       >
         {rows.map((row) => {
           const flag = rowFlag?.(row) ?? null;
+          // A row with no action to offer (a revoked license's Revoke) has no actions line.
+          const rowActions = actions
+            .map((column) => ({ column, value: column.cell(row) }))
+            .filter(({ value }) => value !== null);
           return (
             <li
               key={rowKey(row)}
@@ -129,10 +138,10 @@ export function DataTable<Row>({
                   );
                 })}
               </dl>
-              {actions.length > 0 ? (
+              {rowActions.length > 0 ? (
                 <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
-                  {actions.map((column) => (
-                    <Fragment key={keyOf(column)}>{column.cell(row)}</Fragment>
+                  {rowActions.map(({ column, value }) => (
+                    <Fragment key={keyOf(column)}>{value}</Fragment>
                   ))}
                 </div>
               ) : null}
@@ -161,7 +170,7 @@ export function DataTable<Row>({
                   scope="col"
                   className={cn(
                     "h-10 px-3 text-footnote font-semibold text-ink-2",
-                    column.numeric && "text-right",
+                    (column.numeric || column.align === "end") && "text-right",
                   )}
                 >
                   {column.action ? (
@@ -189,6 +198,7 @@ export function DataTable<Row>({
                         "px-3 py-2 text-callout text-ink",
                         flag && "text-danger-text",
                         column.numeric && "text-right tabular-nums",
+                        column.align === "end" && "text-right",
                       )}
                     >
                       {cellValue(column, row, flag) ?? column.empty ?? null}

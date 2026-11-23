@@ -3,9 +3,11 @@ import {
   cancelKey,
   captureKey,
   checkoutSessionKey,
+  refundKey,
   stripeCancelReason,
   transferGroupFor,
   transferKey,
+  transferReversalKey,
 } from "./keys";
 
 const ID = "6f4c8d7e-1a2b-4c3d-8e9f-0a1b2c3d4e5f";
@@ -22,6 +24,16 @@ describe("payment keys (07 §2.4, D74)", () => {
   it("keys a creator transfer by its money_movement claim's attempt (07 D75)", () => {
     expect(transferKey("r1", 2)).toBe("transfer:r1:2");
     expect(transferKey(ID, 1)).toBe(`transfer:${ID}:1`);
+  });
+
+  it("keys a revoke's refund and take-back by their money_movement claim's attempt (07 D86)", () => {
+    expect(refundKey(ID, 1)).toBe(`refund:${ID}:1`);
+    expect(refundKey("r1", 2)).toBe("refund:r1:2");
+    expect(transferReversalKey(ID, 1)).toBe(`transfer-reversal:${ID}:1`);
+    expect(transferReversalKey("r1", 3)).toBe("transfer-reversal:r1:3");
+    // A new claim, a new key: never the transfer's.
+    expect(refundKey(ID, 2)).not.toBe(refundKey(ID, 1));
+    expect(transferReversalKey(ID, 1)).not.toBe(transferKey(ID, 1));
   });
 
   it("tells Stripe a decline was the customer's choice, and every other cancel abandoned", () => {

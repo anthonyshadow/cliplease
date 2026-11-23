@@ -1,11 +1,16 @@
 import type { DataColumn } from "@/components/ui/data-table";
 import { ADMIN_COLUMNS, ADMIN_COPY } from "@/lib/admin/copy";
-import { auditActorLabel } from "@/lib/admin/labels";
+import {
+  auditActorLabel,
+  MONEY_MOVEMENT_KIND_LABELS,
+} from "@/lib/admin/labels";
+import { formatMoney } from "@/lib/format";
 import { CURRENCY_DISPLAY } from "@/lib/money/currency";
 import type {
   AdminAuditRow,
   AdminEvents,
   AdminFailedEmailRow,
+  AdminFailedMovementRow,
   AdminStripeEventRow,
 } from "@/server/admin/queries";
 import {
@@ -14,11 +19,15 @@ import {
   type AdminTableProps,
   EntityValue,
   IdValue,
+  LicenseCode,
   NONE,
   RawValue,
 } from "./admin-cells";
+import { focusAnchor } from "./focus-anchor";
+import { RetryMoneyMovementButton } from "./retry-money-movement-button";
 
 const AUDIT = ADMIN_COLUMNS.auditEvents;
+const MOVEMENT = ADMIN_COLUMNS.failedMovements;
 const EMAIL = ADMIN_COLUMNS.failedEmails;
 const STRIPE = ADMIN_COLUMNS.stripeEvents;
 
@@ -51,6 +60,36 @@ const AUDIT_COLUMNS: readonly DataColumn<AdminAuditRow>[] = [
     cell: (e) => <EntityValue type={e.entityType} id={e.entityId} />,
   },
   { header: AUDIT.details, cell: (e) => <Details json={e.details} /> },
+];
+
+/**
+ * Failed money movements (05 §7 callout 9; owner answer Q-209): the kind in words, the license's code, the amount in
+ * its currency, the attempt, Stripe's code, when it last changed, and its Retry. Never a Stripe id.
+ */
+const MOVEMENT_COLUMNS: readonly DataColumn<AdminFailedMovementRow>[] = [
+  { header: MOVEMENT.kind, cell: (m) => MONEY_MOVEMENT_KIND_LABELS[m.kind] },
+  {
+    header: MOVEMENT.license,
+    cell: (m) => <LicenseCode code={m.licenseCode} />,
+  },
+  {
+    header: MOVEMENT.amount,
+    numeric: true,
+    cell: (m) => formatMoney(m.amountCents, m.currency),
+  },
+  { header: MOVEMENT.attempt, numeric: true, cell: (m) => m.attempt },
+  {
+    header: MOVEMENT.error,
+    empty: NONE,
+    cell: (m) => (m.lastError ? <RawValue>{m.lastError}</RawValue> : null),
+  },
+  { header: MOVEMENT.updated, cell: (m) => <AdminDate iso={m.updatedAt} /> },
+  {
+    header: MOVEMENT.retry,
+    action: true,
+    align: "end",
+    cell: (m) => <RetryMoneyMovementButton movement={m} />,
+  },
 ];
 
 /** Failed emails (design §6.7): never the recipient. */
@@ -91,20 +130,31 @@ const STRIPE_COLUMNS: readonly DataColumn<AdminStripeEventRow>[] = [
   },
 ];
 
-/** One Events list: its heading, then its table (named by the heading) or "Nothing here yet.". */
+/**
+ * One Events list: its heading (the list's focus anchor, where the focus lands when a Retry that worked takes its row
+ * away), then its table (named by the heading) or "Nothing here yet.".
+ */
 function EventsList<Row extends { id: string }>({
   heading,
   ...table
 }: { heading: string } & Omit<AdminTableProps<Row>, "caption" | "list">) {
   return (
     <section className="flex flex-col gap-3">
-      <h2 className="mt-2 text-body font-semibold text-ink">{heading}</h2>
+      <h2
+        {...focusAnchor("list")}
+        className="mt-2 text-body font-semibold text-ink outline-none"
+      >
+        {heading}
+      </h2>
       <AdminTable list caption={heading} {...table} />
     </section>
   );
 }
 
-/** The Events tab (`?tab=events`; design §4.9, §6.7): the latest audit rows, failed emails, unprocessed Stripe events. */
+/**
+ * The Events tab (`?tab=events`; design §4.9, §6.7; owner answer Q-209): the latest audit rows, the failed money
+ * movements with Retry, failed emails, unprocessed Stripe events.
+ */
 export function EventsLists({ events }: { events: AdminEvents }) {
   return (
     <>
@@ -113,6 +163,11 @@ export function EventsLists({ events }: { events: AdminEvents }) {
         columns={AUDIT_COLUMNS}
         rows={events.audit}
         rowFlag={(e) => (e.flagged ? ADMIN_COPY.flagged : null)}
+      />
+      <EventsList
+        heading={ADMIN_COPY.failedMovementsHeading}
+        columns={MOVEMENT_COLUMNS}
+        rows={events.failedMovements}
       />
       <EventsList
         heading={ADMIN_COPY.failedEmailsHeading}

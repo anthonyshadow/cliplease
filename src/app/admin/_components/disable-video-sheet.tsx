@@ -1,21 +1,15 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { adminDisableVideo } from "@/app/admin/actions";
 import { Banner } from "@/components/ui/banner";
 import { ConfirmSheet } from "@/components/ui/confirm-sheet";
-import { SelectField } from "@/components/ui/select-field";
-import { TextArea } from "@/components/ui/text-field";
 import { toast } from "@/components/ui/toast";
 import { usePendingAction } from "@/components/ui/use-pending-action";
 import { DISABLE_COPY } from "@/lib/admin/copy";
-import {
-  isOneOf,
-  VIDEO_DISABLED_REASONS,
-  type VideoDisabledReason,
-} from "@/lib/domain/values";
-import { ADMIN_NOTE_MAX } from "@/lib/validation/admin";
+import { VIDEO_DISABLED_REASONS } from "@/lib/domain/values";
 import { VIDEO_DISABLED_REASON_LABELS } from "@/lib/videos/review";
+import { ReasonNoteFields, useReasonField } from "./reason-note-fields";
 import type { AdminVideoAction } from "./video-row-action";
 
 /**
@@ -58,14 +52,13 @@ export function DisableVideoSheet({
   onOpenChange: (open: boolean) => void;
   onCloseAutoFocus: (event: Event) => void;
 }) {
-  const [reason, setReason] = useState<VideoDisabledReason | "">("");
-  const [note, setNote] = useState("");
-  const [reasonError, setReasonError] = useState<string | null>(null);
+  const { field, note, showReasonError, chosen } = useReasonField(
+    VIDEO_DISABLED_REASONS,
+  );
   const [error, setError] = useState<string | null>(null);
   /** The waiting requests the last sweep left; null until a sweep leaves some (owner answers Q-198 a, Q-202). */
   const [left, setLeft] = useState<Left | null>(null);
   const [pending, run] = usePendingAction();
-  const reasonField = useRef<HTMLSelectElement>(null);
   // Ready: the body and Disable video. Requests still open: their body and Try again. Only captures left: nothing to try
   // again, so neither.
   let description: string | undefined = DISABLE_COPY.body(video.waitingCount);
@@ -78,17 +71,10 @@ export function DisableVideoSheet({
     confirmLabel = retryable ? DISABLE_COPY.tryAgain : undefined;
   }
 
-  function showReasonError(message: string) {
-    setReasonError(message);
-    reasonField.current?.focus();
-  }
-
   async function disable() {
     setError(null);
-    if (reason === "") {
-      showReasonError(DISABLE_COPY.reasonRequired);
-      return;
-    }
+    const reason = chosen();
+    if (reason === null) return;
     const fields = { videoId: video.id, reason, note };
     const result = await run(() =>
       adminDisableVideo(left ? { ...fields, sweepOnly: true } : fields),
@@ -144,39 +130,12 @@ export function DisableVideoSheet({
       cancelLabel={left ? DISABLE_COPY.close : DISABLE_COPY.cancel}
       onCloseAutoFocus={onCloseAutoFocus}
     >
-      <div className="mt-4 flex flex-col gap-4">
-        {error ? <Banner tone="error">{error}</Banner> : null}
-        <SelectField
-          ref={reasonField}
-          label={DISABLE_COPY.reason}
-          value={reason}
-          onChange={(event) => {
-            const { value } = event.target;
-            const chosen = isOneOf(VIDEO_DISABLED_REASONS, value);
-            setReason(chosen ? value : "");
-            if (chosen) setReasonError(null);
-          }}
-          required
-          disabled={left !== null}
-          error={reasonError ?? undefined}
-        >
-          <option value="">{DISABLE_COPY.reasonPlaceholder}</option>
-          {VIDEO_DISABLED_REASONS.map((key) => (
-            <option key={key} value={key}>
-              {VIDEO_DISABLED_REASON_LABELS[key]}
-            </option>
-          ))}
-        </SelectField>
-        <TextArea
-          label={DISABLE_COPY.note}
-          value={note}
-          onChange={(event) => setNote(event.target.value)}
-          maxLength={ADMIN_NOTE_MAX}
-          rows={3}
-          readOnly={left !== null}
-          helper={left ? undefined : DISABLE_COPY.noteHelper}
-        />
-      </div>
+      <ReasonNoteFields
+        field={field}
+        labels={VIDEO_DISABLED_REASON_LABELS}
+        error={error}
+        locked={left !== null}
+      />
     </ConfirmSheet>
   );
 }

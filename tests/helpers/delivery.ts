@@ -111,6 +111,10 @@ export async function issue(
   };
 }
 
+/** A creator who can approve, their video and one license on it whose creator transfer succeeded (no original stored). */
+export const issuedLicense = async (): Promise<Issued> =>
+  issue(await approvingCreatorWithVideo());
+
 /** The license's end: the test fails on a perpetual one. */
 export const endOf = (l: Pick<License, "endsAt">): Date => {
   if (!l.endsAt) throw new Error("the license has no end");

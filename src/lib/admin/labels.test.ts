@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   AUDIT_ACTOR_TYPES,
   LICENSE_REQUEST_STATUSES,
+  LICENSE_REVOKED_REASONS,
+  MONEY_MOVEMENT_KINDS,
   PAYOUTS_STATUSES,
 } from "../domain/values";
 import {
@@ -12,6 +14,8 @@ import {
   auditActorLabel,
   autoApproveLabel,
   isAdminEventFlag,
+  LICENSE_REVOKED_REASON_LABELS,
+  MONEY_MOVEMENT_KIND_LABELS,
   transferLabel,
 } from "./labels";
 
@@ -20,7 +24,7 @@ describe("isAdminEventFlag (05 §7; design §4.9)", () => {
     expect(isAdminEventFlag(action)).toBe(true);
   });
 
-  it("has the prompt's six flags and the three the code also writes", () => {
+  it("has P21's six flags, the three the code also writes, and P21b's refund and take-back failures", () => {
     expect(ADMIN_EVENT_FLAGS).toEqual([
       "license_request.money_moved_late",
       "license_request.cancel_failed",
@@ -31,6 +35,8 @@ describe("isAdminEventFlag (05 §7; design §4.9)", () => {
       "license_request.issue_failed",
       "stripe_event.currency_mismatch",
       "connect.negative_balance_debits_failed",
+      "license.refund_failed",
+      "license.reversal_failed",
     ]);
   });
 
@@ -40,9 +46,40 @@ describe("isAdminEventFlag (05 §7; design §4.9)", () => {
     "video.enabled",
     "license_request.transition",
     "license_request.money_moved",
+    "license.revoked",
+    "license.refund_succeeded",
+    "license.reversal_succeeded",
+    "money_movement.retried",
     "",
   ])("reads %s as a normal row", (action) => {
     expect(isAdminEventFlag(action)).toBe(false);
+  });
+});
+
+describe("LICENSE_REVOKED_REASON_LABELS (05 §7 callout 10)", () => {
+  it("labels every license_revoked_reason, in the enum's order", () => {
+    expect(Object.keys(LICENSE_REVOKED_REASON_LABELS)).toEqual([
+      ...LICENSE_REVOKED_REASONS,
+    ]);
+    expect(LICENSE_REVOKED_REASON_LABELS).toEqual({
+      rights_claim: "Rights claim",
+      licensee_breach: "Licensee breach",
+      payment_reversed: "Payment reversed",
+      issued_in_error: "Issued in error",
+    });
+  });
+});
+
+describe("MONEY_MOVEMENT_KIND_LABELS (owner answer Q-209)", () => {
+  it("labels every money_movement_kind", () => {
+    expect(Object.keys(MONEY_MOVEMENT_KIND_LABELS).sort()).toEqual(
+      [...MONEY_MOVEMENT_KINDS].sort(),
+    );
+    expect(MONEY_MOVEMENT_KIND_LABELS).toEqual({
+      creator_transfer: "Transfer",
+      buyer_refund: "Refund",
+      transfer_reversal: "Take-back",
+    });
   });
 });
 

@@ -19,10 +19,11 @@ export const LICENSE_ID = "0b8f4c1e-6a2d-4e8b-9f3a-5c7d1e2f3a4b";
 /** The license's own copy of the original's key (DB13). */
 export const KEY = "originals/creator/video.mp4";
 
-/** getBuyerLicense's answer at `status` (revokedAt set when revoked). */
+/** getBuyerLicense's answer at `status` (revokedAt set when revoked), with no refund unless `refunded`. */
 export function buyerLicenseDetail(
   status: RecordStatus = "valid",
   over: Partial<BuyerLicenseDetail["license"]> = {},
+  refunded = false,
 ): BuyerLicenseDetail {
   return {
     license: {
@@ -48,6 +49,7 @@ export function buyerLicenseDetail(
       currency: "cad",
       buyerEmail: BUYER.email,
     },
+    refunded,
     status,
   };
 }

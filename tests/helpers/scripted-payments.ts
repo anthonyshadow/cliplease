@@ -1,23 +1,29 @@
 import { and, eq } from "drizzle-orm";
 import { db } from "../../src/db/client";
-import { licenseRequest, moneyMovement } from "../../src/db/schema";
+import { license, licenseRequest, moneyMovement } from "../../src/db/schema";
 import type { LicenseRequest } from "../../src/db/schema/types";
 import type {
   Currency,
   LicenseRequestStatus,
   MoneyMovementStatus,
+  RevokedReason,
 } from "../../src/lib/domain/values";
 import { isUuid } from "../../src/lib/validation/uuid";
 import { env } from "../../src/server/env";
 import type {
   Authorization,
+  FoundTransfer,
   MoneyCallFailure,
   PaymentsDriver,
   PiStatus,
   StripeCallOutcome,
 } from "../../src/server/payments/driver";
 import { createFakeDriver } from "../../src/server/payments/fake-driver";
-import { transferKey } from "../../src/server/payments/keys";
+import {
+  refundKey,
+  transferKey,
+  transferReversalKey,
+} from "../../src/server/payments/keys";
 
 // A payments double for [int] tests (P16b): the fake driver's answers (07 D35) unless a script says otherwise, and a log
 // of every call to any of its methods, so "asks Stripe nothing" sees them all. Tests inject it by mocking
@@ -41,6 +47,18 @@ import { transferKey } from "../../src/server/payments/keys";
 // findTransfers lists the request's ledger transfers on the driver's currency, or throws the next transferLookups
 // error; seedTransfer puts one in without a call. script({ fetchPayoutsStatus }) lays an answer over the fake's payouts
 // read, or throws it.
+// P21b adds a revoke's refund and take-back (07 D86), the same way. Stripe's side: a ledger of refunds per PaymentIntent
+// (`refunds`), which getAuthorization reports (amountRefundedCents, the newest refundId) over the fake's row-derived
+// answer, and the transfer ledger's reversed amount and reversalId, which reverseTransfer sets in full. Each refund and
+// reverseTransfer takes its outcome from next(...): with none queued, ok as the fake answers (`re_fake_` / `trr_fake_` +
+// the request id); a queued ok records `re_scripted_<id>_<n>` / `trr_scripted_<id>_<n>`; ambiguous records it, then
+// throws; transient and permanent record nothing. A key already recorded replays its refund or reversal, so an answer
+// lost after Stripe refunded reconciles as refunded and is never refunded twice. Each call runs its onCall hooks and
+// records the request, its license and its buyer_refund / transfer_reversal row as committed when it arrived; each rule
+// that state breaks is a problem: the license not revoked, no committed claim of the key's attempt, a row already
+// ended, another currency's request, a refund after payment_reversed or of another PaymentIntent, a second refund or
+// reversal, a reversal of a transfer the ledger doesn't hold. seedRefund and seedReversal give money back with no call
+// (the Dashboard's refund, a reversal made elsewhere).
 
 type Checkout = Awaited<ReturnType<PaymentsDriver["retrieveCheckout"]>>;
 
@@ -50,8 +68,12 @@ type PaymentsMethod = Exclude<keyof PaymentsDriver, "name" | "currency">;
 /** The calls that move money: each gets an outcome, hooks and the claim it ran under. */
 export type MoneyMethod = "capture" | "cancel";
 
-/** The calls onCall and hold catch: the PaymentIntent's money calls and the creator transfer (P19b). */
-export type HookedMethod = MoneyMethod | "createTransfer";
+/** The calls onCall and hold catch: the PaymentIntent's money calls, the creator transfer (P19b), the revoke's (P21b). */
+export type HookedMethod =
+  | MoneyMethod
+  | "createTransfer"
+  | "refund"
+  | "reverseTransfer";
 
 type PayoutsAnswer = Awaited<ReturnType<PaymentsDriver["fetchPayoutsStatus"]>>;
 
@@ -67,7 +89,7 @@ export type ScriptedCall = {
   method: PaymentsMethod;
   currency: Currency;
   args: readonly unknown[];
-  /** For a capture, a cancel or a createTransfer: its idempotency key. */
+  /** For a capture, a cancel, a createTransfer, a refund or a reverseTransfer: its idempotency key. */
   key?: string;
   /** For a capture or a cancel: the request's committed status when it was called (07 D24: the claim commits first). */
   status?: LicenseRequestStatus | null;
@@ -121,10 +143,10 @@ export type PiMove = {
 export type AuthorizationAnswer = Error | PiStatus | Partial<Authorization>;
 
 /**
- * One createTransfer's fate, queued by next("createTransfer", ...) (07 D75, D76). ok records a transfer in the ledger
- * (a key already there replays its own) and answers it; ambiguous does the same, then throws as a lost connection;
- * transient and permanent answer that failure and record nothing. There is no "stripe": with none queued, the transfer
- * is ok as the fake makes it.
+ * One createTransfer's, refund's or reverseTransfer's fate, queued by next(method, ...) (07 D75, D76, D86). ok records
+ * it in its ledger (a key already there replays its own) and answers it; ambiguous does the same, then throws as a lost
+ * connection; transient and permanent answer that failure and record nothing. There is no "stripe": with none queued,
+ * the call is ok as the fake makes it.
  */
 export type TransferOutcome = Exclude<Outcome, "stripe">;
 
@@ -135,14 +157,86 @@ type TransferInput = Parameters<PaymentsDriver["createTransfer"]>[0];
 type TransferAnswer = Awaited<ReturnType<PaymentsDriver["createTransfer"]>>;
 
 /** A transfer on Stripe's side, as findTransfers lists it, with the key that made it (null: seeded). */
-export type LedgerTransfer = {
+export type LedgerTransfer = FoundTransfer & {
+  requestId: string;
+  currency: Currency;
+  key: string | null;
+};
+
+/** A refund on Stripe's side (07 D86), with the key that made it (null: seeded, the Dashboard's). */
+export type LedgerRefund = {
+  requestId: string;
+  currency: Currency;
+  key: string | null;
+  paymentIntentId: string;
+  refundId: string;
+  amountCents: number;
+};
+
+/** A reversal on Stripe's side, with the key that made it (null: seeded). */
+export type LedgerReversal = {
   requestId: string;
   currency: Currency;
   key: string | null;
   transferId: string;
-  amountCents: number;
-  amountReversedCents: number;
-  destinationAccountId: string;
+  reversalId: string;
+};
+
+type RefundInput = Parameters<PaymentsDriver["refund"]>[0];
+type RefundAnswer = Awaited<ReturnType<PaymentsDriver["refund"]>>;
+type ReversalInput = Parameters<PaymentsDriver["reverseTransfer"]>[0];
+type ReversalAnswer = Awaited<ReturnType<PaymentsDriver["reverseTransfer"]>>;
+
+/** The calls that make an entry in one of Stripe's ledgers, and each one's answer. */
+type LedgerMethod = "createTransfer" | "refund" | "reverseTransfer";
+type LedgerAnswerOf = {
+  createTransfer: TransferAnswer;
+  refund: RefundAnswer;
+  reverseTransfer: ReversalAnswer;
+};
+
+/** What a ledger call's claim rules read of its request and its movement row, as committed when it arrived. */
+type ClaimRow = {
+  requestStatus: LicenseRequestStatus;
+  attempt: number | null;
+  claimedAt: Date | null;
+};
+
+/**
+ * The request, its license and its buyer_refund or transfer_reversal row as committed when a refund or a
+ * reverseTransfer arrived (07 D24, D86); the row's fields are null when there is none, the license's when it isn't issued.
+ */
+export type CommittedReturn = {
+  requestStatus: LicenseRequestStatus;
+  requestCurrency: Currency;
+  paymentIntentId: string | null;
+  amountTotalCents: number;
+  revokedAt: Date | null;
+  revokedReason: RevokedReason | null;
+  movementStatus: MoneyMovementStatus | null;
+  attempt: number | null;
+  claimedAt: Date | null;
+};
+
+/** A refund as the double saw it (also in `log`). */
+export type RefundCall = ScriptedCall & {
+  method: "refund";
+  key: string;
+  requestId: string;
+  paymentIntentId: string;
+  /** Read on the pool when the call arrived, before the double acted; null when the request doesn't exist. */
+  committed: CommittedReturn | null;
+  answered?: RefundAnswer | "threw";
+};
+
+/** A reverseTransfer as the double saw it (also in `log`). */
+export type ReversalCall = ScriptedCall & {
+  method: "reverseTransfer";
+  key: string;
+  requestId: string;
+  transferId: string;
+  committed: CommittedReturn | null;
+  answered?: ReversalAnswer | "threw";
 };
 
 /** The request and its creator_transfer row as committed when a createTransfer arrived (07 D24, D75); null: no row. */
@@ -178,11 +272,15 @@ type CallOf = {
   capture: MoneyCall;
   cancel: MoneyCall;
   createTransfer: TransferCall;
+  refund: RefundCall;
+  reverseTransfer: ReversalCall;
 };
 type OutcomeOf = {
   capture: Outcome;
   cancel: Outcome;
   createTransfer: TransferOutcome;
+  refund: TransferOutcome;
+  reverseTransfer: TransferOutcome;
 };
 
 type HookOptions = { phase?: HookPhase; times?: number };
@@ -202,7 +300,13 @@ type Held<C> = {
 };
 
 /** The hooked methods, in the order leftovers lists them. */
-const HOOKED: readonly HookedMethod[] = ["capture", "cancel", "createTransfer"];
+const HOOKED: readonly HookedMethod[] = [
+  "capture",
+  "cancel",
+  "createTransfer",
+  "refund",
+  "reverseTransfer",
+];
 
 /** How long a held call waits before it lets go by itself, as a problem (hold). */
 const HOLD_LIMIT_MS = 5_000;
@@ -264,6 +368,36 @@ async function committedTransfer(requestId: string) {
 }
 
 type TransferRow = NonNullable<Awaited<ReturnType<typeof committedTransfer>>>;
+
+/** What a refund or a reverseTransfer checks its rules against: the request, its license and its `kind` row, committed. */
+async function committedReturn(
+  requestId: string,
+  kind: "buyer_refund" | "transfer_reversal",
+): Promise<CommittedReturn | null> {
+  const [row] = await db
+    .select({
+      requestStatus: licenseRequest.status,
+      requestCurrency: licenseRequest.currency,
+      paymentIntentId: licenseRequest.stripePaymentIntentId,
+      amountTotalCents: licenseRequest.amountTotalCents,
+      revokedAt: license.revokedAt,
+      revokedReason: license.revokedReason,
+      movementStatus: moneyMovement.status,
+      attempt: moneyMovement.attempt,
+      claimedAt: moneyMovement.claimedAt,
+    })
+    .from(licenseRequest)
+    .leftJoin(license, eq(license.licenseRequestId, licenseRequest.id))
+    .leftJoin(
+      moneyMovement,
+      and(
+        eq(moneyMovement.licenseRequestId, licenseRequest.id),
+        eq(moneyMovement.kind, kind),
+      ),
+    )
+    .where(eq(licenseRequest.id, requestId));
+  return row ?? null;
+}
 
 /** A transient or permanent outcome's answer, for a money call and a transfer alike. */
 function failureOf(outcome: FailureOutcome): MoneyCallFailure {
@@ -364,16 +498,22 @@ export function createScriptedPayments() {
     capture: [],
     cancel: [],
     createTransfer: [],
+    refund: [],
+    reverseTransfer: [],
   };
   const queues: { [M in HookedMethod]: OutcomeOf[M][] } = {
     capture: [],
     cancel: [],
     createTransfer: [],
+    refund: [],
+    reverseTransfer: [],
   };
   const hooks: { [M in HookedMethod]: Hook<M>[] } = {
     capture: [],
     cancel: [],
     createTransfer: [],
+    refund: [],
+    reverseTransfer: [],
   };
   const drivers = new Map<Currency, PaymentsDriver>();
   const pis = new Map<string, PiStatus>();
@@ -382,6 +522,9 @@ export function createScriptedPayments() {
   /** Stripe's transfers, every currency's, in the order they were made. */
   const ledger: LedgerTransfer[] = [];
   const authorizationAnswers: AuthorizationAnswer[] = [];
+  /** Stripe's refunds and reversals, every currency's, in the order they were made (P21b). */
+  const refunds: LedgerRefund[] = [];
+  const reversals: LedgerReversal[] = [];
   const holds = new Set<() => void>();
   /** Capture keys Stripe captured under: the same key answers ok again. */
   const captured = new Set<string>();
@@ -554,29 +697,52 @@ export function createScriptedPayments() {
     return answer;
   }
 
-  /** 07 D24, D74, D75 as a createTransfer arrives: a problem for each rule the committed rows break. */
-  function checkTransfer(call: TransferCall, row: TransferRow | null): void {
-    const broken = (rule: string): void => {
+  /** A problem under `call`'s key: a rule the committed rows break. */
+  const brokenBy =
+    (call: { key: string }) =>
+    (rule: string): void => {
       problems.push(`${call.key}: ${rule}`);
     };
+
+  /**
+   * The rules every ledger call checks as it arrives (07 D24, D75): its request exists and is approved (`decision`
+   * names where the rule is), and its key is the committed claim's on its `kind` row. False when there is no request.
+   */
+  function claimChecked<R extends ClaimRow>(
+    call: { key: string; requestId: string },
+    row: R | null,
+    kind: "creator_transfer" | "buyer_refund" | "transfer_reversal",
+    keyOf: (requestId: string, attempt: number) => string,
+    decision: "07 D74" | "07 D86",
+  ): row is R {
+    const broken = brokenBy(call);
     if (!row) {
       broken(`no request ${call.requestId}`);
-      return;
+      return false;
     }
     if (row.requestStatus !== "approved") {
-      broken(`the request is ${row.requestStatus}, not approved (07 D74)`);
+      broken(`the request is ${row.requestStatus}, not approved (${decision})`);
     }
-    const pi = row.paymentIntentId ? pis.get(row.paymentIntentId) : undefined;
-    if (pi && pi !== "succeeded") {
-      broken(`${row.paymentIntentId} is ${pi}, not captured (07 D74)`);
-    }
-    // attempt is null only with no creator_transfer row, so no claim either.
+    // attempt is null only with no `kind` row, so no claim either.
     if (row.claimedAt === null || row.attempt === null) {
-      broken("no committed claim on its creator_transfer row (07 D24, D75)");
-    } else if (call.key !== transferKey(call.requestId, row.attempt)) {
+      broken(`no committed claim on its ${kind} row (07 D24, D75)`);
+    } else if (call.key !== keyOf(call.requestId, row.attempt)) {
       broken(
         `not the key of the committed claim, attempt ${row.attempt} (07 D75)`,
       );
+    }
+    return true;
+  }
+
+  /** 07 D24, D74, D75 as a createTransfer arrives: a problem for each rule the committed rows break. */
+  function checkTransfer(call: TransferCall, row: TransferRow | null): void {
+    if (!claimChecked(call, row, "creator_transfer", transferKey, "07 D74")) {
+      return;
+    }
+    const broken = brokenBy(call);
+    const pi = row.paymentIntentId ? pis.get(row.paymentIntentId) : undefined;
+    if (pi && pi !== "succeeded") {
+      broken(`${row.paymentIntentId} is ${pi}, not captured (07 D74)`);
     }
     if (call.amountCents !== row.licensePriceCents) {
       broken(
@@ -590,11 +756,19 @@ export function createScriptedPayments() {
     }
   }
 
-  /** `tr_scripted_<request id>_<n>`: the request's nth transfer in the ledger. */
-  function scriptedTransferId(requestId: string): string {
-    const n = ledger.filter((entry) => entry.requestId === requestId).length;
-    return `tr_scripted_${requestId}_${n + 1}`;
+  /** `<prefix><request id>_<n>`: the request's nth entry in `entries`, one of the ledgers. */
+  function ledgerId(
+    prefix: string,
+    entries: readonly { requestId: string }[],
+    requestId: string,
+  ): string {
+    const n = entries.filter((entry) => entry.requestId === requestId).length;
+    return `${prefix}${requestId}_${n + 1}`;
   }
+
+  /** `tr_scripted_<request id>_<n>`: the request's nth transfer in the ledger. */
+  const scriptedTransferId = (requestId: string) =>
+    ledgerId("tr_scripted_", ledger, requestId);
 
   /**
    * The ledger's transfer under `call`'s key on its currency (Stripe's idempotency: the same key, the same transfer),
@@ -628,10 +802,52 @@ export function createScriptedPayments() {
         : `tr_fake_${call.requestId}`,
       amountCents: call.amountCents,
       amountReversedCents: 0,
+      reversalId: null,
       destinationAccountId: call.destinationAccountId,
     };
     ledger.push(made);
     return made;
+  }
+
+  /** A ledger call's request id; a problem and a throw when it isn't one. */
+  function requestIdOf(input: {
+    requestId: string;
+    idempotencyKey: string;
+  }): string {
+    const { requestId, idempotencyKey: key } = input;
+    if (!isUuid(requestId)) {
+      problems.push(`${key}: ${requestId} isn't a request id`);
+      throw new Error("fake driver: not a request id");
+    }
+    return requestId;
+  }
+
+  /**
+   * The rest of a ledger call once its committed rows are read into `call`: logged, its rules checked (`check`), its
+   * `before` hooks, then its ledger by the queued outcome (ok and ambiguous answer `made(queued)`), its `during` hooks,
+   * and the answer or the lost connection.
+   */
+  async function ledgerCall<M extends LedgerMethod>(
+    method: M,
+    call: CallOf[M],
+    check: () => void,
+    made: (queued: boolean) => LedgerAnswerOf[M],
+  ): Promise<LedgerAnswerOf[M]> {
+    log.push(call);
+    calls[method].push(call);
+    check();
+    await runHooks(method, call, "before");
+    const outcome: TransferOutcome | undefined = queues[method].shift();
+    const answer: LedgerAnswerOf[M] =
+      outcome === undefined || outcome === "ok" || outcome === "ambiguous"
+        ? made(outcome !== undefined)
+        : failureOf(outcome);
+    await runHooks(method, call, "during");
+    // Any ledger call's answer slot: TypeScript can't pair `call`'s method with `answer`'s, which are the same M.
+    const settled: CallOf[LedgerMethod] = call;
+    settled.answered = outcome === "ambiguous" ? "threw" : answer;
+    if (outcome === "ambiguous") throw lostAnswer(call.key);
+    return answer;
   }
 
   /**
@@ -642,17 +858,13 @@ export function createScriptedPayments() {
     currency: Currency,
     input: TransferInput,
   ): Promise<TransferAnswer> {
-    const { requestId, idempotencyKey: key } = input;
-    if (!isUuid(requestId)) {
-      problems.push(`${key}: ${requestId} isn't a request id`);
-      throw new Error("fake driver: not a request id");
-    }
+    const requestId = requestIdOf(input);
     const row = await committedTransfer(requestId);
     const call: TransferCall = {
       method: "createTransfer",
       currency,
       args: [input],
-      key,
+      key: input.idempotencyKey,
       requestId,
       amountCents: input.amountCents,
       chargeId: input.chargeId,
@@ -664,22 +876,224 @@ export function createScriptedPayments() {
         claimedAt: row.claimedAt,
       },
     };
-    log.push(call);
-    calls.createTransfer.push(call);
-    checkTransfer(call, row);
-    await runHooks("createTransfer", call, "before");
-    const outcome = queues.createTransfer.shift();
-    const answer: TransferAnswer =
-      outcome === undefined || outcome === "ok" || outcome === "ambiguous"
-        ? {
-            ok: true,
-            transferId: ledgerTransfer(call, outcome !== undefined).transferId,
-          }
-        : failureOf(outcome);
-    await runHooks("createTransfer", call, "during");
-    call.answered = outcome === "ambiguous" ? "threw" : answer;
-    if (outcome === "ambiguous") throw lostAnswer(key);
-    return answer;
+    return ledgerCall(
+      "createTransfer",
+      call,
+      () => checkTransfer(call, row),
+      (queued) => ({
+        ok: true,
+        transferId: ledgerTransfer(call, queued).transferId,
+      }),
+    );
+  }
+
+  /**
+   * 07 D24, D86, D95 as a refund or a reverseTransfer arrives: a problem for each rule the committed rows break. `keyOf`
+   * is the method's key builder, `kind` its movement.
+   */
+  function checkReturn(
+    call: RefundCall | ReversalCall,
+    row: CommittedReturn | null,
+    kind: "buyer_refund" | "transfer_reversal",
+    keyOf: (requestId: string, attempt: number) => string,
+  ): void {
+    if (!claimChecked(call, row, kind, keyOf, "07 D86")) return;
+    const broken = brokenBy(call);
+    if (row.requestCurrency !== call.currency) {
+      broken(
+        `a ${row.requestCurrency} request on the ${call.currency} account (07 D95)`,
+      );
+    }
+    if (row.revokedAt === null) broken("its license isn't revoked (07 D86)");
+    if (
+      row.movementStatus === "succeeded" ||
+      row.movementStatus === "canceled"
+    ) {
+      broken(`its ${kind} row is already ${row.movementStatus}`);
+    }
+  }
+
+  /** What the ledger has refunded of `paymentIntentId` on `currency`'s account, and its newest refund. */
+  function refundedOf(currency: Currency, paymentIntentId: string) {
+    const made = refunds.filter(
+      (entry) =>
+        entry.currency === currency &&
+        entry.paymentIntentId === paymentIntentId,
+    );
+    return {
+      amountRefundedCents: made.reduce((sum, r) => sum + r.amountCents, 0),
+      refundId: made.at(-1)?.refundId ?? null,
+    };
+  }
+
+  /**
+   * The ledger's refund under `call`'s key on its currency (Stripe's idempotency), made the first time for what is left
+   * of the charge: `re_scripted_…` when an outcome was queued, the fake's `re_fake_<request id>` otherwise.
+   */
+  function ledgerRefund(call: RefundCall, queued: boolean): LedgerRefund {
+    const known = refunds.find(
+      (entry) => entry.currency === call.currency && entry.key === call.key,
+    );
+    if (known) {
+      if (known.paymentIntentId !== call.paymentIntentId) {
+        problems.push(
+          `${call.key} reused with other parameters: Stripe refuses it`,
+        );
+      }
+      return known;
+    }
+    const total = call.committed?.amountTotalCents ?? 0;
+    const { amountRefundedCents } = refundedOf(
+      call.currency,
+      call.paymentIntentId,
+    );
+    if (amountRefundedCents > 0) {
+      problems.push(
+        `${call.key}: a second refund of ${call.paymentIntentId} (07 D86)`,
+      );
+    }
+    const made: LedgerRefund = {
+      requestId: call.requestId,
+      currency: call.currency,
+      key: call.key,
+      paymentIntentId: call.paymentIntentId,
+      refundId: queued
+        ? ledgerId("re_scripted_", refunds, call.requestId)
+        : `re_fake_${call.requestId}`,
+      amountCents: total - amountRefundedCents,
+    };
+    refunds.push(made);
+    return made;
+  }
+
+  /**
+   * The ledger's reversal under `call`'s key on its currency, made the first time: the transfer reversed in full,
+   * `trr_scripted_…` when an outcome was queued, the fake's `trr_fake_<request id>` otherwise.
+   */
+  function ledgerReversal(call: ReversalCall, queued: boolean): LedgerReversal {
+    const known = reversals.find(
+      (entry) => entry.currency === call.currency && entry.key === call.key,
+    );
+    if (known) {
+      if (known.transferId !== call.transferId) {
+        problems.push(
+          `${call.key} reused with other parameters: Stripe refuses it`,
+        );
+      }
+      return known;
+    }
+    const sent = ledger.find(
+      (entry) =>
+        entry.currency === call.currency &&
+        entry.transferId === call.transferId,
+    );
+    if (!sent || sent.requestId !== call.requestId) {
+      problems.push(
+        `${call.key}: no transfer ${call.transferId} for the request on the ${call.currency} account`,
+      );
+    } else if (sent.amountReversedCents >= sent.amountCents) {
+      problems.push(`${call.key}: a second reversal of ${sent.transferId}`);
+    }
+    return recordReversal(
+      {
+        requestId: call.requestId,
+        currency: call.currency,
+        key: call.key,
+        transferId: call.transferId,
+        reversalId: queued
+          ? ledgerId("trr_scripted_", reversals, call.requestId)
+          : `trr_fake_${call.requestId}`,
+      },
+      sent,
+    );
+  }
+
+  /** Records reversal `made` and, when the ledger holds it, reverses its transfer `sent` in full. */
+  function recordReversal(
+    made: LedgerReversal,
+    sent: LedgerTransfer | undefined,
+  ): LedgerReversal {
+    reversals.push(made);
+    if (sent) {
+      sent.amountReversedCents = sent.amountCents;
+      sent.reversalId = made.reversalId;
+    }
+    return made;
+  }
+
+  /**
+   * A refund: the committed rows read and the rules checked as it arrives (a refund also needs the request's own
+   * PaymentIntent, captured, and a reason other than payment_reversed), its `before` hooks, then the refund ledger by
+   * the queued outcome, its `during` hooks, and the answer or the lost connection.
+   */
+  async function refundCall(
+    currency: Currency,
+    input: RefundInput,
+  ): Promise<RefundAnswer> {
+    const requestId = requestIdOf(input);
+    const { paymentIntentId, idempotencyKey: key } = input;
+    const row = await committedReturn(requestId, "buyer_refund");
+    const call: RefundCall = {
+      method: "refund",
+      currency,
+      args: [input],
+      key,
+      requestId,
+      paymentIntentId,
+      committed: row,
+    };
+    const check = () => {
+      checkReturn(call, row, "buyer_refund", refundKey);
+      if (row && paymentIntentId !== row.paymentIntentId) {
+        problems.push(
+          `${key}: ${paymentIntentId} isn't the request's (07 D86)`,
+        );
+      }
+      if (row?.revokedReason === "payment_reversed") {
+        problems.push(
+          `${key}: a refund of a payment already reversed (07 D86)`,
+        );
+      }
+      const pi = pis.get(paymentIntentId);
+      if (pi && pi !== "succeeded") {
+        problems.push(`${key}: ${paymentIntentId} is ${pi}, not captured`);
+      }
+    };
+    return ledgerCall("refund", call, check, (queued) => ({
+      ok: true,
+      refundId: ledgerRefund(call, queued).refundId,
+      status: "succeeded",
+    }));
+  }
+
+  /**
+   * A reverseTransfer: the committed rows read and the rules checked as it arrives, its `before` hooks, then the
+   * transfer ledger's reversal by the queued outcome, its `during` hooks, and the answer or the lost connection.
+   */
+  async function reversalCall(
+    currency: Currency,
+    input: ReversalInput,
+  ): Promise<ReversalAnswer> {
+    const requestId = requestIdOf(input);
+    const row = await committedReturn(requestId, "transfer_reversal");
+    const call: ReversalCall = {
+      method: "reverseTransfer",
+      currency,
+      args: [input],
+      key: input.idempotencyKey,
+      requestId,
+      transferId: input.transferId,
+      committed: row,
+    };
+    return ledgerCall(
+      "reverseTransfer",
+      call,
+      () => checkReturn(call, row, "transfer_reversal", transferReversalKey),
+      (queued) => ({
+        ok: true,
+        reversalId: ledgerReversal(call, queued).reversalId,
+      }),
+    );
   }
 
   /** The double on `currency`'s account; every currency shares the scripts, the PaymentIntents and the log. */
@@ -741,17 +1155,19 @@ export function createScriptedPayments() {
               transferId,
               amountCents,
               amountReversedCents,
+              reversalId,
               destinationAccountId,
             }) => ({
               transferId,
               amountCents,
               amountReversedCents,
+              reversalId,
               destinationAccountId,
             }),
           );
       }),
-      refund: logged("refund", fake.refund),
-      reverseTransfer: logged("reverseTransfer", fake.reverseTransfer),
+      refund: (input) => refundCall(currency, input),
+      reverseTransfer: (input) => reversalCall(currency, input),
       parseWebhook: logged("parseWebhook", fake.parseWebhook),
       retrieveCheckout: logged(
         "retrieveCheckout",
@@ -761,7 +1177,7 @@ export function createScriptedPayments() {
           return { ...(await fake.retrieveCheckout(sessionId)), ...script };
         },
       ),
-      // The fake's answer with the tracked status, then P16b's script, then the next queued answer.
+      // The fake's answer with the tracked status and the refund ledger's, then P16b's script, then the next queued answer.
       getAuthorization: logged(
         "getAuthorization",
         async (paymentIntentId: string) => {
@@ -784,6 +1200,7 @@ export function createScriptedPayments() {
           return {
             ...(await fake.getAuthorization(paymentIntentId)),
             ...(status ? { status } : {}),
+            ...refundedOf(currency, paymentIntentId),
             ...script,
             ...(typeof answer === "object" ? answer : {}),
           };
@@ -808,6 +1225,8 @@ export function createScriptedPayments() {
       case "capture":
       case "cancel":
       case "createTransfer":
+      case "refund":
+      case "reverseTransfer":
         return [...calls[method]];
       default:
         return log.filter((call) => call.method === method);
@@ -886,8 +1305,8 @@ export function createScriptedPayments() {
   }
 
   /**
-   * Queues the outcomes of the next `method` calls, one per call; when none is left, Stripe's own behaviour (a transfer:
-   * ok, as the fake makes it).
+   * Queues the outcomes of the next `method` calls, one per call; when none is left, Stripe's own behaviour (a transfer,
+   * a refund or a reversal: ok, as the fake makes it).
    */
   function next<M extends HookedMethod>(
     method: M,
@@ -905,7 +1324,7 @@ export function createScriptedPayments() {
       const from = log.length;
       return () => log.slice(from).map(({ method }) => method);
     },
-    /** The idempotency keys of one money method's or the transfer's calls, in order. */
+    /** The idempotency keys of one hooked method's calls, in order. */
     keys: (method: HookedMethod) => callsOf(method).map((call) => call.key),
     /** The cancels, in order, as [idempotency key, Stripe's reason]. */
     cancels: () => callsOf("cancel").map((call) => [call.key, call.reason]),
@@ -924,6 +1343,8 @@ export function createScriptedPayments() {
     },
     /** Stripe's transfers, in the order they were made: what findTransfers lists, per currency. */
     ledger,
+    /** Stripe's refunds (P21b), in the order they were made: what getAuthorization reports, per PaymentIntent. */
+    refunds,
     /**
      * Puts a transfer on Stripe's side with no call: a paid row to start from, or one that doesn't match its row
      * (another amount or account, partly reversed). Defaults: cad, `tr_scripted_<request id>_<n>`, nothing reversed.
@@ -950,10 +1371,57 @@ export function createScriptedPayments() {
         transferId: transferId ?? scriptedTransferId(requestId),
         amountCents,
         amountReversedCents,
+        reversalId: null,
         destinationAccountId,
       };
       ledger.push(seeded);
       return seeded;
+    },
+    /**
+     * Refunds `amountCents` of the request's PaymentIntent with no call, as a refund in the Dashboard would (P21b).
+     * Defaults: cad, `pi_fake_<request id>`, `re_dashboard_<request id>_<n>`.
+     */
+    seedRefund({
+      requestId,
+      currency = "cad",
+      amountCents,
+      refundId,
+    }: {
+      requestId: string;
+      currency?: Currency;
+      amountCents: number;
+      refundId?: string;
+    }): LedgerRefund {
+      const seeded: LedgerRefund = {
+        requestId,
+        currency,
+        key: null,
+        paymentIntentId: `pi_fake_${requestId}`,
+        refundId: refundId ?? ledgerId("re_dashboard_", refunds, requestId),
+        amountCents,
+      };
+      refunds.push(seeded);
+      return seeded;
+    },
+    /**
+     * Reverses the ledger's transfer `transferId` in full with no call, as a reversal made elsewhere would (P21b).
+     * Default id: `trr_dashboard_<request id>_<n>`.
+     */
+    seedReversal(transferId: string, reversalId?: string): LedgerReversal {
+      const sent = ledger.find((entry) => entry.transferId === transferId);
+      if (!sent) throw new Error(`seedReversal: no transfer ${transferId}`);
+      const { requestId } = sent;
+      return recordReversal(
+        {
+          requestId,
+          currency: sent.currency,
+          key: null,
+          transferId,
+          reversalId:
+            reversalId ?? ledgerId("trr_dashboard_", reversals, requestId),
+        },
+        sent,
+      );
     },
     onCall,
     hold,
@@ -977,7 +1445,7 @@ export function createScriptedPayments() {
     violations,
     /**
      * A hook's error, a contradicting script, an untracked PaymentIntent met on an ending, a call held too long, a
-     * transfer that breaks a money-safety rule.
+     * transfer, refund or reversal that breaks a money-safety rule.
      */
     problems,
     leftovers,

@@ -44,6 +44,7 @@ import { CHECKOUT_HOLD_MINUTES } from "../../src/lib/licensing/checkout-hold";
 import type { LicenseSnapshotV1 } from "../../src/lib/licensing/snapshot";
 import { defaultRateOptions } from "../../src/lib/pricing/presets";
 import { DAY_MS, HOUR_MS, MINUTE_MS } from "../../src/lib/time";
+import type { AdminActor } from "../../src/server/auth/actor";
 import { generateLicenseCode } from "../../src/server/codes/license-code";
 
 /** Random lowercase hex, for unique test values. */
@@ -88,6 +89,15 @@ export async function insertUser(
     emailVerified: true,
     ...overrides,
   });
+}
+
+/**
+ * An admin actor on a real user row (license.revoked_by_user_id and audit_event.actor_user_id reference it), as
+ * requireAdmin's user builds it.
+ */
+export async function newAdmin(): Promise<AdminActor> {
+  const row = await insertUser({ role: "admin" });
+  return { kind: "admin", userId: row.id };
 }
 
 /**

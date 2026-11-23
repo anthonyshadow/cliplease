@@ -21,6 +21,7 @@ import type {
 import type {
   AuditActorType,
   Currency,
+  MoneyMovementKind,
   PayoutsStatus,
 } from "../../src/lib/domain/values";
 import { MINUTE_MS } from "../../src/lib/time";
@@ -145,10 +146,11 @@ export async function transferOf(requestId: string): Promise<MoneyMovement> {
   return movement;
 }
 
-/** Sets columns of the request's creator transfer, as a test's SQL would. */
+/** Sets columns of the request's movement of `kind` (its creator transfer unless given), as a test's SQL would. */
 export async function updateTransfer(
   requestId: string,
   set: PgUpdateSetSource<typeof moneyMovement>,
+  kind: MoneyMovementKind = "creator_transfer",
 ): Promise<void> {
   const moved = await db
     .update(moneyMovement)
@@ -156,23 +158,31 @@ export async function updateTransfer(
     .where(
       and(
         eq(moneyMovement.licenseRequestId, requestId),
-        eq(moneyMovement.kind, "creator_transfer"),
+        eq(moneyMovement.kind, kind),
       ),
     )
     .returning({ id: moneyMovement.id });
-  if (moved.length !== 1)
-    throw new Error("updateTransfer: no creator transfer");
+  if (moved.length !== 1) throw new Error(`updateTransfer: no ${kind}`);
 }
 
 /** The cron's sweep, as the route's STEPS entry `moneyMovements` runs it (02 §8.4): `limit` is its batch. */
 export const cronSweep = (limit = 50) =>
   sweepMoneyMovements({ olderThanMinutes: 10, limit, actor: CRON });
 
-/** The request's transfer last touched `minutes` ago on the database's clock, as the sweeps' updated_at filters read it. */
-export const touchedMinutesAgo = (requestId: string, minutes: number) =>
-  updateTransfer(requestId, {
-    updatedAt: sql`now() - make_interval(mins => ${minutes}::int)`,
-  });
+/**
+ * The request's movement of `kind` (its transfer unless given) last touched `minutes` ago on the database's clock, as
+ * the sweeps' updated_at filters read it.
+ */
+export const touchedMinutesAgo = (
+  requestId: string,
+  minutes: number,
+  kind: MoneyMovementKind = "creator_transfer",
+) =>
+  updateTransfer(
+    requestId,
+    { updatedAt: sql`now() - make_interval(mins => ${minutes}::int)` },
+    kind,
+  );
 
 /** `minutes` ago on the app's clock (a claim's, a payouts reading's). */
 export const minutesAgo = (minutes: number) =>
@@ -210,25 +220,46 @@ export async function storedPayouts(
 const SUCCEEDED = "license_request.transfer_succeeded";
 const FAILED = "license_request.transfer_failed";
 
-/** The request's transfer audits, oldest first; none names an account or carries an email (07 D47). */
-export async function transferAudits(requestId: string) {
+/**
+ * Row `entityId`'s (an `entityType`) audits of `actions`, oldest first, with the actor; none names an account or
+ * carries an email (07 D47).
+ */
+export async function auditsFor(
+  entityType: string,
+  entityId: string,
+  actions: readonly string[],
+) {
   const rows = await db
     .select({
       action: auditEvent.action,
       data: auditEvent.data,
       actorType: auditEvent.actorType,
+      actorUserId: auditEvent.actorUserId,
     })
     .from(auditEvent)
     .where(
       and(
-        eq(auditEvent.entityType, "license_request"),
-        eq(auditEvent.entityId, requestId),
-        inArray(auditEvent.action, [SUCCEEDED, FAILED]),
+        eq(auditEvent.entityType, entityType),
+        eq(auditEvent.entityId, entityId),
+        inArray(auditEvent.action, actions),
       ),
     )
     .orderBy(asc(auditEvent.createdAt));
   expect(JSON.stringify(rows)).not.toMatch(/acct_|@/);
   return rows;
+}
+
+/** The request's transfer audits, oldest first, each by its actor's type (a system send has no user). */
+export async function transferAudits(requestId: string) {
+  const rows = await auditsFor("license_request", requestId, [
+    SUCCEEDED,
+    FAILED,
+  ]);
+  return rows.map(({ action, data, actorType }) => ({
+    action,
+    data,
+    actorType,
+  }));
 }
 
 type AuditedAs = {
@@ -240,8 +271,11 @@ type AuditedAs = {
   currency?: Currency;
 };
 
-const sourceOf = (by: AuditedAs["by"], source: TransferSource = "lazy") =>
-  by === "system" ? { source } : {};
+/** A system send's audit data names what scheduled it (`source`); Stripe's and the cron's don't (07 D47). */
+export const sourceOf = (
+  by: AuditedAs["by"],
+  source: TransferSource = "lazy",
+) => (by === "system" ? { source } : {});
 
 type PaidAs = AuditedAs & { reconciled?: boolean };
 

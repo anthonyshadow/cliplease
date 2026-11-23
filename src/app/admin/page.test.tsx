@@ -32,6 +32,8 @@ vi.mock("@/server/admin/queries", () => mocks.loaders);
 vi.mock("@/app/admin/actions", () => ({
   adminDisableVideo: vi.fn(),
   adminEnableVideo: vi.fn(),
+  adminRevokeLicense: vi.fn(),
+  adminRetryMoneyMovement: vi.fn(),
 }));
 
 const ADMIN: SessionUser = {
@@ -135,7 +137,7 @@ describe("AdminPage (05 §7; 01 A.1–A.3)", () => {
     },
   );
 
-  it("?tab=events shows the three lists under their headings", async () => {
+  it("?tab=events shows the four lists under their headings", async () => {
     await renderTab("events");
     expect(currentTab()).toEqual(["Events"]);
     expect(loaders.listAdminEvents).toHaveBeenCalledExactlyOnceWith({
@@ -144,7 +146,12 @@ describe("AdminPage (05 §7; 01 A.1–A.3)", () => {
     });
     expect(
       screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent),
-    ).toEqual(["Latest events", "Failed emails", "Unprocessed Stripe events"]);
+    ).toEqual([
+      "Latest events",
+      "Failed money movements",
+      "Failed emails",
+      "Unprocessed Stripe events",
+    ]);
   });
 
   it("shows “Nothing here yet.” for an empty tab, under the caption", async () => {

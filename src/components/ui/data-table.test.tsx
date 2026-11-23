@@ -89,6 +89,48 @@ describe("DataTable (04 §9.31; 07 D144, D146)", () => {
     ]);
   });
 
+  it("gives a stacked row whose action cells are all null no actions line; one with any action keeps only those", () => {
+    type Licensed = { code: string; revoked: boolean };
+    const { container } = render(
+      <DataTable
+        caption="Licenses"
+        columns={[
+          { header: "Code", cell: (row: Licensed) => row.code },
+          {
+            header: "Revoke",
+            action: true,
+            cell: (row: Licensed) =>
+              row.revoked ? null : <button type="button">Revoke</button>,
+          },
+          { header: "Retry", action: true, cell: () => null },
+        ]}
+        rows={[
+          { code: "CL-7K3M-9QXA", revoked: false },
+          { code: "CL-4F8T-2WRB", revoked: true },
+        ]}
+        rowKey={(row) => row.code}
+      />,
+    );
+    const stacked = container.querySelector(
+      "[data-table-stacked]",
+    ) as HTMLElement;
+    const [open, revoked] = within(stacked).getAllByRole("listitem");
+    expect(open.children).toHaveLength(2);
+    expect(open.lastElementChild?.tagName).toBe("DIV");
+    expect(open.lastElementChild?.textContent).toBe("Revoke");
+    expect(revoked.children).toHaveLength(1);
+    expect(revoked.lastElementChild?.tagName).toBe("DL");
+    expect(within(revoked).queryByRole("button")).toBeNull();
+    // The table keeps every row's action cells, empty or not.
+    const wide = container.querySelector("[data-table-wide]") as HTMLElement;
+    expect(
+      within(wide)
+        .getAllByRole("row")
+        .slice(1)
+        .map((tr) => tr.querySelectorAll("td").length),
+    ).toEqual([3, 3]);
+  });
+
   it("gives the table every header, an action's for screen readers only, and right-aligns numbers", () => {
     const { wide } = renderTable();
     const headers = within(wide).getAllByRole("columnheader");
@@ -105,6 +147,32 @@ describe("DataTable (04 §9.31; 07 D144, D146)", () => {
     expect(headers[3].className).toContain("text-right");
     const total = within(wide).getAllByRole("cell")[3];
     expect(total.className).toContain("tabular-nums");
+  });
+
+  it("right-aligns an action column only when it asks to (align end), without tabular figures", () => {
+    const { container } = render(
+      <DataTable
+        caption="Licenses"
+        columns={[
+          ...COLUMNS,
+          {
+            header: "Action",
+            action: true,
+            align: "end",
+            cell: () => <button type="button">Revoke</button>,
+          },
+        ]}
+        rows={ROWS}
+        rowKey={(row) => row.code}
+      />,
+    );
+    const wide = container.querySelector("[data-table-wide]") as HTMLElement;
+    const [, , , , link, action] = within(wide).getAllByRole("cell");
+    expect(link.className).not.toContain("text-right");
+    expect(action.className).toContain("text-right");
+    expect(action.className).not.toContain("tabular-nums");
+    const headers = within(wide).getAllByRole("columnheader");
+    expect(headers.at(-1)?.className).toContain("text-right");
   });
 });
 

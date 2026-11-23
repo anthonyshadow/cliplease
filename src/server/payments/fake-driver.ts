@@ -2,15 +2,16 @@ import "server-only";
 import { and, eq, isNotNull } from "drizzle-orm";
 import { db } from "@/db/client";
 import { creatorProfile, licenseRequest, moneyMovement } from "@/db/schema";
-import type { Currency } from "@/lib/domain/values";
+import type { Currency, MoneyMovementKind } from "@/lib/domain/values";
 import { DAY_MS } from "@/lib/time";
 import { isUuid } from "@/lib/validation/uuid";
-import type { Authorization, PaymentsDriver, PiStatus } from "./driver";
+import type {
+  Authorization,
+  FoundTransfer,
+  PaymentsDriver,
+  PiStatus,
+} from "./driver";
 import { transferGroupFor } from "./keys";
-
-const notYet = (method: string, prompt: string) => async (): Promise<never> => {
-  throw new Error(`fake driver: ${method} arrives in ${prompt}`);
-};
 
 /** A card hold lasts 7 days (07 D35). */
 const HOLD_MS = 7 * DAY_MS;
@@ -55,10 +56,33 @@ async function requestRow(requestId: string, currency: Currency) {
 type RequestRow = Awaited<ReturnType<typeof requestRow>>;
 
 /**
- * The request's transfers as Stripe would list them (02 §5.8): the creator_transfer row once it has recorded a transfer,
- * to the creator's account. P21b derives amountReversedCents from the reversal row.
+ * What a revoke gave back on the request (07 D35, D86), as Stripe would report it: the amount of its `kind` row once that
+ * row succeeded, and the fake id `prefix` + the request id when that amount is > 0 (owner answer Q-206).
  */
-async function transfersOf(requestId: string) {
+async function returned(
+  requestId: string,
+  kind: Extract<MoneyMovementKind, "buyer_refund" | "transfer_reversal">,
+  prefix: "re_fake_" | "trr_fake_",
+): Promise<{ cents: number; id: string | null }> {
+  const [row] = await db
+    .select({ amountCents: moneyMovement.amountCents })
+    .from(moneyMovement)
+    .where(
+      and(
+        eq(moneyMovement.licenseRequestId, requestId),
+        eq(moneyMovement.kind, kind),
+        eq(moneyMovement.status, "succeeded"),
+      ),
+    );
+  const cents = row?.amountCents ?? 0;
+  return { cents, id: cents > 0 ? `${prefix}${requestId}` : null };
+}
+
+/**
+ * The request's transfers as Stripe would list them (02 §5.8): the creator_transfer row once it has recorded a transfer,
+ * to the creator's account, reversed by the transfer_reversal row once that succeeded.
+ */
+async function transfersOf(requestId: string): Promise<FoundTransfer[]> {
   const rows = await db
     .select({
       transferId: moneyMovement.stripeObjectId,
@@ -78,13 +102,15 @@ async function transfersOf(requestId: string) {
         isNotNull(moneyMovement.stripeObjectId),
       ),
     );
+  const reversed = await returned(requestId, "transfer_reversal", "trr_fake_");
   return rows.flatMap(({ transferId, amountCents, destinationAccountId }) =>
     transferId && destinationAccountId
       ? [
           {
             transferId,
             amountCents,
-            amountReversedCents: 0,
+            amountReversedCents: reversed.cents,
+            reversalId: reversed.id,
             destinationAccountId,
           },
         ]
@@ -124,7 +150,9 @@ function piStatusOf(row: RequestRow): PiStatus {
  * and the charge are `cs_fake_` / `pi_fake_` / `ch_fake_` + the request id, every answer derived from the request's row
  * (a platform charge on this currency's account: no destination, no application fee, 07 D74); capture and cancel always
  * succeed and send no event. A transfer is `tr_fake_` + the request id, read back from the creator_transfer row that
- * recorded it; refunds and reversals arrive with P21b. `appUrl` is the app's origin, as the Stripe driver takes it.
+ * recorded it; a refund `re_fake_` and a reversal `trr_fake_` + the request id (07 D76), always succeeded, read back from
+ * the buyer_refund and transfer_reversal rows once they succeeded (owner answer Q-206). `appUrl` is the app's origin, as
+ * the Stripe driver takes it.
  */
 export function createFakeDriver({
   currency,
@@ -190,6 +218,7 @@ export function createFakeDriver({
         currency,
       );
       const status = piStatusOf(row);
+      const refunded = await returned(row.id, "buyer_refund", "re_fake_");
       const authorizedAt =
         row.status === "checkout_pending" ? new Date() : row.authorizedAt;
       return {
@@ -203,8 +232,8 @@ export function createFakeDriver({
         onBehalfOf: null,
         chargeId: `ch_fake_${row.id}`,
         riskLevel: "normal",
-        // Refunds arrive with P21b, which derives this from money_movement.
-        amountRefundedCents: 0,
+        amountRefundedCents: refunded.cents,
+        refundId: refunded.id,
         captureMethod: "manual",
         metadataRequestId: row.id,
         authorizedAt,
@@ -231,8 +260,23 @@ export function createFakeDriver({
       await requestRow(requestId, currency);
       return transfersOf(requestId);
     },
-    refund: notYet("refund", "P21b"),
-    reverseTransfer: notYet("reverseTransfer", "P21b"),
+    async refund({ requestId, paymentIntentId }) {
+      // The request's own PaymentIntent, on this account only (07 D95); the caller records the refund on its row.
+      if (requestIdOf("pi", paymentIntentId) !== requestId) {
+        throw new Error("fake driver: not the request's PaymentIntent");
+      }
+      await requestRow(requestId, currency);
+      return {
+        ok: true,
+        refundId: `re_fake_${requestId}`,
+        status: "succeeded",
+      };
+    },
+    async reverseTransfer({ requestId }) {
+      if (!isUuid(requestId)) throw new Error("fake driver: not a request id");
+      await requestRow(requestId, currency);
+      return { ok: true, reversalId: `trr_fake_${requestId}` };
+    },
     async parseWebhook() {
       // Webhooks come only from Stripe; the fake never accepts one (02 §5.8).
       throw new Error("fake driver: webhooks are Stripe-only");

@@ -23,13 +23,13 @@ import type {
 } from "@/lib/licensing/request-dto";
 import {
   holdAnswer,
-  latestToast,
   pressApprove,
   pressDecline,
   WAITING_EXCLUSIVE_LINE,
   WAITING_EXCLUSIVE_REQUEST,
   WAITING_REQUEST,
 } from "../../../tests/helpers/inbox-fixtures";
+import { latestToast } from "../../../tests/helpers/sheet-dom";
 import { InboxList } from "./inbox-list";
 import { InboxRow } from "./inbox-row";
 import { RequestFacts } from "./request-facts";
@@ -368,6 +368,35 @@ describe("InboxRow's payout line (04 §9.11, §11.5; 07 D75; owner answer Q-146 
       expect(row.queryByText(/^License .* issued$/)).toBeNull();
     },
   );
+
+  it("reads 'Taken back' in the History row once a revoke took the payout back (owner answer Q-209)", () => {
+    const { container } = inList({
+      ...approved,
+      ...transfer,
+      transferStatus: "succeeded",
+      takenBack: true,
+    });
+    const row = within(firstRow(container));
+    const line = row.getByText("Taken back");
+    expect(line.className).toContain("text-footnote");
+    expect(line.className).toContain("text-ink-2");
+    expect(line.parentElement).toBe(
+      row.getByText("First snow · CA$1,575.00").parentElement,
+    );
+    expect(row.queryByText("Paid out")).toBeNull();
+  });
+
+  it("still reads 'Paid out' while the take-back hasn't gone through", () => {
+    const { container } = inList({
+      ...approved,
+      ...transfer,
+      transferStatus: "succeeded",
+      takenBack: false,
+    });
+    const row = within(firstRow(container));
+    expect(row.getByText("Paid out").className).toContain("text-cleared-text");
+    expect(row.queryByText("Taken back")).toBeNull();
+  });
 
   it.each<{ name: string; request: CreatorRequest }>([
     { name: "an approved request with no transfer row", request: approved },

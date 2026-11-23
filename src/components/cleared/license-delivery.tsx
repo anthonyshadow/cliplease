@@ -44,8 +44,8 @@ export type DeliveryLinks = {
  * tier, from the snapshot, the license columns and the request's facts that never change (owner answer Q-183), never
  * live data. The static seal (72, 88 from lg), the two-tone headline, which takes the focus only on a license issued in
  * the last 24 h (05 §4.4 Fresh) and not back from a failed download (Q-185), and the approval line; the LicenseCard; the
- * downloads, or for a revoked license why there are none (P21b adds the refund line), then the tertiary **Manage in
- * My licenses** in every state (owner answer Q-193; P22g puts a chain's in its renewal block); the credit line, "Where
+ * downloads, or for a revoked license why there are none (and the refund once it succeeded), then the tertiary **Manage
+ * in My licenses** in every state (owner answer Q-193; P22g puts a chain's in its renewal block); the credit line, "Where
  * it was posted", the music and people notices and the summary under "What you can do" (its currency line left out:
  * the card says "Amounts in …", 07 D98); the public record's link; the receipt.
  */
@@ -53,6 +53,7 @@ export function LicenseDelivery({
   snapshot,
   status,
   revokedAt,
+  refunded,
   original,
   territoryCode,
   amountTotalCents,
@@ -65,6 +66,8 @@ export function LicenseDelivery({
   status: RecordStatus;
   /** license.revoked_at. */
   revokedAt: Date | null;
+  /** The revoke's buyer_refund succeeded (03 §7.6). */
+  refunded: boolean;
   /** The original's type as its button names it ("MP4") and its size. */
   original: { type: string; bytes: number };
   /** license_request.territory_code: the summary's "in the United States" (Q-115 a). */
@@ -115,6 +118,11 @@ export function LicenseDelivery({
         <LicenseFiles
           status={status}
           revokedAt={revokedAt}
+          refund={{
+            refunded,
+            totalCents: amountTotalCents,
+            currency: snapshot.amounts.currency,
+          }}
           original={{ href: links.original, ...original }}
           pdfHref={links.pdf}
           failed={downloadFailed}

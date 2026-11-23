@@ -11,9 +11,12 @@ import {
   DECLINED_REQUEST,
   DISABLED_VIDEO,
   EVENTS,
+  FAILED_MOVEMENT,
+  FAILED_RETURNS_LICENSE,
   FAILED_TRANSFER_LICENSE,
   FLAGGED_AUDIT_ROW,
   LIVE_VIDEO,
+  REFUNDED_LICENSE,
   STRIPE_EVENT,
   VALID_LICENSE,
   WAITING_REQUEST,
@@ -29,6 +32,8 @@ import { VIDEO_COLUMNS } from "./videos-table";
 vi.mock("@/app/admin/actions", () => ({
   adminDisableVideo: vi.fn(),
   adminEnableVideo: vi.fn(),
+  adminRevokeLicense: vi.fn(),
+  adminRetryMoneyMovement: vi.fn(),
 }));
 
 afterEach(cleanup);
@@ -307,7 +312,7 @@ describe("the admin tables (05 §7; design/P21-admin-view.md §6)", () => {
     );
   });
 
-  it("Licenses: the computed status, «Exclusive» or Standard, the transfer line (a failed one in danger text)", () => {
+  it("Licenses: the computed status, «Exclusive» or Standard, the money (a failed one in danger text, with Retry), Revoke while not revoked", () => {
     const { headers, rows, cells } = table(
       <AdminTable
         caption="Licenses"
@@ -315,13 +320,17 @@ describe("the admin tables (05 §7; design/P21-admin-view.md §6)", () => {
         rows={[
           VALID_LICENSE,
           FAILED_TRANSFER_LICENSE,
+          REFUNDED_LICENSE,
+          FAILED_RETURNS_LICENSE,
           {
             ...VALID_LICENSE,
             id: "l-revoked",
             status: "revoked",
             transfer: null,
             revokedAt: VALID_LICENSE.issuedAt,
+            revokedReason: "payment_reversed",
           },
+          { ...VALID_LICENSE, id: "l-none", transfer: null },
         ]}
       />,
       "Licenses",
@@ -334,46 +343,127 @@ describe("the admin tables (05 §7; design/P21-admin-view.md §6)", () => {
       "Type",
       "Issued",
       "Downloads",
-      "Transfer",
+      "Money",
       "Revoked",
+      "Action",
     ]);
+    const row = (
+      code: string,
+      status: string,
+      type: string,
+      downloads: string,
+      money: string,
+      revoked: string,
+      action: string,
+    ) => [
+      code,
+      "Daily Laughs Media LLC",
+      "First snow",
+      status,
+      type,
+      CREATED_TEXT,
+      downloads,
+      money,
+      revoked,
+      action,
+    ];
     expect(rows).toEqual([
-      [
+      row(
         "CL-7K3M-9QXA",
-        "Daily Laughs Media LLC",
-        "First snow",
         "Valid",
         "Exclusive",
-        CREATED_TEXT,
         "2",
         "Transfer CA$1,575.00 sent",
         "—",
-      ],
-      [
+        "Revoke",
+      ),
+      row(
         "CL-9P2D-6HNC",
-        "Daily Laughs Media LLC",
-        "First snow",
         "Valid",
         "Standard",
-        CREATED_TEXT,
         "0",
-        "Transfer failed (account_closed)",
+        "Transfer failed (account_closed)Retry",
         "—",
-      ],
-      [
-        "CL-7K3M-9QXA",
-        "Daily Laughs Media LLC",
-        "First snow",
+        "Revoke",
+      ),
+      row(
+        "CL-4F8T-2WRB",
         "Revoked",
         "Exclusive",
-        CREATED_TEXT,
         "2",
-        "—",
+        "Refunded CA$1,732.50 · Taken back CA$1,575.00",
         CREATED_TEXT,
-      ],
+        "",
+      ),
+      row(
+        "CL-2B7Q-K9WD",
+        "Revoked",
+        "Exclusive",
+        "2",
+        "Refund failedRetry · Take-back failedRetry",
+        CREATED_TEXT,
+        "",
+      ),
+      row(
+        "CL-7K3M-9QXA",
+        "Revoked",
+        "Exclusive",
+        "2",
+        "No refund (money already returned) · Nothing to take back",
+        CREATED_TEXT,
+        "",
+      ),
+      row("CL-7K3M-9QXA", "Valid", "Exclusive", "2", "—", "—", "Revoke"),
     ]);
-    expect(cells[1][7].querySelector(".text-danger-text")).not.toBeNull();
-    expect(cells[0][7].querySelector(".text-danger-text")).toBeNull();
+    const money = (r: number) => cells[r]?.[7] as HTMLElement;
+    expect(money(1).querySelector(".text-danger-text")).not.toBeNull();
+    expect(money(3).querySelector(".text-danger-text")).not.toBeNull();
+    for (const r of [0, 2, 4]) {
+      expect(money(r).querySelector(".text-danger-text")).toBeNull();
+    }
+    // Each failed part has its own Retry, named by its kind and the license (Q-211); nothing else has one.
+    const retries = (r: number) =>
+      within(money(r))
+        .queryAllByRole("button")
+        .map((b) => [b.getAttribute("aria-label"), b.textContent]);
+    expect(retries(1)).toEqual([["Retry transfer for CL-9P2D-6HNC", "Retry"]]);
+    expect(retries(3)).toEqual([
+      ["Retry refund for CL-2B7Q-K9WD", "Retry"],
+      ["Retry take-back for CL-2B7Q-K9WD", "Retry"],
+    ]);
+    for (const r of [0, 2, 4, 5]) expect(retries(r)).toEqual([]);
+    // Revoke, named by the code, only while not revoked.
+    const revoke = (r: number) => within(cells[r]?.[9] as HTMLElement);
+    expect(
+      revoke(0).getByRole("button", { name: "Revoke CL-7K3M-9QXA" })
+        .textContent,
+    ).toBe("Revoke");
+    expect(revoke(2).queryByRole("button")).toBeNull();
+  });
+
+  it("Licenses, stacked: the money under its label, the Retry in it, Revoke last; a revoked row has no actions line", () => {
+    const view = render(
+      <AdminTable
+        caption="Licenses"
+        columns={LICENSE_COLUMNS}
+        rows={[FAILED_TRANSFER_LICENSE, REFUNDED_LICENSE]}
+      />,
+    );
+    const [open, revoked] = within(
+      within(view.container).getByRole("list", { name: "Licenses" }),
+    ).getAllByRole("listitem");
+    const moneyOf = (item: HTMLElement) =>
+      [...item.querySelectorAll("dt")].find((dt) => dt.textContent === "Money")
+        ?.nextElementSibling;
+    expect(moneyOf(open as HTMLElement)?.textContent).toBe(
+      "Transfer failed (account_closed)Retry",
+    );
+    expect(moneyOf(revoked as HTMLElement)?.textContent).toBe(
+      "Refunded CA$1,732.50 · Taken back CA$1,575.00",
+    );
+    const lastLine = (item: HTMLElement) => item.lastElementChild;
+    expect(lastLine(open as HTMLElement)?.textContent).toBe("Revoke");
+    expect(lastLine(revoked as HTMLElement)?.tagName).toBe("DL");
   });
 
   it("an empty tab shows “Nothing here yet.” in place of its table", () => {
@@ -393,6 +483,7 @@ describe("the Events lists (design §4.9, §6.7)", () => {
       .map((h) => h.textContent);
     expect(headings).toEqual([
       "Latest events",
+      "Failed money movements",
       "Failed emails",
       "Unprocessed Stripe events",
     ]);
@@ -400,7 +491,7 @@ describe("the Events lists (design §4.9, §6.7)", () => {
       within(view.container)
         .getAllByRole("table")
         .map((t) => t.querySelector("caption")?.textContent),
-    ).toEqual(["Latest events", "Failed emails"]);
+    ).toEqual(["Latest events", "Failed money movements", "Failed emails"]);
     const stripe = within(view.container)
       .getByRole("heading", { name: "Unprocessed Stripe events" })
       .closest("section") as HTMLElement;
@@ -442,6 +533,87 @@ describe("the Events lists (design §4.9, §6.7)", () => {
       "group-data-[tone=danger]/row:text-danger-text",
     );
     expect(time(plain)).toContain("text-ink-2");
+  });
+
+  it("lists failed money movements by kind, license, amount, attempt, error and time, each with its Retry (Q-209)", () => {
+    const { headers, rows, cells } = table(
+      <EventsLists
+        events={{
+          ...EVENTS,
+          failedMovements: [
+            FAILED_MOVEMENT,
+            {
+              ...FAILED_MOVEMENT,
+              id: "f0000000-0000-4000-8000-000000000004",
+              kind: "buyer_refund",
+              amountCents: 173250,
+              attempt: 1,
+              lastError: null,
+            },
+            {
+              ...FAILED_MOVEMENT,
+              id: "t0000000-0000-4000-8000-000000000002",
+              kind: "creator_transfer",
+              licenseCode: "CL-9P2D-6HNC",
+              amountCents: 90000,
+              currency: "usd",
+              lastError: "account_closed",
+            },
+          ],
+        }}
+      />,
+      "Failed money movements",
+    );
+    expect(headers).toEqual([
+      "Kind",
+      "License",
+      "Amount",
+      "Attempt",
+      "Error",
+      "Updated",
+      "Retry",
+    ]);
+    expect(rows).toEqual([
+      [
+        "Take-back",
+        "CL-2B7Q-K9WD",
+        "CA$1,575.00",
+        "2",
+        "insufficient_funds",
+        CREATED_TEXT,
+        "Retry",
+      ],
+      [
+        "Refund",
+        "CL-2B7Q-K9WD",
+        "CA$1,732.50",
+        "1",
+        "—",
+        CREATED_TEXT,
+        "Retry",
+      ],
+      [
+        "Transfer",
+        "CL-9P2D-6HNC",
+        "US$900.00",
+        "2",
+        "account_closed",
+        CREATED_TEXT,
+        "Retry",
+      ],
+    ]);
+    expect(
+      cells.map((r) =>
+        within(r[6] as HTMLElement)
+          .getByRole("button")
+          .getAttribute("aria-label"),
+      ),
+    ).toEqual([
+      "Retry take-back for CL-2B7Q-K9WD",
+      "Retry refund for CL-2B7Q-K9WD",
+      "Retry transfer for CL-9P2D-6HNC",
+    ]);
+    expect(cells[0]?.[2]?.className).toContain("tabular-nums");
   });
 
   it("lists failed emails without their recipient, and unprocessed Stripe events with their currency", () => {

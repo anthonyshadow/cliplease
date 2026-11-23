@@ -1,13 +1,16 @@
-// The admin view's labels (05 §7; design/P21-admin-view.md §4.8, §4.9; owner answer Q-199 a): the Events flags, and the
-// words for the cells that print a status or a movement. The disable reasons' labels are the creator's Review Banner's
-// (VIDEO_DISABLED_REASON_LABELS, src/lib/videos/review.ts). Pure and client-safe.
+// The admin view's labels (05 §7; design/P21-admin-view.md §4.8, §4.9; owner answers Q-199 a, Q-209): the Events flags,
+// the revoke reasons, the money movements' kinds, and the words for the cells that print a status or a movement. The
+// disable reasons' labels are the creator's Review Banner's (VIDEO_DISABLED_REASON_LABELS, src/lib/videos/review.ts).
+// Pure and client-safe.
 import {
   type AuditActorType,
   type Currency,
   isOneOf,
   type LicenseRequestStatus,
+  type MoneyMovementKind,
   type MoneyMovementStatus,
   type PayoutsStatus,
+  type RevokedReason,
   type SocialAccountStatus,
 } from "../domain/values";
 import { formatMoney } from "../format";
@@ -15,9 +18,9 @@ import { requestPill } from "../licensing/inbox";
 import { PAYOUTS_STATUS_LABEL } from "../payouts";
 
 /**
- * The audit actions Events shows flagged (05 §7; 07 D68, D75, D81, D111, D127): money that moved or failed to, a
- * fallback, a conflict, a license not written after the money was taken. `video_posting.released` reads as a normal
- * row. P22h adds the renewal flags here.
+ * The audit actions Events shows flagged (05 §7; 07 D68, D75, D81, D86, D111, D127): money that moved or failed to (a
+ * revoke's refund or take-back among them), a fallback, a conflict, a license not written after the money was taken.
+ * `video_posting.released` reads as a normal row. P22h adds the renewal flags here.
  */
 export const ADMIN_EVENT_FLAGS = [
   "license_request.money_moved_late",
@@ -29,11 +32,28 @@ export const ADMIN_EVENT_FLAGS = [
   "license_request.issue_failed",
   "stripe_event.currency_mismatch",
   "connect.negative_balance_debits_failed",
+  "license.refund_failed",
+  "license.reversal_failed",
 ] as const;
 
 /** Whether Events shows audit action `action` flagged (red, a warning icon and "Flagged" for screen readers). */
 export const isAdminEventFlag = (action: string): boolean =>
   isOneOf(ADMIN_EVENT_FLAGS, action);
+
+/** The Revoke sheet's reasons (05 §7 callout 10): the four `license_revoked_reason` values. */
+export const LICENSE_REVOKED_REASON_LABELS = {
+  rights_claim: "Rights claim",
+  licensee_breach: "Licensee breach",
+  payment_reversed: "Payment reversed",
+  issued_in_error: "Issued in error",
+} as const satisfies Record<RevokedReason, string>;
+
+/** A money movement's kind as Events' failed-movements list prints it (owner answer Q-209). */
+export const MONEY_MOVEMENT_KIND_LABELS = {
+  creator_transfer: "Transfer",
+  buyer_refund: "Refund",
+  transfer_reversal: "Take-back",
+} as const satisfies Record<MoneyMovementKind, string>;
 
 /** The pill tones 04 §9.9 names, StatusPill's own: StatusCell passes them through. */
 type AdminPillTone = "neutral" | "awaiting" | "cleared" | "danger";
@@ -110,9 +130,9 @@ export function autoApproveLabel(r: {
 }
 
 /**
- * The Licenses tab's Transfer cell (05 §7 callout 7; owner answer Q-199 a): "Transfer CA$1,575.00 sent", "Transfer
- * pending", "Transfer failed (account_closed)" ("Transfer failed" without a stored code). Null without a creator
- * transfer, or for a canceled one (P21b owns the revoke copy, as payoutLine).
+ * The Licenses tab's Money cell for a license that isn't revoked (05 §7 callout 7; owner answers Q-199 a, Q-209):
+ * "Transfer CA$1,575.00 sent", "Transfer pending", "Transfer failed (account_closed)" ("Transfer failed" without a stored
+ * code). Null without a creator transfer, or for a canceled one (a revoked license's money: adminLicenseMoney).
  */
 export function transferLabel(
   t: {

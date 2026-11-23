@@ -14,6 +14,8 @@ import {
 import {
   adminDisableVideo,
   adminEnableVideo,
+  adminRetryMoneyMovement,
+  adminRevokeLicense,
 } from "../../src/app/admin/actions";
 import { db } from "../../src/db/client";
 import {
@@ -21,6 +23,7 @@ import {
   downloadEvent,
   emailLog,
   licenseRequest,
+  moneyMovement,
   socialAccount,
   stripeEvent,
   video,
@@ -99,6 +102,7 @@ import {
   insertDemoAccount,
   postNumber,
 } from "../helpers/connect-flow";
+import { issuedLicense } from "../helpers/delivery";
 import {
   insertCreator,
   insertLibraryVideo,
@@ -109,7 +113,7 @@ import {
   insertSocialAccount,
   insertSocialPost,
   insertUploadVideo,
-  insertUser,
+  newAdmin,
   publishVideo,
   randomHex,
   requestRow,
@@ -135,6 +139,7 @@ import {
   endingsOf,
   fallbacksOf,
   licensesOf,
+  movementsOf,
   outcomeEmails,
 } from "../helpers/request-outcomes";
 import type { ScriptedPayments } from "../helpers/scripted-payments";
@@ -143,6 +148,7 @@ import {
   finishScriptedTest,
   installScriptedPayments,
 } from "../helpers/scripted-suite";
+import { updateTransfer } from "../helpers/transfer-fixtures";
 import { fixture, trackTestStorage } from "../helpers/uploads";
 
 // The admin's Disable and Enable and the admin read model (P21; 01 A.3, A.4, A.6, J7.16, J8.10; 02 §5.6, §6.1; 03 T8,
@@ -192,12 +198,6 @@ afterEach(async () => {
   await finishScriptedTest();
 });
 afterAll(() => disk.clean());
-
-/** An admin actor on a real user row (audit_event.actor_user_id references it), as requireAdmin's user builds it. */
-async function newAdmin(): Promise<Actor> {
-  const row = await insertUser({ role: "admin" });
-  return { kind: "admin", userId: row.id };
-}
 
 /**
  * Disable as `by` (the shared admin unless given): reason Rights claim, note "ticket-1" unless `change` says otherwise;
@@ -1250,6 +1250,230 @@ describe("the admin actions (02 §6.1)", () => {
   });
 });
 
+describe("the Revoke and Retry actions (P21b; 01 A.5, A.8; 02 §6.1; owner answers Q-207, Q-208)", () => {
+  /** The license's row as the Licenses tab reads it. */
+  const licenseRowOf = async (licenseId: string) =>
+    (await listAdminLicenses(admin)).find((r) => r.id === licenseId);
+
+  it("A.5: revokes as a signed-in admin, then answers already_revoked to a second revoke, refresh() each time; the money goes back after the response", async () => {
+    const { license, request } = await issuedLicense();
+    mockNextHeaders(await signInWithOtp(ADMIN_EMAIL));
+    const signedIn = await userByEmail(ADMIN_EMAIL);
+
+    expect(
+      await adminRevokeLicense({
+        licenseId: license.id,
+        reason: "issued_in_error",
+        note: "  ticket-12  ",
+      }),
+    ).toEqual({ ok: true, data: { outcome: "revoked" } });
+    expect(vi.mocked(refresh)).toHaveBeenCalledTimes(1);
+    await flushAfter();
+    expect(await licenseRowOf(license.id)).toMatchObject({
+      status: "revoked",
+      revokedReason: "issued_in_error",
+      refund: {
+        status: "succeeded",
+        amountCents: request.amountTotalCents,
+        lastError: null,
+      },
+      reversal: {
+        status: "succeeded",
+        amountCents: request.licensePriceCents,
+        lastError: null,
+      },
+    });
+    const [revokedAudit] = await db
+      .select({
+        data: auditEvent.data,
+        actorUserId: auditEvent.actorUserId,
+      })
+      .from(auditEvent)
+      .where(
+        and(
+          eq(auditEvent.entityId, license.id),
+          eq(auditEvent.action, "license.revoked"),
+        ),
+      );
+    expect(revokedAudit).toEqual({
+      data: { reason: "issued_in_error", code: license.code },
+      actorUserId: signedIn?.id,
+    });
+
+    // Another admin got there first: nothing more is written, the first reason stays.
+    expect(
+      await adminRevokeLicense({
+        licenseId: license.id,
+        reason: "rights_claim",
+      }),
+    ).toEqual({ ok: true, data: { outcome: "already_revoked" } });
+    expect(vi.mocked(refresh)).toHaveBeenCalledTimes(2);
+    expect((await licenseRowOf(license.id))?.revokedReason).toBe(
+      "issued_in_error",
+    );
+  });
+
+  it("refuses while the creator transfer is in flight with transfer_in_progress, writing nothing (owner answer Q-207)", async () => {
+    const { license, request } = await issuedLicense();
+    await updateTransfer(request.id, {
+      status: "pending",
+      stripeObjectId: null,
+      succeededAt: null,
+      claimedAt: new Date(),
+    });
+    mockNextHeaders(await signInWithOtp(ADMIN_EMAIL));
+    expect(
+      await adminRevokeLicense({
+        licenseId: license.id,
+        reason: "rights_claim",
+      }),
+    ).toEqual({ ok: true, data: { outcome: "transfer_in_progress" } });
+    expect(await licenseRowOf(license.id)).toMatchObject({
+      status: "valid",
+      revokedAt: null,
+      refund: null,
+      reversal: null,
+      transfer: { status: "pending" },
+    });
+    expect(vi.mocked(refresh)).not.toHaveBeenCalled();
+  });
+
+  it("answers a missing or unknown reason with its field error, other bad input and an unknown license with a form error", async () => {
+    mockNextHeaders(await signInWithOtp(ADMIN_EMAIL));
+    for (const reason of ["", "other"]) {
+      expect(
+        await adminRevokeLicense({ licenseId: randomUUID(), reason }),
+      ).toEqual({
+        ok: false,
+        error: {
+          code: "invalid_input",
+          message: "Choose a reason.",
+          fields: { reason: ["Choose a reason."] },
+        },
+      });
+    }
+    for (const result of [
+      await adminRevokeLicense({
+        licenseId: "CL-7K3M-9QXA",
+        reason: "rights_claim",
+      }),
+      await adminRevokeLicense({
+        licenseId: randomUUID(),
+        reason: "rights_claim",
+        note: "x".repeat(201),
+      }),
+      await adminRetryMoneyMovement({ movementId: "m1" }),
+    ]) {
+      expect(result).toEqual({
+        ok: false,
+        error: { code: "invalid_input", message: GENERIC_ERROR_MESSAGE },
+      });
+    }
+    for (const result of [
+      await adminRevokeLicense({
+        licenseId: randomUUID(),
+        reason: "rights_claim",
+      }),
+      await adminRetryMoneyMovement({ movementId: randomUUID() }),
+    ]) {
+      expect(result).toEqual({
+        ok: false,
+        error: { code: "not_found", message: GENERIC_ERROR_MESSAGE },
+      });
+    }
+    expect(vi.mocked(refresh)).not.toHaveBeenCalled();
+  });
+
+  it("A.8: a failed take-back shows in Events' failed movements and the Licenses cell; Retry runs attempt 2, answers succeeded and clears it", async () => {
+    const { license, request } = await issuedLicense();
+    scripted.next("reverseTransfer", {
+      kind: "permanent",
+      code: "insufficient_funds",
+    });
+    mockNextHeaders(await signInWithOtp(ADMIN_EMAIL));
+    await adminRevokeLicense({ licenseId: license.id, reason: "rights_claim" });
+    await flushAfter();
+
+    const row = await licenseRowOf(license.id);
+    expect(row?.reversal).toMatchObject({
+      status: "failed",
+      lastError: "insufficient_funds",
+    });
+    const movementId = row?.reversal?.id ?? "";
+    const failed = (await listAdminEvents(admin)).failedMovements.find(
+      (m) => m.id === movementId,
+    );
+    expect(failed).toEqual({
+      id: movementId,
+      kind: "transfer_reversal",
+      licenseCode: license.code,
+      creatorHandle: expect.any(String),
+      amountCents: request.licensePriceCents,
+      currency: "cad",
+      attempt: 1,
+      lastError: "insufficient_funds",
+      updatedAt: expect.any(String),
+    });
+    expect(
+      (await listAdminEvents(admin)).audit.find(
+        (e) =>
+          e.action === "license.reversal_failed" && e.entityId === license.id,
+      )?.flagged,
+    ).toBe(true);
+
+    vi.mocked(refresh).mockClear();
+    expect(await adminRetryMoneyMovement({ movementId })).toEqual({
+      ok: true,
+      data: { outcome: "succeeded" },
+    });
+    expect(vi.mocked(refresh)).toHaveBeenCalledTimes(1);
+    expect(scripted.keys("reverseTransfer")).toEqual([
+      `transfer-reversal:${request.id}:1`,
+      `transfer-reversal:${request.id}:2`,
+    ]);
+    expect((await licenseRowOf(license.id))?.reversal).toMatchObject({
+      status: "succeeded",
+      lastError: null,
+    });
+    expect(
+      (await listAdminEvents(admin)).failedMovements.map((m) => m.id),
+    ).not.toContain(movementId);
+    // A second Retry of the done movement does nothing: noop.
+    expect(await adminRetryMoneyMovement({ movementId })).toEqual({
+      ok: true,
+      data: { outcome: "noop" },
+    });
+    expect(scripted.keys("reverseTransfer")).toHaveLength(2);
+  });
+
+  it("gives a creator the 404 and sends a signed-out visitor to sign in, with nothing written", async () => {
+    const { license, request } = await issuedLicense();
+    const [transfer] = await movementsOf(request.id);
+    await signedInCreator();
+    await expect(
+      adminRevokeLicense({ licenseId: license.id, reason: "rights_claim" }),
+    ).rejects.toMatchObject(NOT_FOUND);
+    await expect(
+      adminRetryMoneyMovement({ movementId: transfer?.id ?? "" }),
+    ).rejects.toMatchObject(NOT_FOUND);
+    mockNextHeaders(null);
+    await expect(
+      adminRevokeLicense({ licenseId: license.id, reason: "rights_claim" }),
+    ).rejects.toMatchObject(redirectTo("/sign-in?next=%2Fadmin"));
+    await expect(
+      adminRetryMoneyMovement({ movementId: transfer?.id ?? "" }),
+    ).rejects.toMatchObject(redirectTo("/sign-in?next=%2Fadmin"));
+    expect((await licenseRowOf(license.id))?.revokedAt).toBeNull();
+    expect(
+      await db.$count(
+        moneyMovement,
+        eq(moneyMovement.licenseRequestId, request.id),
+      ),
+    ).toBe(1);
+    expect(vi.mocked(refresh)).not.toHaveBeenCalled();
+  });
+});
+
 describe("the admin read model (01 A.2, A.3; 03 §7.9)", () => {
   /** Every value a loader must never return (01 A.3, G.3, G.4; design §4.6). */
   const SECRETS = {
@@ -1268,6 +1492,10 @@ describe("the admin read model (01 A.2, A.3; 03 §7.9)", () => {
     recipientHash: randomHex(32),
     emailSubject: "Secret subject line",
     providerPostId: `secretpost${randomHex(4)}`,
+    revokedNote: "Secret revoke note",
+    transferId: `tr_secret_${randomHex(4)}`,
+    refundId: `re_secret_${randomHex(4)}`,
+    reversalId: `trr_secret_${randomHex(4)}`,
   };
 
   /** One of everything, its secrets set, as the newest rows of each table. */
@@ -1306,9 +1534,39 @@ describe("the admin read model (01 A.2, A.3; 03 §7.9)", () => {
       stripeChargeId: `ch_test_${randomHex(4)}`,
     });
     const issued = await insertLicense(request);
-    await insertMoneyMovement(request, {
+    const transfer = await insertMoneyMovement(request, {
       status: "failed",
       lastError: "account_closed",
+    });
+    // A revoked license whose refund went through and whose take-back failed, each with its Stripe id.
+    const revokedRequest = await insertLicenseRequest(live, {
+      status: "approved",
+      exclusive: false,
+    });
+    const revoked = await insertLicense(revokedRequest, {
+      revokedAt: new Date(),
+      revokedReason: "rights_claim",
+      revokedNote: SECRETS.revokedNote,
+    });
+    const succeededAt = new Date();
+    await insertMoneyMovement(revokedRequest, {
+      status: "succeeded",
+      stripeObjectId: SECRETS.transferId,
+      succeededAt,
+    });
+    const refund = await insertMoneyMovement(revokedRequest, {
+      kind: "buyer_refund",
+      amountCents: revokedRequest.amountTotalCents,
+      status: "succeeded",
+      stripeObjectId: SECRETS.refundId,
+      succeededAt,
+    });
+    const reversal = await insertMoneyMovement(revokedRequest, {
+      kind: "transfer_reversal",
+      status: "failed",
+      attempt: 1,
+      lastError: "insufficient_funds",
+      stripeObjectId: SECRETS.reversalId,
     });
     await db.insert(downloadEvent).values({
       licenseId: issued.id,
@@ -1363,6 +1621,10 @@ describe("the admin read model (01 A.2, A.3; 03 §7.9)", () => {
       posting,
       request,
       issued,
+      transfer,
+      revoked,
+      refund,
+      reversal,
       email,
       event,
     };
@@ -1443,18 +1705,90 @@ describe("the admin read model (01 A.2, A.3; 03 §7.9)", () => {
       code: w.issued.code,
       licenseeName: "Acme Studio",
       videoTitle: w.live.title,
+      creatorHandle: w.creator.handle,
       status: "valid",
       exclusive: false,
       issuedAt: w.issued.createdAt.toISOString(),
       downloads: 1,
+      licensePriceCents: 15000,
+      amountTotalCents: 16500,
+      currency: "cad",
       transfer: {
+        id: w.transfer.id,
         status: "failed",
         amountCents: 15000,
-        currency: "cad",
         lastError: "account_closed",
       },
+      refund: null,
+      reversal: null,
       revokedAt: null,
+      revokedReason: null,
     });
+    const revokedRow = licenses.find((r) => r.id === w.revoked.id);
+    expect(revokedRow).toEqual({
+      id: w.revoked.id,
+      code: w.revoked.code,
+      licenseeName: "Acme Studio",
+      videoTitle: w.live.title,
+      creatorHandle: w.creator.handle,
+      status: "revoked",
+      exclusive: false,
+      issuedAt: w.revoked.createdAt.toISOString(),
+      downloads: 0,
+      licensePriceCents: 15000,
+      amountTotalCents: 16500,
+      currency: "cad",
+      transfer: {
+        id: expect.any(String),
+        status: "succeeded",
+        amountCents: 15000,
+        lastError: null,
+      },
+      refund: {
+        id: w.refund.id,
+        status: "succeeded",
+        amountCents: 16500,
+        lastError: null,
+      },
+      reversal: {
+        id: w.reversal.id,
+        status: "failed",
+        amountCents: 15000,
+        lastError: "insufficient_funds",
+      },
+      revokedAt: w.revoked.revokedAt?.toISOString(),
+      revokedReason: "rights_claim",
+    });
+    expect(
+      events.failedMovements.filter((r) =>
+        [w.transfer.id, w.reversal.id].includes(r.id),
+      ),
+    ).toEqual([
+      {
+        id: w.reversal.id,
+        kind: "transfer_reversal",
+        licenseCode: w.revoked.code,
+        creatorHandle: w.creator.handle,
+        amountCents: 15000,
+        currency: "cad",
+        attempt: 1,
+        lastError: "insufficient_funds",
+        updatedAt: w.reversal.updatedAt.toISOString(),
+      },
+      {
+        id: w.transfer.id,
+        kind: "creator_transfer",
+        licenseCode: w.issued.code,
+        creatorHandle: w.creator.handle,
+        amountCents: 15000,
+        currency: "cad",
+        attempt: 0,
+        lastError: "account_closed",
+        updatedAt: w.transfer.updatedAt.toISOString(),
+      },
+    ]);
+    // Only failed movements: the succeeded refund isn't one.
+    expect(events.failedMovements.map((r) => r.id)).not.toContain(w.refund.id);
     expect(events.failedEmails.find((r) => r.id === w.email?.id)).toEqual({
       id: w.email?.id,
       createdAt: w.email?.createdAt.toISOString(),

@@ -54,26 +54,28 @@ export const LINE_TONE = {
 } as const;
 
 /**
- * An approved request's payout line (04 §9.11, §11.5; owner answer Q-146 a): Paid out, Payout pending, or "Finish your
- * payout setup to receive {amount}.", in the History row's text column and under the request page's code. Nothing before
- * the transfer row exists, or for a canceled one.
+ * An approved request's payout line (04 §9.11, §11.5; owner answers Q-146 a, Q-209): Paid out (Taken back after a
+ * revoke's take-back), Payout pending, or "Finish your payout setup to receive {amount}.", in the History row's text
+ * column, under the request page's code and in /dashboard/licenses' You got cell. Nothing before the transfer row
+ * exists, or for a canceled one.
  */
 export function PayoutLineView({
   request,
 }: {
   request: Pick<
     CreatorRequest,
-    "transferStatus" | "transferAmountCents" | "transferCurrency"
+    "transferStatus" | "transferAmountCents" | "transferCurrency" | "takenBack"
   >;
 }) {
   const {
     transferStatus: status,
     transferAmountCents: amountCents,
     transferCurrency: currency,
+    takenBack,
   } = request;
   const line = payoutLine(
     status && amountCents !== null && currency
-      ? { status, amountCents, currency }
+      ? { status, amountCents, currency, takenBack }
       : null,
   );
   if (!line) return null;

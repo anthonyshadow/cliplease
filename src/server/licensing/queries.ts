@@ -31,6 +31,7 @@ import {
   postingPlatformsColumn,
 } from "../videos/visibility";
 import { overdueColumn } from "./deadline";
+import { takenBackColumn } from "./licenses";
 
 // The request pages' reads (02 §4.1; 03 §7.1, §7.6). Every creator query is scoped to the caller's creator id, which
 // comes from requireCreator, never from the URL. A creator never sees a request in checkout, an abandoned one or a
@@ -77,9 +78,9 @@ const FACTS = {
 };
 /**
  * A creator's view adds the buyer's entries (never their email) and the creator transfer's status, amount and currency
- * for the payout line (P19b): never its Stripe id, its error or its claim. Never in FACTS: /r's buyer never sees it.
- * An exclusive request's premium too (07 D111), with the database's clock for approveEndsAt, as the claims read it;
- * `dbNow` stops at creatorRequestOf.
+ * for the payout line (P19b), with whether a revoke took it back (07 D86): never a Stripe id, an error or a claim.
+ * Never in FACTS: /r's buyer never sees it. An exclusive request's premium too (07 D111), with the database's clock for
+ * approveEndsAt, as the claims read it; `dbNow` stops at creatorRequestOf.
  */
 const CREATOR_FACTS = {
   ...FACTS,
@@ -92,6 +93,7 @@ const CREATOR_FACTS = {
   transferStatus: moneyMovement.status,
   transferAmountCents: moneyMovement.amountCents,
   transferCurrency: moneyMovement.currency,
+  takenBack: takenBackColumn,
 };
 /** /r adds what decides whether its poster may load. */
 const BUYER_FACTS = {
@@ -166,6 +168,7 @@ function creatorRequestOf(r: CreatorRow): CreatorRequest {
     transferStatus: r.transferStatus,
     transferAmountCents: r.transferAmountCents,
     transferCurrency: r.transferCurrency,
+    takenBack: r.takenBack,
     autoApproveFallbackAt: r.autoApproveFallbackAt?.toISOString() ?? null,
     autoApproved: r.status === "approved" && isAutoApproveOpen(r),
   };

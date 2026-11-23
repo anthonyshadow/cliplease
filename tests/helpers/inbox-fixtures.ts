@@ -1,12 +1,12 @@
-// The creator's request as the Inbox and the request page get it, Approve's and Decline's taps, an answer held back
-// and the newest toast, for their component tests.
-import { act, fireEvent, screen, within } from "@testing-library/react";
+// The creator's request as the Inbox and the request page get it, Approve's and Decline's taps and their answer held
+// back, for their component tests (the DOM helpers are sheet-dom's).
 import type { Mock } from "vitest";
 import type {
   ApproveResult,
   CreatorRequest,
   DeclineResult,
 } from "../../src/lib/licensing/request-dto";
+import { answered, holdAnswer as holdActionAnswer, press } from "./sheet-dom";
 
 /** 05 §4.1's demo request, waiting: Paid social ads · 1 year · Worldwide, CA$1,575.00 to the creator. */
 export const WAITING_REQUEST: CreatorRequest = {
@@ -35,6 +35,7 @@ export const WAITING_REQUEST: CreatorRequest = {
   transferStatus: null,
   transferAmountCents: null,
   transferCurrency: null,
+  takenBack: false,
   autoApproveFallbackAt: null,
   autoApproved: false,
 };
@@ -52,37 +53,19 @@ export const WAITING_EXCLUSIVE_REQUEST: CreatorRequest = {
 export const WAITING_EXCLUSIVE_LINE =
   "Exclusive request. If you approve, no one else can license this video until 20 Nov 2027.";
 
-/** Taps the button named `name` (in `container`, else the page) and lets the action's answer render. */
-async function press(name: string, container?: HTMLElement) {
-  const scope = container ? within(container) : screen;
-  await act(async () => {
-    fireEvent.click(scope.getByRole("button", { name }));
-  });
-}
-
+/** Taps Approve (in `container`, else the page) and lets the action's answer render. */
 export const pressApprove = (container?: HTMLElement) =>
-  press("Approve", container);
+  press("Approve", container ?? document.body);
 
+/** Taps Decline (in `container`, else the page) and lets the action's answer render. */
 export const pressDecline = (container?: HTMLElement) =>
-  press("Decline", container);
-
-/** Holds back a mocked Server Action's answer: returns the call that answers with `result` and lets it render. */
-export function holdAnswer(action: Mock) {
-  let answer: (value: unknown) => void = () => {};
-  action.mockReturnValue(
-    new Promise((resolve) => {
-      answer = resolve;
-    }),
-  );
-  return (result: ApproveResult | DeclineResult) =>
-    act(async () => {
-      answer({ ok: true, data: result });
-    });
-}
+  press("Decline", container ?? document.body);
 
 /**
- * The newest toast: the last item of the Toaster's list (Radix renders each toast as an `li` of the viewport's `ol`).
- * The toast store outlives a test, so a file's earlier toasts are still listed: compare the last one, never a count.
+ * Holds back Approve's or Decline's answer, each call's until the mock is set again: returns the call that answers
+ * with `result` and lets it render.
  */
-export const latestToast = () =>
-  [...document.querySelectorAll("ol > li")].at(-1) ?? null;
+export function holdAnswer(action: Mock) {
+  const answer = holdActionAnswer(action, { every: true });
+  return (result: ApproveResult | DeclineResult) => answer(answered(result));
+}

@@ -16,13 +16,13 @@ import type {
 } from "@/lib/licensing/request-dto";
 import {
   holdAnswer,
-  latestToast,
   pressApprove,
   pressDecline,
   WAITING_EXCLUSIVE_LINE,
   WAITING_EXCLUSIVE_REQUEST,
   WAITING_REQUEST,
 } from "../../../tests/helpers/inbox-fixtures";
+import { latestToast } from "../../../tests/helpers/sheet-dom";
 import { REQUEST_STATUS_ID, RequestActions } from "./request-actions";
 
 const mocks = vi.hoisted(() => ({

@@ -169,6 +169,19 @@ describe("MyLicensePage (05 §4.10)", () => {
     expect(screen.getByText("Revoked on 20 Oct 2026, 09:15 UTC.")).toBeTruthy();
   });
 
+  it("reads the refund in the revoked line once it succeeded (01 J9.6; Q-209)", async () => {
+    mocks.getBuyerLicense.mockResolvedValue(
+      buyerLicenseDetail("revoked", {}, true),
+    );
+    await page();
+    expect(
+      screen.getByText(
+        "Revoked on 20 Oct 2026, 09:15 UTC. You were refunded CA$1,732.50.",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText("Revoked on 20 Oct 2026, 09:15 UTC.")).toBeNull();
+  });
+
   it("says a download didn't start only when a route sent the buyer back (Q-185)", async () => {
     await page({ download: "nope" });
     expect(

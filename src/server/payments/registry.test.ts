@@ -125,21 +125,21 @@ describe("the fake driver (07 D35)", () => {
     );
   });
 
-  it("rejects what later prompts add, and every webhook", async () => {
+  it("refuses a refund or a reversal that isn't the request's before reading anything, and every webhook", async () => {
     await expect(
       fake.reverseTransfer({
         requestId: "r1",
         transferId: "tr_1",
         idempotencyKey: "k",
       }),
-    ).rejects.toThrow("arrives in P21b");
+    ).rejects.toThrow("not a request id");
     await expect(
       fake.refund({
         requestId: "r1",
         paymentIntentId: "pi_1",
         idempotencyKey: "k",
       }),
-    ).rejects.toThrow("arrives in P21b");
+    ).rejects.toThrow("unknown pi_fake id");
     await expect(fake.parseWebhook("{}", "sig")).rejects.toThrow();
   });
 });

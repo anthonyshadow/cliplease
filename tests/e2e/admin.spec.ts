@@ -1,14 +1,21 @@
 import { randomUUID } from "node:crypto";
-import { expect, type Page, test } from "@playwright/test";
+import { expect, type Locator, type Page, test } from "@playwright/test";
+import { focusAnchorSelector } from "../../src/app/admin/_components/focus-anchor";
 import {
+  ADMIN_COLUMNS,
   ADMIN_COPY,
   DISABLE_COPY,
   ENABLE_COPY,
+  MONEY_COPY,
+  RETRY_COPY,
+  REVOKE_COPY,
 } from "../../src/lib/admin/copy";
 import {
   type AdminStatusCell,
   adminRequestStatus,
   auditActorLabel,
+  MONEY_MOVEMENT_KIND_LABELS,
+  transferLabel,
 } from "../../src/lib/admin/labels";
 import {
   ADMIN_TAB_LABELS,
@@ -17,9 +24,11 @@ import {
   adminTabHref,
 } from "../../src/lib/admin/tabs";
 import { APP_NAME } from "../../src/lib/app-name";
+import { formatLicenseDate, formatMoney } from "../../src/lib/format";
 import { LICENSE_PAGE_COPY } from "../../src/lib/licensing/license-page";
 import { LICENSE_RECORD_COPY } from "../../src/lib/licensing/license-record";
 import { MY_LICENSES_COPY } from "../../src/lib/licensing/my-licenses-copy";
+import { PAYOUT_LINE_COPY } from "../../src/lib/licensing/payout-line";
 import { REQUEST_STATUS_COPY } from "../../src/lib/licensing/request-status";
 import {
   POSTINGS_COPY,
@@ -28,7 +37,11 @@ import {
   sourceRowTitle,
 } from "../../src/lib/postings/copy";
 import { postingPlatformLabel } from "../../src/lib/postings/labels";
-import { licensePath } from "../../src/lib/urls";
+import {
+  licenseDownloadPath,
+  licensePath,
+  verifyPath,
+} from "../../src/lib/urls";
 import {
   disabledLine,
   editRowLabel,
@@ -49,6 +62,7 @@ import {
 import {
   atEveryWidth,
   boxOf,
+  expectAbove,
   expectNoBareDollar,
   expectPageFrame,
   expectSheetForm,
@@ -57,7 +71,16 @@ import {
   viewportWidth,
 } from "./helpers/layout";
 import { POST_01 } from "./helpers/library";
-import { ORGANIC_30_WORLDWIDE } from "./helpers/licenses";
+import {
+  fact,
+  factLabel,
+  forceTakeBackFailed,
+  licenseRows,
+  MANUAL_TEST_ERROR,
+  ORGANIC_30_WORLDWIDE,
+  storedLicense,
+  storedMovement,
+} from "./helpers/licenses";
 import { ageCheckedAt } from "./helpers/postings";
 import {
   pressAndSettle,
@@ -74,18 +97,25 @@ import {
 } from "./helpers/sign-in";
 import { cleanCreatedVideos, sameVideoTick, sourceRow } from "./helpers/videos";
 
-// The admin view (P21; 01 A.1–A.4, A.6, G.6, J8.10; 05 §7; 07 D28, D66, D88, D154; design/P21-admin-view.md §4.14) on
-// chromium-desktop and webkit-iphone. A signed-in creator gets the 404 on /admin. The e2e admin's one test per project
-// (07 D154: two OTP sign-ins of one address can overwrite each other's code) holds every admin step: P04's sign-in checks
-// (moved from sign-in.spec.ts), a published Library video of a creator in a context of its own with one approved license
-// and one waiting request, the six tabs with this run's rows (found by the run's @handle, a buyer's address or the code:
-// every demo video shares a title), then Disable (reason Other, a note only admins see): the license page's 404, the
-// waiting request's /r "Not approved", the creator's Banner without the note, the old /l still Verified on Demo; Enable:
-// «Off», Where posted's released source row, Check again (its 30 s cooldown aged in the test database, no sleep), the
-// same-video tick again and Turn on; then the G.6 sweep of each ?tab= (atEveryWidth: every width on chromium-desktop,
-// both themes at the iPhone's own 402 px), after the last lookup of this run's Videos row. Events is read right after
-// each action, filtered by the video, so other specs' rows can't push this run's out of the newest 50. The session
-// refresh runs last: it installs a clock two days ahead.
+// The admin view (P21, P21b; 01 A.1–A.6, A.8, G.6, J8.10, J9.6, J9.8, J10.3; 05 §7; 07 D28, D66, D86, D88, D154;
+// design/P21-admin-view.md §4.14; owner answers Q-207–Q-209) on chromium-desktop and webkit-iphone. A signed-in creator
+// gets the 404 on /admin. The e2e admin's one test per project (07 D154: two OTP sign-ins of one address can overwrite
+// each other's code) holds every admin step: P04's sign-in checks (moved from sign-in.spec.ts), a published Library video
+// of a creator in a context of its own with one approved license and one waiting request, the six tabs with this run's
+// rows (found by the run's @handle, a buyer's address or the code: every demo video shares a title), then Disable (reason
+// Other, a note only admins see): the license page's 404, the waiting request's /r "Not approved", the creator's Banner
+// without the note, the old /l still Verified on Demo; Enable: «Off», Where posted's released source row, Check again
+// (its 30 s cooldown aged in the test database, no sleep), the same-video tick again and Turn on. Then A.5: two more
+// licenses on the video, each Licenses row reading its transfer sent (a reload until it does: a revoke before that is
+// refused or cancels the payout); the Revoke sheet's money sentence with the stored amounts, Payment reversed's, and
+// Issued in error's revoke; Events' license.revoked; the Money cell's refund and take-back; /verify Revoked with no
+// amount, /l's refund line with no download and both routes 404; the creator's «Revoked · refunded» and Taken back.
+// A.8: the take-back failed in the test database shows in Events and the Money cell, and Retry runs its next attempt.
+// Then the G.6 sweep of each ?tab= (atEveryWidth: every width on chromium-desktop, both themes at the iPhone's own 402
+// px), after the last lookup of this run's Videos row; on Licenses, the license left valid: its Money value, and its
+// Revoke sheet opened and closed with Esc once per width. Events is read right after each action, filtered by the video
+// or the code, so other specs' rows can't push this run's out of the newest 50. The session refresh runs last: it
+// installs a clock two days ahead.
 test.use({ reducedMotion: "reduce" });
 test.afterEach(cleanCreatedVideos);
 
@@ -96,6 +126,12 @@ const DEMO_ACCOUNT = "@demo.creator";
 const DEMO = postingPlatformLabel("mock", null);
 /** The widest phone the sweep runs (the iPhone 17's 402 px): there the six tabs never fit their row. */
 const WIDEST_PHONE = 402;
+/** A.5's licensees: the license the admin revokes, and the one left valid for the sweep. */
+const REVOKED_LICENSEE = "Fabrikam Studio LLC";
+const VALID_LICENSEE = "Contoso Media Ltd.";
+const LICENSE_COLUMN = ADMIN_COLUMNS.licenses;
+/** The Money column's place in the Licenses table: ADMIN_COLUMNS lists each table's headers in its columns' order. */
+const MONEY_COLUMN = Object.keys(LICENSE_COLUMN).indexOf("money");
 
 /** A released source row's result (07 D66): its words and its one action, Check again. */
 const RELEASED = postingResultCopy(
@@ -146,6 +182,48 @@ const videoEvents = (page: Page, videoId: string, action: string) =>
   adminRows(page, ADMIN_COPY.latestEventsHeading)
     .filter({ hasText: videoId })
     .filter({ has: page.getByText(action, { exact: true }) });
+
+/** Where the focus lands in a Licenses row once its Revoke or Retry is gone: its code. */
+const rowAnchor = (row: Locator) => row.locator(focusAnchorSelector("row"));
+
+/** A Licenses row's Money label in its stacked form (below lg). */
+const moneyLabel = (row: Locator) => factLabel(row, LICENSE_COLUMN.money);
+
+/** A Licenses row's Money value in the form `width` shows: the <dd> under its label below lg, its column's <td> from lg. */
+const moneyValue = (row: Locator, width: number) =>
+  width < TIERS.desktop
+    ? fact(row, LICENSE_COLUMN.money)
+    : row.locator(":scope > td").nth(MONEY_COLUMN);
+
+/** A license as A.5 arranged it, with its stored amounts formatted as the admin view prints them. */
+type A5License = Awaited<ReturnType<typeof licenseVideo>> & {
+  /** formatMoney of amount_total_cents. */
+  total: string;
+  /** formatMoney of license_price_cents: the transfer, and its take-back. */
+  price: string;
+  /** Its Money cell while its creator transfer is sent and it isn't revoked: "Transfer {price} sent". */
+  sent: string;
+};
+
+/** Reads `license`'s stored amounts (the test database) and formats them as the admin view does. */
+async function withAmounts(
+  license: Awaited<ReturnType<typeof licenseVideo>>,
+): Promise<A5License> {
+  const stored = await storedLicense(license.requestId);
+  const sent = transferLabel({
+    status: "succeeded",
+    amountCents: stored.priceCents,
+    currency: stored.currency,
+    lastError: null,
+  });
+  if (sent === null) throw new Error("withAmounts: no transfer words");
+  return {
+    ...license,
+    total: formatMoney(stored.totalCents, stored.currency),
+    price: formatMoney(stored.priceCents, stored.currency),
+    sent,
+  };
+}
 
 /** Opens `tab` and waits for its segment to be the current one. */
 async function openTab(page: Page, tab: AdminTab) {
@@ -235,6 +313,54 @@ async function expectTableForm(page: Page, tab: AdminTab, width: number) {
   }
 }
 
+/**
+ * The Licenses tab at `width` with `license`, which isn't revoked (07 D146, D149; 04 §9.22): its Money value under its
+ * label below lg, in the Money column's own cell from lg with the table scrolling inside its wrapper (never the page:
+ * expectPageFrame). With `sheet`, its Revoke sheet opens in the tier's form with Keep license focused, and Esc closes it
+ * with the focus back on Revoke. Nothing is revoked.
+ */
+async function expectLicenseRowAt(
+  page: Page,
+  license: Pick<A5License, "code" | "sent">,
+  width: number,
+  sheet: boolean,
+) {
+  const row = adminRows(page, ADMIN_TAB_LABELS.licenses).filter({
+    hasText: license.code,
+  });
+  const value = moneyValue(row, width);
+  await expect(value).toHaveText(license.sent);
+  if (width < TIERS.desktop) {
+    await expectAbove(moneyLabel(row), value);
+  } else {
+    const table = page.locator("main").getByRole("table", {
+      name: ADMIN_TAB_LABELS.licenses,
+      exact: true,
+    });
+    await expect(table.locator("thead th").nth(MONEY_COLUMN)).toHaveText(
+      LICENSE_COLUMN.money,
+    );
+    await expect(table.locator("xpath=..")).toHaveCSS("overflow-x", "auto");
+  }
+  if (!sheet) return;
+  const trigger = row.getByRole("button", {
+    name: REVOKE_COPY.actionLabel(license.code),
+    exact: true,
+  });
+  await pressLocator(trigger);
+  const dialog = page.getByRole("alertdialog", {
+    name: REVOKE_COPY.title(license.code),
+    exact: true,
+  });
+  await expectSheetForm(dialog, width);
+  await expect(
+    dialog.getByRole("button", { name: REVOKE_COPY.cancel, exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+}
+
 test("A.1: a signed-in creator gets the 404 on /admin, with nothing of the admin view", async ({
   page,
 }) => {
@@ -249,9 +375,10 @@ test("A.1: a signed-in creator gets the 404 on /admin, with nothing of the admin
   expect(errors).toEqual([]);
 });
 
-test("A.2–A.4, A.6, G.6: the e2e admin signs in to /admin, reads the six tabs at every tier, disables a video and enables it again", async ({
+test("A.2–A.6, A.8, G.6: the e2e admin signs in to /admin, reads the six tabs at every tier, disables a video and enables it again, revokes a license with its refund and retries a failed take-back", async ({
   page,
   browser,
+  request,
 }, testInfo) => {
   const admin = e2eAdminEmail(testInfo);
   if (admin === null) {
@@ -572,10 +699,261 @@ test("A.2–A.4, A.6, G.6: the e2e admin signs in to /admin, reads the six tabs 
     await expect(videoRow).toContainText(ADMIN_COPY.verifiedOn(DEMO));
   });
 
+  // A.5's licenses, arranged after the last Videos-row lookup and just before the sweep, so other specs' licenses can't
+  // push the valid one out of the newest 50 before the sweep's Licenses tab. The A.5 steps run at the project's own width.
+  const projectWidth = viewportWidth(page);
+  const licenses = adminRows(page, ADMIN_TAB_LABELS.licenses);
+  const { revoked, valid } =
+    await test.step("arrange A.5: two more approved licenses, each Licenses row reading its transfer sent", async () => {
+      const licensee = (name: string) => ({
+        ...ORGANIC_30_WORLDWIDE,
+        licensee: name,
+      });
+      const shareUrl = arranged.shareUrl;
+      const arrangedLicenses = {
+        revoked: await withAmounts(
+          await licenseVideo(
+            creator,
+            browser,
+            shareUrl,
+            licensee(REVOKED_LICENSEE),
+          ),
+        ),
+        valid: await withAmounts(
+          await licenseVideo(
+            creator,
+            browser,
+            shareUrl,
+            licensee(VALID_LICENSEE),
+          ),
+        ),
+      };
+      // The transfers go after the approvals' responses: a revoke while one is in flight is refused (Q-207), and one
+      // before it is sent cancels the payout instead of taking it back. Each sent in the test database, then the tab.
+      for (const l of Object.values(arrangedLicenses)) {
+        await expect
+          .poll(
+            async () =>
+              (await storedMovement(l.requestId, "creator_transfer")).status,
+            { timeout: 60_000 },
+          )
+          .toBe("succeeded");
+      }
+      await openTab(page, "licenses");
+      for (const l of Object.values(arrangedLicenses)) {
+        await expect(
+          moneyValue(licenses.filter({ hasText: l.code }), projectWidth),
+        ).toHaveText(l.sent);
+      }
+      return arrangedLicenses;
+    });
+  const revokedRow = licenses.filter({ hasText: revoked.code });
+  const refundedMoney = [
+    MONEY_COPY.refunded(revoked.total),
+    MONEY_COPY.takenBack(revoked.price),
+  ].join(MONEY_COPY.separator);
+
+  await test.step("A.5: Revoke asks first with the stored amounts, switches for Payment reversed, and Issued in error revokes", async () => {
+    const trigger = revokedRow.getByRole("button", {
+      name: REVOKE_COPY.actionLabel(revoked.code),
+      exact: true,
+    });
+    await pressLocator(trigger);
+    const sheet = page.getByRole("alertdialog", {
+      name: REVOKE_COPY.title(revoked.code),
+      exact: true,
+    });
+    await expectSheetForm(sheet, projectWidth);
+    const takeBack = REVOKE_COPY.takeBackBody(
+      revoked.total,
+      revoked.price,
+      handle,
+    );
+    await expect(sheet).toHaveAccessibleDescription(takeBack);
+    await expect(
+      sheet.getByRole("button", { name: REVOKE_COPY.cancel, exact: true }),
+    ).toBeFocused();
+    const confirm = (name: string) =>
+      sheet.getByRole("button", { name, exact: true });
+    await expect(confirm(REVOKE_COPY.confirm)).toBeVisible();
+
+    const reason = sheet.getByRole("combobox", {
+      name: DISABLE_COPY.reason,
+      exact: true,
+    });
+    await reason.selectOption("payment_reversed");
+    await expect(sheet).toHaveAccessibleDescription(
+      REVOKE_COPY.paymentReversedBody,
+    );
+    await expect(confirm(REVOKE_COPY.confirmNoRefund)).toBeVisible();
+    await expect(confirm(REVOKE_COPY.confirm)).toHaveCount(0);
+
+    await reason.selectOption("issued_in_error");
+    await expect(sheet).toHaveAccessibleDescription(takeBack);
+    await pressAndSettleIn(page, sheet, REVOKE_COPY.confirm);
+    await expect(toast(page, REVOKE_COPY.toast)).toBeVisible();
+    await expect(sheet).toHaveCount(0);
+    // The refreshed row has no Revoke: the focus lands on its code.
+    await expect(trigger).toHaveCount(0);
+    await expect(rowAnchor(revokedRow)).toBeFocused();
+  });
+
+  await test.step("A.6: Events lists license.revoked for that license, by the admin, with its reason and code", async () => {
+    await openTab(page, "events");
+    const rows = adminRows(page, ADMIN_COPY.latestEventsHeading)
+      .filter({ hasText: revoked.code })
+      .filter({ has: page.getByText("license.revoked", { exact: true }) });
+    await expect(rows).toHaveCount(1);
+    await expect(rows).toContainText(
+      auditActorLabel({
+        actorType: "admin",
+        actorEmail: admin,
+        actorSource: null,
+      }),
+    );
+    await expect(rows).toContainText("issued_in_error");
+  });
+
+  await test.step("A.5: the Money cell reads the refund and the take-back once both went through", async () => {
+    // Both go after the revoke's response: each done in the test database, then the tab.
+    for (const kind of ["buyer_refund", "transfer_reversal"] as const) {
+      await expect
+        .poll(
+          async () => (await storedMovement(revoked.requestId, kind)).status,
+          {
+            timeout: 60_000,
+          },
+        )
+        .toBe("succeeded");
+    }
+    await openTab(page, "licenses");
+    await expect(moneyValue(revokedRow, projectWidth)).toHaveText(
+      refundedMoney,
+    );
+    await expect(
+      revokedRow.getByRole("button", {
+        name: REVOKE_COPY.actionLabel(revoked.code),
+        exact: true,
+      }),
+    ).toHaveCount(0);
+  });
+
+  await test.step("J10.3, J9.6: /verify reads Revoked with no amount; /l the refund and no download, both routes 404", async () => {
+    const visitorContext = await browser.newContext();
+    const visitor = await visitorContext.newPage();
+    const visitorErrors = collectConsoleErrors(visitor);
+    await visitor.goto(verifyPath(revoked.code));
+    await expect(visitor.getByRole("heading", { level: 1 })).toHaveText(
+      LICENSE_RECORD_COPY.verify.heading.revoked,
+    );
+    const record = await visitor.locator("body").innerText();
+    expect(record).not.toMatch(/\$\d/);
+    expect(record).not.toMatch(/refund/i);
+
+    const { revokedAt } = await storedLicense(revoked.requestId);
+    if (revokedAt === null) throw new Error("A.5: the license isn't revoked");
+    await visitor.goto(licensePath(revoked.token));
+    await expect(
+      visitor
+        .locator("main")
+        .getByText(
+          LICENSE_RECORD_COPY.buyer.revokedRefunded(
+            formatLicenseDate(revokedAt),
+            revoked.total,
+          ),
+          { exact: true },
+        ),
+    ).toBeVisible();
+    await expect(visitor.locator('main a[href^="/api/licenses/"]')).toHaveCount(
+      0,
+    );
+    for (const kind of ["original", "pdf"] as const) {
+      const answer = await request.get(
+        licenseDownloadPath(revoked.token, kind),
+        { maxRedirects: 0 },
+      );
+      expect(answer.status()).toBe(404);
+    }
+    await visitorContext.close();
+    expect(visitorErrors).toEqual([]);
+  });
+
+  await test.step("J9.8: the creator's Licenses reads «Revoked · refunded» and Taken back", async () => {
+    await creator.goto("/dashboard/licenses");
+    const row = licenseRows(creator).filter({ hasText: revoked.code });
+    await expect(row).toHaveCount(1);
+    await expect(
+      row.getByText(LICENSE_RECORD_COPY.dashboard.revokedRefunded, {
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(
+      row.getByText(PAYOUT_LINE_COPY.takenBack, { exact: true }),
+    ).toBeVisible();
+  });
+
+  await test.step("A.8: a failed take-back shows in Events and the Money cell, and Retry runs its next attempt", async () => {
+    await forceTakeBackFailed(revoked.requestId);
+    const failedOnce = await storedMovement(
+      revoked.requestId,
+      "transfer_reversal",
+    );
+    const words = RETRY_COPY.kind.transfer_reversal;
+    const retryName = words.actionLabel(revoked.code);
+
+    await openTab(page, "events");
+    const movement = adminRows(page, ADMIN_COPY.failedMovementsHeading).filter({
+      hasText: revoked.code,
+    });
+    await expect(movement).toHaveCount(1);
+    await expect(movement).toContainText(
+      MONEY_MOVEMENT_KIND_LABELS.transfer_reversal,
+    );
+    await expect(movement).toContainText(revoked.price);
+    await expect(
+      movement.getByText(MANUAL_TEST_ERROR, { exact: true }),
+    ).toBeVisible();
+    await expect(
+      movement.getByRole("button", { name: retryName, exact: true }),
+    ).toBeVisible();
+
+    await openTab(page, "licenses");
+    const money = moneyValue(revokedRow, projectWidth);
+    await expect(money).toContainText(MONEY_COPY.refunded(revoked.total));
+    const failed = money.getByText(MONEY_COPY.takeBackFailed, { exact: true });
+    await expect(failed).toBeVisible();
+    await expect(failed).toHaveClass(/\btext-danger-text\b/);
+    await pressLocator(
+      money.getByRole("button", { name: retryName, exact: true }),
+    );
+    const sheet = page.getByRole("alertdialog", {
+      name: words.title,
+      exact: true,
+    });
+    await expectSheetForm(sheet, projectWidth);
+    await expect(sheet).toHaveAccessibleDescription(
+      words.body(revoked.price, handle),
+    );
+    await pressAndSettleIn(page, sheet, RETRY_COPY.confirm);
+    await expect(toast(page, RETRY_COPY.toast)).toBeVisible();
+    await expect(sheet).toHaveCount(0);
+    await expect(money).toHaveText(refundedMoney);
+    // The take-back went through and took its Retry away: the focus lands on the row's code.
+    await expect(rowAnchor(revokedRow)).toBeFocused();
+    expect(
+      await storedMovement(revoked.requestId, "transfer_reversal"),
+    ).toEqual({
+      status: "succeeded",
+      attempt: failedOnce.attempt + 1,
+      lastError: null,
+    });
+  });
+
   // After the last Videos-row lookup: the sweep is long, and other specs' publishes meanwhile could push this run's video
   // out of the newest 50. A bare dollar is read once per form, in light: the stacked rows at 375, the table at 1280, or
-  // the project's own width where the sweep doesn't resize.
-  const dollarWidths = new Set([375, 1280, viewportWidth(page)]);
+  // the project's own width where the sweep doesn't resize. Licenses' valid row opens its Revoke sheet once per width, in
+  // light, and revokes nothing.
+  const dollarWidths = new Set([375, 1280, projectWidth]);
   for (const tab of ADMIN_TABS) {
     await test.step(`G.6: ?tab=${tab} at every width`, async () => {
       await openTab(page, tab);
@@ -596,6 +974,9 @@ test("A.2–A.4, A.6, G.6: the e2e admin signs in to /admin, reads the six tabs 
         await expectPageFrame(page, width, { banner: true });
         await expectTabRow(page, width);
         await expectTableForm(page, tab, width);
+        if (tab === "licenses") {
+          await expectLicenseRowAt(page, valid, width, theme === "light");
+        }
         if (theme === "light" && dollarWidths.has(width)) {
           await expectNoBareDollar(page);
         }

@@ -1,7 +1,9 @@
 // Every word the admin view prints (05 §7; design/P21-admin-view.md §2 and §6; owner answers Q-198 a, Q-199 a,
-// Q-201–Q-203): the tab row, the six tables' headers and cells, the Events lists, and the Disable and Enable sheets. Pure
-// and client-safe. The status and transfer words are in labels.ts, the disable reasons' in src/lib/videos/review.ts and
-// "Standard" is MY_LICENSES_COPY's; the generic error is GENERIC_ERROR_MESSAGE.
+// Q-201–Q-203, Q-207–Q-209, Q-211): the tab row, the six tables' headers and cells, the Events lists, the Disable and Enable
+// sheets, the Licenses tab's money words, and the Revoke and Retry sheets. Pure and client-safe. The status and transfer
+// words, the revoke reasons and the movement kinds are in labels.ts, the disable reasons' in src/lib/videos/review.ts
+// and "Standard" is MY_LICENSES_COPY's; the generic error is GENERIC_ERROR_MESSAGE.
+import type { MoneyMovementKind } from "../domain/values";
 
 /** 04 §9.22 / 05 §7's sentence, word for word: the release that comes with every Disable (07 D66). */
 const RELEASE_SENTENCE =
@@ -19,6 +21,7 @@ export const ADMIN_COPY = {
   stripeEventsHeading: "Unprocessed Stripe events",
   latestEventsHeading: "Latest events",
   failedEmailsHeading: "Failed emails",
+  failedMovementsHeading: "Failed money movements",
   /** Videos' Postings cell: "3 · 2 verified". */
   postings: (total: number, verified: number) =>
     `${total} · ${verified} verified`,
@@ -87,8 +90,9 @@ export const ADMIN_COLUMNS = {
     type: "Type",
     issued: "Issued",
     downloads: "Downloads",
-    transfer: "Transfer",
+    money: "Money",
     revoked: "Revoked",
+    action: "Action",
   },
   auditEvents: {
     time: "Time",
@@ -96,6 +100,15 @@ export const ADMIN_COLUMNS = {
     actor: "Actor",
     target: "Target",
     details: "Details",
+  },
+  failedMovements: {
+    kind: "Kind",
+    license: "License",
+    amount: "Amount",
+    attempt: "Attempt",
+    error: "Error",
+    updated: "Updated",
+    retry: "Retry",
   },
   failedEmails: {
     time: "Time",
@@ -169,4 +182,100 @@ export const ENABLE_COPY = {
   confirm: "Enable video",
   pending: "Enabling…",
   toast: "Video enabled.",
+} as const;
+
+/**
+ * The Licenses tab's Money cell for a revoked license (05 §7 callouts 8, 9; owner answer Q-209): the refund part, then
+ * the take-back part, joined with " · ". A license that isn't revoked reads transferLabel's words (labels.ts).
+ */
+export const MONEY_COPY = {
+  separator: " · ",
+  refunded: (total: string) => `Refunded ${total}`,
+  refundPending: "Refund pending",
+  refundFailed: "Refund failed",
+  /** Payment reversed: the money went back before the revoke (05 §7 callout 8). */
+  noRefund: "No refund (money already returned)",
+  takenBack: (price: string) => `Taken back ${price}`,
+  takeBackPending: "Take-back pending",
+  takeBackFailed: "Take-back failed",
+  /** The revoke canceled a payout that wasn't sent yet, or its take-back found it never landed (owner answer Q-210). */
+  payoutCanceled: "Payout canceled",
+  nothingToTakeBack: "Nothing to take back",
+} as const;
+
+/**
+ * The Revoke sheet (05 §7 callout 10; 04 §9.22, §11.10; 07 D86; owner answers Q-207, Q-209): the body by what the revoke
+ * does with the money, the buttons and the in-flight refusal. Its reasons are labels.ts's; its reason and note fields
+ * read Disable's words (ReasonNoteFields): admins only, never a creator, buyer or public page.
+ */
+export const REVOKE_COPY = {
+  action: "Revoke",
+  /** The row action's name for screen readers. */
+  actionLabel: (code: string) => `Revoke ${code}`,
+  title: (code: string) => `Revoke ${code}?`,
+  /** The creator's transfer was sent: the revoke takes it back. */
+  takeBackBody: (total: string, price: string, handle: string) =>
+    `This refunds the buyer ${total} and takes back ${price} from @${handle}.`,
+  /** The transfer wasn't sent yet (pending or failed): the revoke cancels it. */
+  cancelPayoutBody: (total: string, price: string, handle: string) =>
+    `This refunds the buyer ${total} and cancels the ${price} payout to @${handle}.`,
+  /** No payout to take back or cancel (owner answer Q-211). */
+  refundOnlyBody: (total: string) => `This refunds the buyer ${total}.`,
+  /** Reason Payment reversed, switched live. */
+  paymentReversedBody: "No refund: the money already went back.",
+  cancel: "Keep license",
+  confirm: "Revoke and refund",
+  /** Payment reversed's confirm: nothing to refund. */
+  confirmNoRefund: "Revoke",
+  pending: "Revoking…",
+  toast: "License revoked.",
+  /** Owner answer Q-207: the creator transfer is in flight, so nothing was revoked. */
+  inProgress: (handle: string) =>
+    `A payout to @${handle} is in progress. Try again in a minute.`,
+} as const;
+
+/** What a Retry names and asks, by the movement's kind (owner answers Q-208, Q-209, Q-211). */
+type RetryWords = {
+  /** The button's name for screen readers, naming the license; its visible word is RETRY_COPY.action. */
+  actionLabel: (code: string) => string;
+  title: string;
+  body: (amount: string, handle: string) => string;
+};
+
+/**
+ * The Retry button and its sheet (05 §7 callout 9; 02 §6.1; owner answers Q-208, Q-211): it asks first, by kind, with a
+ * primary Retry and Cancel; done → the toast; nothing left to retry → its toast; failed again → the code in the sheet;
+ * another retry running → its line in the sheet; no answer → Stripe's.
+ */
+export const RETRY_COPY = {
+  action: "Retry",
+  kind: {
+    buyer_refund: {
+      actionLabel: (code) => `Retry refund for ${code}`,
+      title: "Retry this refund?",
+      body: (total) => `This tries again to refund the buyer ${total}.`,
+    },
+    transfer_reversal: {
+      actionLabel: (code) => `Retry take-back for ${code}`,
+      title: "Retry this take-back?",
+      body: (price, handle) =>
+        `This tries again to take back ${price} from @${handle}.`,
+    },
+    creator_transfer: {
+      actionLabel: (code) => `Retry transfer for ${code}`,
+      title: "Retry this transfer?",
+      body: (price, handle) =>
+        `This tries again to send ${price} to @${handle}.`,
+    },
+  } satisfies Record<MoneyMovementKind, RetryWords>,
+  confirm: "Retry",
+  cancel: "Cancel",
+  pending: "Retrying…",
+  toast: "Retry done.",
+  /** Owner answer Q-211: the movement went through or was canceled meanwhile. */
+  nothingToRetry: "Nothing to retry.",
+  failed: (code: string) => `That didn't work (${code}). Try again later.`,
+  /** Owner answer Q-211: another retry holds the movement. */
+  inProgress: "It's already being retried. Try again in a minute.",
+  transient: "Stripe didn't answer. Try again in a minute.",
 } as const;

@@ -1,5 +1,6 @@
 import "server-only";
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { alias, type BuildAliasTable } from "drizzle-orm/pg-core";
 import { db } from "@/db/client";
 import {
   auditEvent,
@@ -19,15 +20,17 @@ import type {
   AuditActorType,
   Currency,
   LicenseRequestStatus,
-  MoneyMovementStatus,
+  MoneyMovementKind,
   PayoutsStatus,
   PostingPlatform,
+  RevokedReason,
   SocialAccountStatus,
   SocialProviderId,
   VideoDisabledReason,
   VideoStatus,
 } from "@/lib/domain/values";
 import type { RecordStatus } from "@/lib/licensing/license-record";
+import type { MoneyMovementCell } from "@/lib/licensing/revoke-display";
 import { scopeLabel } from "@/lib/licensing/selection";
 import { type Actor, requireAdminActor } from "../auth/actor";
 import { CONNECTION_STATE_COLUMNS } from "../library/queries";
@@ -258,29 +261,57 @@ export async function listAdminRequests(a: Actor): Promise<AdminRequestRow[]> {
   }));
 }
 
-/** A license's creator transfer as the Licenses tab prints it (05 §7 callout 7): never its Stripe id. */
-export type AdminTransfer = {
-  status: MoneyMovementStatus;
-  amountCents: number;
-  currency: Currency;
-  /** A Stripe error code only. */
-  lastError: string | null;
-};
-
-/** The Licenses tab (03 §7.9; 07 D16, D127): the status computed by the creator list's CASE, never stored. */
+/**
+ * The Licenses tab (03 §7.9; 07 D16, D86, D127; owner answer Q-209): the status computed by the creator list's CASE,
+ * never stored; what the Revoke sheet says (the creator's handle, the request's price, total and currency); the revoke's
+ * reason; and the request's three money movements for the Money cell and its Retry: never a Stripe id.
+ */
 export type AdminLicenseRow = {
   id: string;
   code: string;
   licenseeName: string;
   videoTitle: string;
+  creatorHandle: string;
   status: RecordStatus;
   exclusive: boolean;
   /** license.created_at. */
   issuedAt: string;
   downloads: number;
-  transfer: AdminTransfer | null;
+  licensePriceCents: number;
+  amountTotalCents: number;
+  /** The request's currency, every movement's too (I33). */
+  currency: Currency;
+  transfer: MoneyMovementCell | null;
+  refund: MoneyMovementCell | null;
+  reversal: MoneyMovementCell | null;
   revokedAt: string | null;
+  /** Admins only; the revoke's note is never selected. */
+  revokedReason: RevokedReason | null;
 };
+
+/** The request's movement of each kind (money_movement_request_kind_uidx: one at most, so a license stays one row). */
+const transferMovement = alias(moneyMovement, "transfer_movement");
+const refundMovement = alias(moneyMovement, "refund_movement");
+const reversalMovement = alias(moneyMovement, "reversal_movement");
+
+type MovementAlias<N extends string> = BuildAliasTable<typeof moneyMovement, N>;
+
+/** A joined movement's Money cell columns (a MoneyMovementCell): never its Stripe id. */
+const cellOf = <N extends string>(m: MovementAlias<N>) => ({
+  id: m.id,
+  status: m.status,
+  amountCents: m.amountCents,
+  lastError: m.lastError,
+});
+
+/**
+ * The ON clause of the license's movement of `kind`: the kind in it, so a request without one still reads as one row,
+ * and Drizzle answers the joined movement whose columns are all null (none of that kind) as null.
+ */
+const ofKind = <N extends string>(
+  m: MovementAlias<N>,
+  kind: MoneyMovementKind,
+) => and(eq(m.licenseRequestId, license.licenseRequestId), eq(m.kind, kind));
 
 export async function listAdminLicenses(a: Actor): Promise<AdminLicenseRow[]> {
   requireAdminActor(a);
@@ -290,27 +321,27 @@ export async function listAdminLicenses(a: Actor): Promise<AdminLicenseRow[]> {
       code: license.code,
       licenseeName: licenseRequest.licenseeName,
       videoTitle: video.title,
+      creatorHandle: creatorProfile.handle,
       status: statusColumn,
       exclusive: license.exclusive,
       createdAt: license.createdAt,
       downloads: downloadsColumn,
-      transferStatus: moneyMovement.status,
-      transferAmountCents: moneyMovement.amountCents,
-      transferCurrency: moneyMovement.currency,
-      transferLastError: moneyMovement.lastError,
+      licensePriceCents: licenseRequest.licensePriceCents,
+      amountTotalCents: licenseRequest.amountTotalCents,
+      currency: licenseRequest.currency,
+      transfer: cellOf(transferMovement),
+      refund: cellOf(refundMovement),
+      reversal: cellOf(reversalMovement),
       revokedAt: license.revokedAt,
+      revokedReason: license.revokedReason,
     })
     .from(license)
     .innerJoin(licenseRequest, eq(licenseRequest.id, license.licenseRequestId))
     .innerJoin(video, eq(video.id, license.videoId))
-    // money_movement_request_kind_uidx: at most one transfer, so each license stays one row.
-    .leftJoin(
-      moneyMovement,
-      and(
-        eq(moneyMovement.licenseRequestId, license.licenseRequestId),
-        eq(moneyMovement.kind, "creator_transfer"),
-      ),
-    )
+    .innerJoin(creatorProfile, eq(creatorProfile.id, license.creatorId))
+    .leftJoin(transferMovement, ofKind(transferMovement, "creator_transfer"))
+    .leftJoin(refundMovement, ofKind(refundMovement, "buyer_refund"))
+    .leftJoin(reversalMovement, ofKind(reversalMovement, "transfer_reversal"))
     .orderBy(desc(license.createdAt), desc(license.id))
     .limit(LIMIT);
   return rows.map((r) => ({
@@ -318,22 +349,19 @@ export async function listAdminLicenses(a: Actor): Promise<AdminLicenseRow[]> {
     code: r.code,
     licenseeName: r.licenseeName,
     videoTitle: r.videoTitle,
+    creatorHandle: r.creatorHandle,
     status: r.status,
     exclusive: r.exclusive,
     issuedAt: iso(r.createdAt),
     downloads: r.downloads,
-    transfer:
-      r.transferStatus !== null &&
-      r.transferAmountCents !== null &&
-      r.transferCurrency !== null
-        ? {
-            status: r.transferStatus,
-            amountCents: r.transferAmountCents,
-            currency: r.transferCurrency,
-            lastError: r.transferLastError,
-          }
-        : null,
+    licensePriceCents: r.licensePriceCents,
+    amountTotalCents: r.amountTotalCents,
+    currency: r.currency,
+    transfer: r.transfer,
+    refund: r.refund,
+    reversal: r.reversal,
     revokedAt: isoOrNull(r.revokedAt),
+    revokedReason: r.revokedReason,
   }));
 }
 
@@ -378,21 +406,67 @@ export type AdminStripeEventRow = {
   lastError: string | null;
 };
 
-/** The Events tab's three lists. */
+/**
+ * A failed money_movement row (03 §7.9; 05 §7 callout 9; owner answer Q-209), with what its Retry sheet says: its
+ * license's code and the creator's handle; its amount in its own currency. Never its Stripe id.
+ */
+export type AdminFailedMovementRow = {
+  id: string;
+  kind: MoneyMovementKind;
+  licenseCode: string;
+  creatorHandle: string;
+  amountCents: number;
+  currency: Currency;
+  attempt: number;
+  /** A Stripe error code only. */
+  lastError: string | null;
+  updatedAt: string;
+};
+
+/** The Events tab's four lists. */
 export type AdminEvents = {
   audit: AdminAuditRow[];
+  failedMovements: AdminFailedMovementRow[];
   failedEmails: AdminFailedEmailRow[];
   stripeEvents: AdminStripeEventRow[];
 };
 
 export async function listAdminEvents(a: Actor): Promise<AdminEvents> {
   requireAdminActor(a);
-  const [audit, failedEmails, stripeEvents] = await Promise.all([
-    latestAudit(),
-    failedEmailRows(),
-    unprocessedStripeEvents(),
-  ]);
-  return { audit, failedEmails, stripeEvents };
+  const [audit, failedMovements, failedEmails, stripeEvents] =
+    await Promise.all([
+      latestAudit(),
+      failedMovementRows(),
+      failedEmailRows(),
+      unprocessedStripeEvents(),
+    ]);
+  return { audit, failedMovements, failedEmails, stripeEvents };
+}
+
+/** money_movement_status_idx (status, updated_at): newest touched first. Every movement's request has its license. */
+async function failedMovementRows(): Promise<AdminFailedMovementRow[]> {
+  const rows = await db
+    .select({
+      id: moneyMovement.id,
+      kind: moneyMovement.kind,
+      licenseCode: license.code,
+      creatorHandle: creatorProfile.handle,
+      amountCents: moneyMovement.amountCents,
+      currency: moneyMovement.currency,
+      attempt: moneyMovement.attempt,
+      lastError: moneyMovement.lastError,
+      updatedAt: moneyMovement.updatedAt,
+    })
+    .from(moneyMovement)
+    .innerJoin(
+      license,
+      eq(license.licenseRequestId, moneyMovement.licenseRequestId),
+    )
+    .innerJoin(creatorProfile, eq(creatorProfile.id, license.creatorId))
+    .where(eq(moneyMovement.status, "failed"))
+    .orderBy(desc(moneyMovement.updatedAt), desc(moneyMovement.id))
+    .limit(LIMIT);
+  return rows.map((r) => ({ ...r, updatedAt: iso(r.updatedAt) }));
 }
 
 /** audit_event_created_idx; the actor's email through user only. */

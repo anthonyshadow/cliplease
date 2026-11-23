@@ -1,9 +1,15 @@
 import type { Locator, Page } from "@playwright/test";
+import type {
+  Currency,
+  MoneyMovementKind,
+  MoneyMovementStatus,
+} from "../../../src/lib/domain/values";
 import { DAY_MS } from "../../../src/lib/time";
 import { withTestDb } from "./test-db";
 
 // Licenses a spec forces into a state no check let through (P19g; 07 D111), or one the app has no way to reach yet (P20:
-// revoked is P21b's admin action, expired takes 30 days; owner answer Q-188): only the test database, never the app's.
+// revoked is P21b's admin action, expired takes 30 days; owner answer Q-188), and a license's charge and money movements
+// read, or a take-back failed by hand (P21b's manual Verify, automated): only the test database, never the app's.
 
 /** Organic social repost · 30 days · Worldwide. */
 export const ORGANIC_30_WORLDWIDE = {
@@ -15,12 +21,13 @@ export const ORGANIC_30_WORLDWIDE = {
 /** A license date as the record prints it, UTC (07 D84): "15 Oct 2026, 14:32 UTC". */
 export const LICENSE_DATE = String.raw`\d{1,2} [A-Z][a-z]{2} \d{4}, \d{2}:\d{2} UTC`;
 
+/** A FactList row's label (04 §9.31): the <dt> that reads `label`. */
+export const factLabel = (scope: Locator, label: string) =>
+  scope.locator("dt").filter({ hasText: new RegExp(`^${label}$`) });
+
 /** A FactList row's value (04 §9.31): the <dd> after the <dt> that reads `label`. */
 export const fact = (scope: Locator, label: string) =>
-  scope
-    .locator("dt")
-    .filter({ hasText: new RegExp(`^${label}$`) })
-    .locator("xpath=following-sibling::dd[1]");
+  factLabel(scope, label).locator("xpath=following-sibling::dd[1]");
 
 /** /dashboard/licenses' rows in the form the tier shows (DataTable renders both, 04 §9.31). */
 export const licenseRows = (page: Page) =>
@@ -32,9 +39,13 @@ export const licenseRows = (page: Page) =>
 /** What forceLicenseRevoked stores as the admin's note: a public page must never show it (03: revoked_note). */
 export const REVOKED_NOTE = "Admin note: e2e dispute ch_e2e_lost_4410";
 
-/** Updates request `requestId`'s one license with `sql` (its $1 is the request id), or throws naming `helper`. */
-async function updateLicense(
+/**
+ * Runs `sql`, one UPDATE of request `requestId`'s one `row` (its $1 is the request id), or throws naming `helper` when
+ * it updated no row or more than one.
+ */
+async function updateOne(
   helper: string,
+  row: string,
   requestId: string,
   sql: string,
   values: unknown[] = [],
@@ -42,8 +53,16 @@ async function updateLicense(
   const { rowCount } = await withTestDb((client) =>
     client.query(sql, [requestId, ...values]),
   );
-  if (rowCount !== 1) throw new Error(`${helper}: no license for ${requestId}`);
+  if (rowCount !== 1) throw new Error(`${helper}: no ${row} for ${requestId}`);
 }
+
+/** Updates request `requestId`'s one license with `sql` (its $1 is the request id), or throws naming `helper`. */
+const updateLicense = (
+  helper: string,
+  requestId: string,
+  sql: string,
+  values: unknown[] = [],
+) => updateOne(helper, "license", requestId, sql, values);
 
 /**
  * Makes request `requestId`'s issued license exclusive, as a running exclusive license the availability checks missed:
@@ -101,4 +120,73 @@ export async function downloadCount(requestId: string): Promise<number> {
     ),
   );
   return rows[0]?.count ?? 0;
+}
+
+/** What request `requestId` charged, as its license stores it, and when the license was revoked (null while it isn't). */
+export type StoredLicense = {
+  totalCents: number;
+  priceCents: number;
+  currency: Currency;
+  revokedAt: Date | null;
+};
+
+/**
+ * Request `requestId`'s amounts (amount_total_cents, license_price_cents, currency: what the Revoke sheet and the Money
+ * cell print) and its license's revoked_at (the date /l prints), or a throw.
+ */
+export async function storedLicense(requestId: string): Promise<StoredLicense> {
+  const { rows } = await withTestDb((client) =>
+    client.query<StoredLicense>(
+      `select r.amount_total_cents as "totalCents", r.license_price_cents as "priceCents", r.currency,
+          l.revoked_at as "revokedAt"
+        from license_request r join license l on l.license_request_id = r.id where r.id = $1`,
+      [requestId],
+    ),
+  );
+  const [row] = rows;
+  if (!row) throw new Error(`storedLicense: no license for ${requestId}`);
+  return row;
+}
+
+/** A money movement as a spec reads it back: never its Stripe id. */
+export type StoredMovement = {
+  status: MoneyMovementStatus;
+  attempt: number;
+  lastError: string | null;
+};
+
+/** Request `requestId`'s money movement of `kind` (one at most per kind), or a throw. */
+export async function storedMovement(
+  requestId: string,
+  kind: MoneyMovementKind,
+): Promise<StoredMovement> {
+  const { rows } = await withTestDb((client) =>
+    client.query<StoredMovement>(
+      `select status, attempt, last_error as "lastError" from money_movement
+        where license_request_id = $1 and kind = $2`,
+      [requestId, kind],
+    ),
+  );
+  const [row] = rows;
+  if (!row) throw new Error(`storedMovement: no ${kind} for ${requestId}`);
+  return row;
+}
+
+/** The Stripe code forceTakeBackFailed stores, as P21b's manual Verify step does. */
+export const MANUAL_TEST_ERROR = "manual_test";
+
+/**
+ * Fails request `requestId`'s take-back after it succeeded, as P21b's manual Verify step does on the dev database
+ * (`last_error` MANUAL_TEST_ERROR, no `succeeded_at`), touched now: Events lists failed movements newest first. Its
+ * attempt stays, so a Retry runs the next one. Throws unless there was one succeeded transfer_reversal to fail.
+ */
+export async function forceTakeBackFailed(requestId: string): Promise<void> {
+  await updateOne(
+    "forceTakeBackFailed",
+    "succeeded take-back",
+    requestId,
+    `update money_movement set status = 'failed', last_error = $2, succeeded_at = null, updated_at = now()
+      where license_request_id = $1 and kind = 'transfer_reversal' and status = 'succeeded'`,
+    [MANUAL_TEST_ERROR],
+  );
 }

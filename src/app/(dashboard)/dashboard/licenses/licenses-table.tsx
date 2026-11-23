@@ -8,17 +8,20 @@ import { INBOX_COPY } from "@/lib/licensing/inbox";
 import {
   downloadsText,
   LICENSE_RECORD_COPY,
-  licenseStatusPill,
 } from "@/lib/licensing/license-record";
+import { creatorLicenseStatusLabel } from "@/lib/licensing/revoke-display";
 import { verifyPath } from "@/lib/urls";
 import type { CreatorLicense } from "@/server/licensing/licenses";
 
 const COPY = LICENSE_RECORD_COPY.dashboard;
 const COLUMN = COPY.columns;
 
-/** Its pill (Valid filled, Expired neutral, Revoked danger) and an exclusive license's neutral tag beside it (07 D127). */
+/**
+ * Its pill (Valid filled, Expired neutral, Revoked danger, «Revoked · refunded» once the buyer was refunded, J9.8) and
+ * an exclusive license's neutral tag beside it (07 D127).
+ */
 function LicenseStatus({ license }: { license: CreatorLicense }) {
-  const pill = licenseStatusPill(license.status);
+  const pill = creatorLicenseStatusLabel(license);
   return (
     <div className="flex flex-wrap items-center gap-2">
       <StatusPill tone={pill.tone}>{pill.label}</StatusPill>
