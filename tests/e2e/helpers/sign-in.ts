@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import {
   type BrowserContext,
   expect,
@@ -8,16 +8,28 @@ import {
 import { signInPath } from "../../../src/lib/sign-in";
 import { DAY_MS } from "../../../src/lib/time";
 import { readSignInCode } from "../../helpers/read-latest-email";
+import { projectLetter, runId } from "./run";
 
 /** Better Auth's session read, which SessionRefresh calls once the sign-in's daily extension is due. */
 export const GET_SESSION_PATH = "/api/auth/get-session";
 
 /**
- * A run-unique address. Each test and project needs its own: only the newest code for an address works, so two tests
- * signing the same address in at once would break each other.
+ * A run-unique address, `<role>+<run id>-<project letter><8 hex>@example.com` (P22; `role` creator unless given). Each
+ * test and project needs its own: only the newest code for an address works, so two tests signing the same address in
+ * at once would break each other. The random part keeps two calls in one test apart.
  */
-export function uniqueEmail(testInfo: TestInfo): string {
-  return `creator+${testInfo.project.name}-${randomUUID().slice(0, 8)}@example.com`;
+export function uniqueEmail(testInfo: TestInfo, role = "creator"): string {
+  return `${role}+${runId()}-${projectLetter(testInfo)}${randomBytes(4).toString("hex")}@example.com`;
+}
+
+/**
+ * The first ADMIN_EMAILS address (the owner, 07 D88), as env.ts reads it: the setup project signs it in once and every
+ * admin step after it uses that session (.auth/admin.json). playwright.config.ts copies .env.test into process.env.
+ */
+export function setupAdminEmail(): string {
+  const first = process.env.ADMIN_EMAILS?.split(",")[0]?.trim().toLowerCase();
+  if (!first) throw new Error("ADMIN_EMAILS lists no address (07 D88)");
+  return first;
 }
 
 const E2E_ADMINS: Readonly<Partial<Record<string, string>>> = {
@@ -26,8 +38,8 @@ const E2E_ADMINS: Readonly<Partial<Record<string, string>>> = {
 };
 
 /**
- * One ADMIN_EMAILS address per original project (.env.test lists both, 07 D88), for the same reason; `null` on every
- * other project, where admin checks skip (07 D154).
+ * One ADMIN_EMAILS address per original project (.env.test lists both, 07 D88), for the same reason: admin.spec.ts's
+ * one OTP sign-in test per project; `null` on every other project, where it skips (07 D154).
  */
 export function e2eAdminEmail(testInfo: TestInfo): string | null {
   return E2E_ADMINS[testInfo.project.name] ?? null;

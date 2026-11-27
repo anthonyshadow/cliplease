@@ -9,17 +9,19 @@ import {
 import { INBOX_COPY } from "../../../src/lib/licensing/inbox";
 import { LICENSE_CODE_PATTERN } from "../../../src/lib/licensing/snapshot";
 import { POSTINGS_COPY } from "../../../src/lib/postings/copy";
+import { requestDetailPath } from "../../../src/lib/urls";
 import { PUBLISHED_COPY, REVIEW_COPY } from "../../../src/lib/videos/review";
 import { VIDEO_MENU_COPY } from "../../../src/lib/videos/video-page";
 import {
   BUYER_PHONE,
+  buyerStatusUrl,
   E2E_LICENSEE,
   type LicenseChoice,
   payButton,
   requestLicense,
 } from "./buyer";
 import { signUpCreator } from "./creator";
-import { LIBRARY, libraryPostId, POST_01, tiles } from "./library";
+import { LIBRARY, libraryPostId, POST_01, tilePostId, tiles } from "./library";
 import {
   isServerAction,
   pressAndSettle,
@@ -106,15 +108,39 @@ export async function publish(
   return { shareUrl, slug: new URL(shareUrl).pathname.split("/").at(-1) ?? "" };
 }
 
+/** Rights' answers for a publish flow: No to both questions unless given. */
+type RightsAnswers = Parameters<typeof answerRights>[1];
+
 /**
- * A fresh creator with fake payouts and Demo linked publishes Demo post 01 through the UI (File with sample.mp4 →
- * Where posted with the source and the same-video tick → Rights, four answers (`rights`: No to both questions unless
- * given) → Review → Publish) and stays on the success view. Returns the creator's address and handle, the video's slug,
- * the link to share and the video's id.
+ * The signed-in creator publishes Demo post `postId` through the UI (its Source page's Make licensable → File with
+ * sample.mp4 → Where posted with the locked source row and the same-video tick → Rights, four answers → Review →
+ * Publish) and stays on the success view. Returns the video's id, the link to share and its slug.
+ */
+async function publishPost(
+  page: Page,
+  postId: string,
+  rights: RightsAnswers,
+): Promise<{ videoId: string; shareUrl: string; slug: string }> {
+  const videoId = await makeLicensable(page, postId);
+  await attachSample(page);
+  await continueToPostings(page, videoId);
+  const tick = sameVideoTick(page);
+  await tick.focus();
+  await tick.press("Space");
+  await continueToRights(page, videoId);
+  await answerRights(page, rights);
+  await continueToReview(page, videoId);
+  return { videoId, ...(await publish(page)) };
+}
+
+/**
+ * A fresh creator with fake payouts and Demo linked publishes Demo post 01 through the UI (publishPost, `rights`: No to
+ * both questions unless given) and stays on the success view. Returns the creator's address and handle, the video's
+ * slug, the link to share and the video's id.
  */
 export async function publishDemoVideo(
   page: Page,
-  rights: Parameters<typeof answerRights>[1] = {},
+  rights: RightsAnswers = {},
 ): Promise<{
   email: string;
   handle: string;
@@ -128,19 +154,32 @@ export async function publishDemoVideo(
   });
   await page.goto(LIBRARY);
   await expect(tiles(page)).toHaveCount(24);
-  const videoId = await makeLicensable(
+  const { videoId, slug, shareUrl } = await publishPost(
     page,
     await libraryPostId(page, POST_01),
+    rights,
   );
-  await attachSample(page);
-  await continueToPostings(page, videoId);
-  const tick = sameVideoTick(page);
-  await tick.focus();
-  await tick.press("Space");
-  await continueToRights(page, videoId);
-  await answerRights(page, rights);
-  await continueToReview(page, videoId);
-  return { email, handle, videoId, ...(await publish(page)) };
+  return { email, handle, videoId, slug, shareUrl };
+}
+
+/**
+ * The signed-in creator (Demo linked, so the Library holds its 24 posts) publishes the Library's tile `tileIndex`
+ * (0-based, newest first; the post must have no video yet) through the UI (publishPost), opening the tile's Source page
+ * with a goto (makeLicensable's), never a tap right after the Library loads. Stays on the success view. Returns the link
+ * to share (`url`) and the creator's handle.
+ */
+export async function publishFromLibrary(
+  page: Page,
+  tileIndex: number,
+  rights: RightsAnswers = {},
+): Promise<{ url: string; handle: string }> {
+  await page.goto(LIBRARY);
+  await expect(tiles(page)).toHaveCount(24);
+  const postId = await tilePostId(tiles(page).nth(tileIndex));
+  const { shareUrl } = await publishPost(page, postId, rights);
+  const handle = /^\/@([^/]+)\//.exec(new URL(shareUrl).pathname)?.[1];
+  if (!handle) throw new Error(`publishFromLibrary: no handle in ${shareUrl}`);
+  return { url: shareUrl, handle };
 }
 
 /**
@@ -201,14 +240,22 @@ export async function buyLicense(
   await pressLocator(payButton(page));
   await paid;
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(landing);
-  const statusUrl = page.url().replace(/&session_id=[^&]*$/, "");
-  return { requestId, statusUrl, context, email };
+  return { requestId, statusUrl: buyerStatusUrl(page), context, email };
 }
 
 /** A license code as issued (07 D101): `CL-` and two groups of four Crockford base32 symbols. */
 export const LICENSE_CODE = new RegExp(
   LICENSE_CODE_PATTERN.source.slice(1, -1),
 );
+
+/** The code in `scope`'s "License {code} issued" once it shows (an approved Inbox row or request page). */
+export async function issuedCode(scope: Locator): Promise<string> {
+  const issued = scope.getByText(/^License CL-.+ issued$/);
+  await expect(issued).toBeVisible();
+  const code = LICENSE_CODE.exec((await issued.textContent()) ?? "")?.[0];
+  if (!code) throw new Error("issuedCode: no license code");
+  return code;
+}
 
 /** The buyer key a /r link carries (02 §9.5): the key /l opens too. */
 export function buyerKey(statusUrl: string): string {
@@ -232,12 +279,22 @@ export async function approveInInbox(
     .filter({ has: page.locator("[data-licensee]", { hasText: licensee }) });
   await expect(row).toHaveCount(1);
   await pressAndSettleIn(page, row, INBOX_COPY.approve);
-  const issued = row.getByText(/^License CL-.+ issued$/);
-  await expect(issued).toBeVisible();
-  const code = LICENSE_CODE.exec((await issued.textContent()) ?? "")?.[0];
-  if (!code) throw new Error("approveInInbox: no license code");
+  const code = await issuedCode(row);
   await page.goto("about:blank");
   return code;
+}
+
+/**
+ * The signed-in creator taps Decline once on the request's own page (/dashboard/requests/<id>; 01 J8.4: one tap, no
+ * confirm), never the Inbox: specs sharing the setup creator run in parallel, and the Inbox's lazy sweep would settle
+ * their requests too. Waits for the action's request to close and for "Declined. The buyer wasn't charged."
+ */
+export async function declineRequest(page: Page, requestId: string) {
+  await page.goto(requestDetailPath(requestId));
+  await pressAndSettle(page, INBOX_COPY.decline);
+  await expect(
+    page.locator("main").getByText(INBOX_COPY.declinedLine, { exact: true }),
+  ).toBeVisible();
 }
 
 /**

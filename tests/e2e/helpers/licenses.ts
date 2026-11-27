@@ -1,6 +1,8 @@
-import type { Locator, Page } from "@playwright/test";
+import { execFileSync } from "node:child_process";
+import { expect, type Locator, type Page } from "@playwright/test";
 import type {
   Currency,
+  LicenseRequestStatus,
   MoneyMovementKind,
   MoneyMovementStatus,
 } from "../../../src/lib/domain/values";
@@ -9,7 +11,8 @@ import { withTestDb } from "./test-db";
 
 // Licenses a spec forces into a state no check let through (P19g; 07 D111), or one the app has no way to reach yet (P20:
 // revoked is P21b's admin action, expired takes 30 days; owner answer Q-188), and a license's charge and money movements
-// read, or a take-back failed by hand (P21b's manual Verify, automated): only the test database, never the app's.
+// read, a take-back failed by hand (P21b's manual Verify, automated), or a request forced overdue (the dev clock): only
+// the test database, never the app's.
 
 /** Organic social repost · 30 days · Worldwide. */
 export const ORGANIC_30_WORLDWIDE = {
@@ -40,20 +43,20 @@ export const licenseRows = (page: Page) =>
 export const REVOKED_NOTE = "Admin note: e2e dispute ch_e2e_lost_4410";
 
 /**
- * Runs `sql`, one UPDATE of request `requestId`'s one `row` (its $1 is the request id), or throws naming `helper` when
- * it updated no row or more than one.
+ * Runs `sql`, one UPDATE of the one `row` that `key` names (its $1: a request id, unless the caller says otherwise), or
+ * throws naming `helper` when it updated no row or more than one.
  */
 async function updateOne(
   helper: string,
   row: string,
-  requestId: string,
+  key: string,
   sql: string,
   values: unknown[] = [],
 ): Promise<void> {
   const { rowCount } = await withTestDb((client) =>
-    client.query(sql, [requestId, ...values]),
+    client.query(sql, [key, ...values]),
   );
-  if (rowCount !== 1) throw new Error(`${helper}: no ${row} for ${requestId}`);
+  if (rowCount !== 1) throw new Error(`${helper}: no ${row} for ${key}`);
 }
 
 /** Updates request `requestId`'s one license with `sql` (its $1 is the request id), or throws naming `helper`. */
@@ -153,6 +156,8 @@ export type StoredMovement = {
   status: MoneyMovementStatus;
   attempt: number;
   lastError: string | null;
+  /** Minor units. */
+  amountCents: number;
 };
 
 /** Request `requestId`'s money movement of `kind` (one at most per kind), or a throw. */
@@ -162,7 +167,7 @@ export async function storedMovement(
 ): Promise<StoredMovement> {
   const { rows } = await withTestDb((client) =>
     client.query<StoredMovement>(
-      `select status, attempt, last_error as "lastError" from money_movement
+      `select status, attempt, last_error as "lastError", amount_cents as "amountCents" from money_movement
         where license_request_id = $1 and kind = $2`,
       [requestId, kind],
     ),
@@ -170,6 +175,59 @@ export async function storedMovement(
   const [row] = rows;
   if (!row) throw new Error(`storedMovement: no ${kind} for ${requestId}`);
   return row;
+}
+
+/**
+ * Waits up to 60 s for request `requestId`'s movement of `kind` to be stored succeeded (each money step runs after its
+ * action's response, 07 D75), then returns it.
+ */
+export async function expectMovementSucceeded(
+  requestId: string,
+  kind: MoneyMovementKind,
+): Promise<StoredMovement> {
+  await expect
+    .poll(async () => (await storedMovement(requestId, kind)).status, {
+      timeout: 60_000,
+    })
+    .toBe("succeeded");
+  return storedMovement(requestId, kind);
+}
+
+/**
+ * The dev clock without its cron call (README "Force a request overdue"): request `requestId`'s deadline moves to 1 ms
+ * after its authorization and nothing expires it yet. Checks the script's one JSON line and that the deadline is past;
+ * returns that deadline (ISO 8601).
+ */
+export function forceRequestOverdue(requestId: string): { expiresAt: string } {
+  const printed = execFileSync(
+    "bunx",
+    ["tsx", "scripts/dev-expire-request.ts", requestId, "--no-cron"],
+    { env: { ...process.env, NODE_ENV: "test" }, encoding: "utf8" },
+  );
+  expect(printed.trim().split("\n")).toHaveLength(1);
+  const forced = JSON.parse(printed) as { expiresAt: string };
+  expect(forced).toEqual({
+    requestId,
+    expiresAt: expect.any(String),
+    cron: null,
+  });
+  expect(Date.parse(forced.expiresAt)).toBeLessThan(Date.now());
+  return forced;
+}
+
+/** Request `requestId`'s stored status (P22's expiry: what the cron left, before any page reads it), or a throw. */
+export async function storedRequestStatus(
+  requestId: string,
+): Promise<LicenseRequestStatus> {
+  const { rows } = await withTestDb((client) =>
+    client.query<{ status: LicenseRequestStatus }>(
+      "select status from license_request where id = $1",
+      [requestId],
+    ),
+  );
+  const [row] = rows;
+  if (!row) throw new Error(`storedRequestStatus: no request ${requestId}`);
+  return row.status;
 }
 
 /** The Stripe code forceTakeBackFailed stores, as P21b's manual Verify step does. */

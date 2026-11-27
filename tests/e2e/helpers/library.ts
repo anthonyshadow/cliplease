@@ -51,9 +51,17 @@ export const tileByCaption = (page: Page, caption: RegExp) =>
     has: page.locator(":scope > a > p", { hasText: caption }),
   });
 
+/** The id of `tile`'s post, read from its link to the post's Source page, so the post must have no video yet. */
+export async function tilePostId(tile: Locator): Promise<string> {
+  const href = (await tileLink(tile).getAttribute("href")) ?? "";
+  const id = TILE_HREF.exec(href)?.[1];
+  if (!id) throw new Error(`the tile links to ${href}, not a Source page`);
+  return id;
+}
+
 /**
- * The id of the post whose tile caption matches `caption`, read from the tile's link to its Source page, so the post
- * must have no video yet. Opens the Library first unless the page is on it.
+ * The id of the post whose tile caption matches `caption` (tilePostId). Opens the Library first unless the page is on
+ * it.
  */
 export async function libraryPostId(
   page: Page,
@@ -62,10 +70,7 @@ export async function libraryPostId(
   if (new URL(page.url()).pathname !== LIBRARY) await page.goto(LIBRARY);
   const tile = tileByCaption(page, caption);
   await expect(tile).toHaveCount(1);
-  const href = (await tileLink(tile).getAttribute("href")) ?? "";
-  const id = TILE_HREF.exec(href)?.[1];
-  if (!id) throw new Error(`the tile links to ${href}, not a Source page`);
-  return id;
+  return tilePostId(tile);
 }
 
 /** The current address's `name` param, or null. */

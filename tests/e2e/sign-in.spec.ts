@@ -12,7 +12,8 @@ import {
 } from "./helpers/sign-in";
 
 // P04: /sign-in (S10) and the route gates, on both projects. Every test signs in its own address; none signs in an e2e
-// admin: the admin's sign-in, with P04's /admin checks, is admin.spec.ts's one admin test per project (P21, 07 D154).
+// admin: the setup project signs the first ADMIN_EMAILS address in once, and P04's /admin checks are admin.spec.ts's one
+// OTP admin sign-in test per project (P21, P22; 07 D154).
 const BAD_CODE = "That code didn't work. Check it or send a new one.";
 const TOO_MANY = "Too many tries. Wait a minute and try again.";
 const SIGNED_OUT = "You've been signed out. Sign in again to continue.";

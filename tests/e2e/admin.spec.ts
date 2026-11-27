@@ -11,7 +11,6 @@ import {
   REVOKE_COPY,
 } from "../../src/lib/admin/copy";
 import {
-  type AdminStatusCell,
   adminRequestStatus,
   auditActorLabel,
   MONEY_MOVEMENT_KIND_LABELS,
@@ -36,7 +35,6 @@ import {
   postingResultCopy,
   sourceRowTitle,
 } from "../../src/lib/postings/copy";
-import { postingPlatformLabel } from "../../src/lib/postings/labels";
 import {
   licenseDownloadPath,
   licensePath,
@@ -50,7 +48,15 @@ import {
 } from "../../src/lib/videos/review";
 import { videoHref, videoStepHref } from "../../src/lib/videos/steps";
 import { VIDEO_PAGE_COPY } from "../../src/lib/videos/video-page";
+import {
+  adminRows,
+  moveToNewest,
+  openAdminTab,
+  statusText,
+  tabRow,
+} from "./helpers/admin";
 import { E2E_LICENSEE } from "./helpers/buyer";
+import { DEMO, DEMO_ACCOUNT } from "./helpers/connections";
 import { collectConsoleErrors, visit } from "./helpers/console";
 import { signUpCreator } from "./helpers/creator";
 import {
@@ -72,6 +78,7 @@ import {
 } from "./helpers/layout";
 import { POST_01 } from "./helpers/library";
 import {
+  expectMovementSucceeded,
   fact,
   factLabel,
   forceTakeBackFailed,
@@ -90,40 +97,44 @@ import {
   pressLocator,
   toast,
 } from "./helpers/press";
+import { ADMIN_STATE } from "./helpers/run";
 import {
   e2eAdminEmail,
   expectRefreshWhenDue,
+  setupAdminEmail,
   signInWithEmail,
 } from "./helpers/sign-in";
 import { cleanCreatedVideos, sameVideoTick, sourceRow } from "./helpers/videos";
 
-// The admin view (P21, P21b; 01 A.1–A.6, A.8, G.6, J8.10, J9.6, J9.8, J10.3; 05 §7; 07 D28, D66, D86, D88, D154;
-// design/P21-admin-view.md §4.14; owner answers Q-207–Q-209) on chromium-desktop and webkit-iphone. A signed-in creator
-// gets the 404 on /admin. The e2e admin's one test per project (07 D154: two OTP sign-ins of one address can overwrite
-// each other's code) holds every admin step: P04's sign-in checks (moved from sign-in.spec.ts), a published Library video
-// of a creator in a context of its own with one approved license and one waiting request, the six tabs with this run's
-// rows (found by the run's @handle, a buyer's address or the code: every demo video shares a title), then Disable (reason
-// Other, a note only admins see): the license page's 404, the waiting request's /r "Not approved", the creator's Banner
-// without the note, the old /l still Verified on Demo; Enable: «Off», Where posted's released source row, Check again
-// (its 30 s cooldown aged in the test database, no sleep), the same-video tick again and Turn on. Then A.5: two more
-// licenses on the video, each Licenses row reading its transfer sent (a reload until it does: a revoke before that is
-// refused or cancels the payout); the Revoke sheet's money sentence with the stored amounts, Payment reversed's, and
-// Issued in error's revoke; Events' license.revoked; the Money cell's refund and take-back; /verify Revoked with no
-// amount, /l's refund line with no download and both routes 404; the creator's «Revoked · refunded» and Taken back.
-// A.8: the take-back failed in the test database shows in Events and the Money cell, and Retry runs its next attempt.
-// Then the G.6 sweep of each ?tab= (atEveryWidth: every width on chromium-desktop, both themes at the iPhone's own 402
-// px), after the last lookup of this run's Videos row; on Licenses, the license left valid: its Money value, and its
-// Revoke sheet opened and closed with Esc once per width. Events is read right after each action, filtered by the video
-// or the code, so other specs' rows can't push this run's out of the newest 50. The session refresh runs last: it
-// installs a clock two days ahead.
+// The admin view (P21, P21b, P22; 01 A.1–A.6, A.8, G.6, J8.10, J9.6, J9.8, J10.3; 05 §7; 07 D28, D54, D66, D86, D88,
+// D154; design/P21-admin-view.md §4.14, design/P22-demo-gate-a.md §3; owner answers Q-207–Q-209) on chromium-desktop and
+// webkit-iphone. A signed-in creator gets the 404 on /admin. P04's sign-in checks (moved from sign-in.spec.ts) are one
+// test that signs the project's e2e admin in by OTP: the only OTP admin sign-in per project (07 D154: two OTP sign-ins
+// of one address at once can overwrite each other's code; the setup project's has finished before any project starts),
+// its session refresh last (it installs a clock two days ahead). Every other admin step runs as the setup admin (the
+// first ADMIN_EMAILS address) in a context made from .auth/admin.json; never a file-level test.use({ storageState }),
+// which browser.newContext() and `request` would inherit, signing in the creator, the visitors and every buyer. One
+// arrange-and-act test holds them: a published Library video of a creator in a context of its own with one approved
+// license and one waiting request, the six tabs with this run's rows (found by the run's @handle, a buyer's address or
+// the code: every demo video shares a title), then Disable (reason Other, a note only admins see): the license page's
+// 404, the waiting request's /r "Not approved", the creator's Banner without the note, the old /l still Verified on
+// Demo; Enable: «Off», Where posted's released source row, Check again (its 30 s cooldown aged in the test database, no
+// sleep), the same-video tick again and Turn on. Then A.5: two more licenses on the video, each Licenses row reading its
+// transfer sent (a reload until it does: a revoke before that is refused or cancels the payout); the Revoke sheet's
+// money sentence with the stored amounts, Payment reversed's, and Issued in error's revoke; Events' license.revoked; the
+// Money cell's refund and take-back; /verify Revoked with no amount, /l's refund line with no download and both routes
+// 404; the creator's «Revoked · refunded» and Taken back. A.8: the take-back failed in the test database shows in Events
+// and the Money cell, and Retry runs its next attempt. Then the G.6 sweep of each ?tab= (atEveryWidth: every width on
+// chromium-desktop, both themes at the iPhone's own 402 px), after the last lookup of this run's Videos row; on
+// Licenses, the license left valid: its Money value, and its Revoke sheet opened and closed with Esc once per width.
+// Events is read right after each action, filtered by the video or the code, so other specs' rows can't push this run's
+// out of the newest 50; its actor is the setup admin on both projects. Every other tab read first moves this run's rows
+// (the creator and its account, the video, the requests, a license) to its top in the test database (openAdminTab).
 test.use({ reducedMotion: "reduce" });
 test.afterEach(cleanCreatedVideos);
 
 /** The waiting request's licensee, apart from the approved license's E2E_LICENSEE. */
 const WAITING_LICENSEE = "Northwind Brands Inc.";
-/** The mock provider's account every e2e creator links (07 D53), and its platform's name. */
-const DEMO_ACCOUNT = "@demo.creator";
-const DEMO = postingPlatformLabel("mock", null);
 /** The widest phone the sweep runs (the iPhone 17's 402 px): there the six tabs never fit their row. */
 const WIDEST_PHONE = 402;
 /** A.5's licensees: the license the admin revokes, and the one left valid for the sweep. */
@@ -152,30 +163,13 @@ const RELEASED = postingResultCopy(
   },
 );
 
-/** A status cell's words: its pill's label, or the raw value. */
-const statusText = (cell: AdminStatusCell) =>
-  cell.kind === "pill" ? cell.label : cell.text;
-
 /** The video page's status pill (Off, Live) by its words. */
 const statusPill = (page: Page, label: string) =>
   page.locator("[data-video-aside]").getByText(label, { exact: true });
 
-/** The tab row: a <nav> of six links. */
-const tabRow = (page: Page) =>
-  page.getByRole("navigation", { name: ADMIN_COPY.tabsLabel, exact: true });
-
 /** The name of a tab's table (its stacked list's label, the table's caption): Events' first list is Latest events. */
 const tableName = (tab: AdminTab) =>
   tab === "events" ? ADMIN_COPY.latestEventsHeading : ADMIN_TAB_LABELS[tab];
-
-/** A table's rows in the form the tier shows (DataTable renders both; the other is display: none), by its name. */
-const adminRows = (page: Page, name: string) => {
-  const main = page.locator("main");
-  return main
-    .getByRole("list", { name, exact: true })
-    .locator(":scope > li")
-    .or(main.getByRole("table", { name, exact: true }).locator("tbody > tr"));
-};
 
 /** Latest events' rows with audit action `action` about video `videoId`: its own, and its postings' `{ videoId }`. */
 const videoEvents = (page: Page, videoId: string, action: string) =>
@@ -225,14 +219,6 @@ async function withAmounts(
   };
 }
 
-/** Opens `tab` and waits for its segment to be the current one. */
-async function openTab(page: Page, tab: AdminTab) {
-  await page.goto(adminTabHref(tab));
-  await expect(tabRow(page).locator('[aria-current="page"]')).toHaveText(
-    ADMIN_TAB_LABELS[tab],
-  );
-}
-
 /**
  * A.6, right after the admin's action: Events lists exactly one row of each of `actions` about video `videoId`, each
  * by `admin`.
@@ -243,7 +229,7 @@ async function expectVideoEvents(
   admin: string,
   actions: readonly string[],
 ) {
-  await openTab(page, "events");
+  await openAdminTab(page, "events");
   const actor = auditActorLabel({
     actorType: "admin",
     actorEmail: admin,
@@ -375,10 +361,8 @@ test("A.1: a signed-in creator gets the 404 on /admin, with nothing of the admin
   expect(errors).toEqual([]);
 });
 
-test("A.2–A.6, A.8, G.6: the e2e admin signs in to /admin, reads the six tabs at every tier, disables a video and enables it again, revokes a license with its refund and retries a failed take-back", async ({
+test("P04: the e2e admin's OTP sign-in lands on /admin in the admin shell, which asks for the session refresh once it is due", async ({
   page,
-  browser,
-  request,
 }, testInfo) => {
   const admin = e2eAdminEmail(testInfo);
   if (admin === null) {
@@ -388,22 +372,34 @@ test("A.2–A.6, A.8, G.6: the e2e admin signs in to /admin, reads the six tabs 
     );
     return;
   }
+  test.setTimeout(60_000);
+  const errors = collectConsoleErrors(page);
+  await signInWithEmail(page, admin, "/admin");
+  await expect(page).toHaveURL("/admin");
+  await expect(page).toHaveTitle(`Admin · ${APP_NAME}`);
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Admin" }),
+  ).toBeAttached();
+  await expect(page.getByRole("banner")).toContainText("Admin");
+  await expect(tabRow(page).locator('[aria-current="page"]')).toHaveText(
+    ADMIN_TAB_LABELS.creators,
+  );
+  // Last: it installs the page's clock two days ahead.
+  await expectRefreshWhenDue(page, "/admin");
+  expect(errors).toEqual([]);
+});
+
+test("A.2–A.6, A.8, G.6: the setup admin reads the six tabs at every tier, disables a video and enables it again, revokes a license with its refund and retries a failed take-back", async ({
+  browser,
+  request,
+}, testInfo) => {
   test.setTimeout(600_000);
+  const admin = setupAdminEmail();
+  // The setup admin's session, in a context of its own (the header says why).
+  const adminContext = await browser.newContext({ storageState: ADMIN_STATE });
+  const page = await adminContext.newPage();
   const errors = collectConsoleErrors(page);
   const note = `ticket-${randomUUID().slice(0, 8)}`;
-
-  await test.step("the OTP sign-in lands on /admin in the admin shell", async () => {
-    await signInWithEmail(page, admin, "/admin");
-    await expect(page).toHaveURL("/admin");
-    await expect(page).toHaveTitle(`Admin · ${APP_NAME}`);
-    await expect(
-      page.getByRole("heading", { level: 1, name: "Admin" }),
-    ).toBeAttached();
-    await expect(page.getByRole("banner")).toContainText("Admin");
-    await expect(tabRow(page).locator('[aria-current="page"]')).toHaveText(
-      ADMIN_TAB_LABELS.creators,
-    );
-  });
 
   // The creator signs in apart from the admin, in a context of its own.
   const creatorContext = await browser.newContext();
@@ -434,9 +430,12 @@ test("A.2–A.6, A.8, G.6: the e2e admin signs in to /admin, reads the six tabs 
   const videoRow = adminRows(page, ADMIN_TAB_LABELS.videos).filter({
     hasText: `@${handle}`,
   });
+  /** The Videos tab, this run's video moved to its top first: every lookup of it comes minutes after the publish. */
+  const openVideos = () => openAdminTab(page, "videos", [videoId]);
 
   await test.step("A.2: the six tabs, each with this run's rows", async () => {
-    // A tab it doesn't know is Creators.
+    // The creator was made at the arrange's start (the header says why it moves). A tab it doesn't know is Creators.
+    await moveToNewest("creators", [handle]);
     await page.goto("/admin?tab=nope");
     await expect(tabRow(page).locator('[aria-current="page"]')).toHaveText(
       ADMIN_TAB_LABELS.creators,
@@ -450,7 +449,7 @@ test("A.2–A.6, A.8, G.6: the e2e admin signs in to /admin, reads the six tabs 
     await expect(creatorRow).toHaveCount(1);
     await expect(creatorRow).toContainText(arranged.email);
 
-    await openTab(page, "connections");
+    await openAdminTab(page, "connections", [handle]);
     const account = adminRows(page, ADMIN_TAB_LABELS.connections).filter({
       hasText: `@${handle}`,
     });
@@ -458,7 +457,7 @@ test("A.2–A.6, A.8, G.6: the e2e admin signs in to /admin, reads the six tabs 
     await expect(account).toContainText(DEMO);
     await expect(account).toContainText(DEMO_ACCOUNT);
 
-    await openTab(page, "videos");
+    await openVideos();
     await expect(videoRow).toHaveCount(1);
     await expect(videoRow).toContainText(title);
     await expect(videoRow).toContainText(ADMIN_COPY.verifiedOn(DEMO));
@@ -471,7 +470,10 @@ test("A.2–A.6, A.8, G.6: the e2e admin signs in to /admin, reads the six tabs 
       }),
     ).toBeVisible();
 
-    await openTab(page, "requests");
+    await openAdminTab(page, "requests", [
+      license.requestId,
+      waiting.requestId,
+    ]);
     const requests = adminRows(page, ADMIN_TAB_LABELS.requests);
     const approved = requests.filter({ hasText: license.email });
     await expect(approved).toHaveCount(1);
@@ -490,7 +492,7 @@ test("A.2–A.6, A.8, G.6: the e2e admin signs in to /admin, reads the six tabs 
     );
     await expectNoBareDollar(page);
 
-    await openTab(page, "licenses");
+    await openAdminTab(page, "licenses", [license.requestId]);
     const issued = adminRows(page, ADMIN_TAB_LABELS.licenses).filter({
       hasText: license.code,
     });
@@ -499,7 +501,7 @@ test("A.2–A.6, A.8, G.6: the e2e admin signs in to /admin, reads the six tabs 
     await expect(issued).toContainText(LICENSE_RECORD_COPY.status.valid);
     await expect(issued).toContainText(MY_LICENSES_COPY.standard);
 
-    await openTab(page, "events");
+    await openAdminTab(page, "events");
     for (const heading of [
       ADMIN_COPY.latestEventsHeading,
       ADMIN_COPY.failedEmailsHeading,
@@ -515,7 +517,7 @@ test("A.2–A.6, A.8, G.6: the e2e admin signs in to /admin, reads the six tabs 
   });
 
   await test.step("A.4: Disable with reason Other and a note only admins see", async () => {
-    await openTab(page, "videos");
+    await openVideos();
     await pressLocator(
       videoRow.getByRole("button", {
         name: DISABLE_COPY.actionLabel(title),
@@ -619,7 +621,7 @@ test("A.2–A.6, A.8, G.6: the e2e admin signs in to /admin, reads the six tabs 
   });
 
   await test.step("Enable: back to Off", async () => {
-    await openTab(page, "videos");
+    await openVideos();
     await pressLocator(
       videoRow.getByRole("button", {
         name: ENABLE_COPY.actionLabel(title),
@@ -694,13 +696,13 @@ test("A.2–A.6, A.8, G.6: the e2e admin signs in to /admin, reads the six tabs 
   });
 
   await test.step("the admin's Videos row reads Live", async () => {
-    await openTab(page, "videos");
+    await openVideos();
     await expect(videoRow.getByText("Live", { exact: true })).toBeVisible();
     await expect(videoRow).toContainText(ADMIN_COPY.verifiedOn(DEMO));
   });
 
-  // A.5's licenses, arranged after the last Videos-row lookup and just before the sweep, so other specs' licenses can't
-  // push the valid one out of the newest 50 before the sweep's Licenses tab. The A.5 steps run at the project's own width.
+  // A.5's licenses, arranged after the last Videos-row lookup and just before the sweep; each Licenses read after a wait
+  // moves its row to the tab's top first (the header says why). The A.5 steps run at the project's own width.
   const projectWidth = viewportWidth(page);
   const licenses = adminRows(page, ADMIN_TAB_LABELS.licenses);
   const { revoked, valid } =
@@ -729,17 +731,17 @@ test("A.2–A.6, A.8, G.6: the e2e admin signs in to /admin, reads the six tabs 
         ),
       };
       // The transfers go after the approvals' responses: a revoke while one is in flight is refused (Q-207), and one
-      // before it is sent cancels the payout instead of taking it back. Each sent in the test database, then the tab.
-      for (const l of Object.values(arrangedLicenses)) {
-        await expect
-          .poll(
-            async () =>
-              (await storedMovement(l.requestId, "creator_transfer")).status,
-            { timeout: 60_000 },
-          )
-          .toBe("succeeded");
+      // before it is sent cancels the payout instead of taking it back. Each sent in the test database, then the tab
+      // with both moved to its top.
+      const both = Object.values(arrangedLicenses);
+      for (const l of both) {
+        await expectMovementSucceeded(l.requestId, "creator_transfer");
       }
-      await openTab(page, "licenses");
+      await openAdminTab(
+        page,
+        "licenses",
+        both.map((l) => l.requestId),
+      );
       for (const l of Object.values(arrangedLicenses)) {
         await expect(
           moneyValue(licenses.filter({ hasText: l.code }), projectWidth),
@@ -799,7 +801,7 @@ test("A.2–A.6, A.8, G.6: the e2e admin signs in to /admin, reads the six tabs 
   });
 
   await test.step("A.6: Events lists license.revoked for that license, by the admin, with its reason and code", async () => {
-    await openTab(page, "events");
+    await openAdminTab(page, "events");
     const rows = adminRows(page, ADMIN_COPY.latestEventsHeading)
       .filter({ hasText: revoked.code })
       .filter({ has: page.getByText("license.revoked", { exact: true }) });
@@ -817,16 +819,9 @@ test("A.2–A.6, A.8, G.6: the e2e admin signs in to /admin, reads the six tabs 
   await test.step("A.5: the Money cell reads the refund and the take-back once both went through", async () => {
     // Both go after the revoke's response: each done in the test database, then the tab.
     for (const kind of ["buyer_refund", "transfer_reversal"] as const) {
-      await expect
-        .poll(
-          async () => (await storedMovement(revoked.requestId, kind)).status,
-          {
-            timeout: 60_000,
-          },
-        )
-        .toBe("succeeded");
+      await expectMovementSucceeded(revoked.requestId, kind);
     }
-    await openTab(page, "licenses");
+    await openAdminTab(page, "licenses", [revoked.requestId]);
     await expect(moneyValue(revokedRow, projectWidth)).toHaveText(
       refundedMoney,
     );
@@ -901,7 +896,7 @@ test("A.2–A.6, A.8, G.6: the e2e admin signs in to /admin, reads the six tabs 
     const words = RETRY_COPY.kind.transfer_reversal;
     const retryName = words.actionLabel(revoked.code);
 
-    await openTab(page, "events");
+    await openAdminTab(page, "events");
     const movement = adminRows(page, ADMIN_COPY.failedMovementsHeading).filter({
       hasText: revoked.code,
     });
@@ -917,7 +912,7 @@ test("A.2–A.6, A.8, G.6: the e2e admin signs in to /admin, reads the six tabs 
       movement.getByRole("button", { name: retryName, exact: true }),
     ).toBeVisible();
 
-    await openTab(page, "licenses");
+    await openAdminTab(page, "licenses", [revoked.requestId]);
     const money = moneyValue(revokedRow, projectWidth);
     await expect(money).toContainText(MONEY_COPY.refunded(revoked.total));
     const failed = money.getByText(MONEY_COPY.takeBackFailed, { exact: true });
@@ -946,6 +941,7 @@ test("A.2–A.6, A.8, G.6: the e2e admin signs in to /admin, reads the six tabs 
       status: "succeeded",
       attempt: failedOnce.attempt + 1,
       lastError: null,
+      amountCents: failedOnce.amountCents,
     });
   });
 
@@ -956,7 +952,11 @@ test("A.2–A.6, A.8, G.6: the e2e admin signs in to /admin, reads the six tabs 
   const dollarWidths = new Set([375, 1280, projectWidth]);
   for (const tab of ADMIN_TABS) {
     await test.step(`G.6: ?tab=${tab} at every width`, async () => {
-      await openTab(page, tab);
+      await openAdminTab(
+        page,
+        tab,
+        tab === "licenses" ? [valid.requestId] : [],
+      );
       await expectTabLinks(page, tab);
       // Once loaded, the current segment is scrolled into its row's view (the iPhone's row scrolls).
       const nav = tabRow(page);
@@ -985,11 +985,8 @@ test("A.2–A.6, A.8, G.6: the e2e admin signs in to /admin, reads the six tabs 
     });
   }
 
-  // The admin shell keeps the sign-in alive too. Last: it installs the page's clock two days ahead.
-  await test.step("the admin shell asks for the session refresh once it is due", async () => {
-    await expectRefreshWhenDue(page, "/admin");
-  });
   await creatorContext.close();
+  await adminContext.close();
   expect(creatorErrors).toEqual([]);
   expect(errors).toEqual([]);
 });

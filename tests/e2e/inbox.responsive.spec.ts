@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import { APP_NAME } from "../../src/lib/app-name";
 import { formatDeadline } from "../../src/lib/format";
@@ -21,6 +20,7 @@ import {
   expectSettingsColumn,
   TIERS,
 } from "./helpers/layout";
+import { forceRequestOverdue } from "./helpers/licenses";
 import {
   isRouterRefresh,
   isServerAction,
@@ -47,8 +47,10 @@ import { cleanCreatedVideos } from "./helpers/videos";
 // heading neutral). Each page's clock is paused after it loads (the Inbox's after the decline: a page loaded after a
 // pause stays paused until a resume), so the 30 s refresh can't fire mid-sweep. A second test forces another creator's
 // request overdue with the dev script and no cron call: its /r expires it before rendering and reads "No answer in
-// time" (owner answer Q-142 a). A third (P19f; 07 D111): an exclusive request's tag and line inside the row and the
-// request page, under a 120-character licensee.
+// time" (owner answer Q-142 a). In a full run expiry.spec.ts's cron call, which sweeps every overdue request, can expire
+// it first: the same expireDueRequests leaves the same row and the same deadline, so /r reads the same page and the test
+// passes, only without exercising /r's own expiry that time. A third (P19f; 07 D111): an exclusive request's tag and
+// line inside the row and the request page, under a 120-character licensee.
 test.use({ reducedMotion: "reduce" });
 test.afterEach(cleanCreatedVideos);
 
@@ -478,24 +480,8 @@ test("01 §4.8, owner answer Q-142 a: an overdue request's /r expires it before 
 
   // The dev clock without its cron call (README "Force a request overdue"): the deadline moves to 1 ms after the
   // authorization and nothing has expired the request yet. This creator's pages are never opened again (their lazy
-  // expiry would race), so only /r's own read can expire it.
-  const printed = execFileSync(
-    "bunx",
-    ["tsx", "scripts/dev-expire-request.ts", requestId, "--no-cron"],
-    { env: { ...process.env, NODE_ENV: "test" }, encoding: "utf8" },
-  );
-  expect(printed.trim().split("\n")).toHaveLength(1);
-  const forced = JSON.parse(printed) as {
-    requestId: string;
-    expiresAt: string;
-    cron: null;
-  };
-  expect(forced).toEqual({
-    requestId,
-    expiresAt: expect.any(String),
-    cron: null,
-  });
-  expect(Date.parse(forced.expiresAt)).toBeLessThan(Date.now());
+  // expiry would race), so only /r's own read can expire it, or expiry.spec.ts's cron (the header says why that passes).
+  const forced = forceRequestOverdue(requestId);
 
   // /r in a fresh logged-out context at the project's own viewport, in a fixed zone for the deadline's words (07 D84).
   const timezoneId = "America/Toronto";

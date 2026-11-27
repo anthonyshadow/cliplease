@@ -8,6 +8,7 @@ import { readLatestEmail } from "../helpers/read-latest-email";
 import {
   availabilityNotice,
   BUYER_PHONE,
+  buyerStatusUrl,
   choose,
   E2E_LICENSEE,
   FAKE_CHECKOUT_URL,
@@ -94,7 +95,7 @@ test("J12.7, J12.9–J12.12, J12.15: an exclusive license approved with one tap 
       exact: true,
     }),
   ).toBeVisible();
-  const statusUrl = a.url().replace(/&session_id=[^&]*$/, "");
+  const statusUrl = buyerStatusUrl(a);
   // Off /r before its first 30 s refresh: WebKit cancels a refresh in flight and Next's fallback interrupts a goto.
   await a.goto("about:blank");
 

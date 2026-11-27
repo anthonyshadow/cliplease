@@ -1,29 +1,22 @@
 import { randomBytes } from "node:crypto";
 import { expect, type Page, type TestInfo, test } from "@playwright/test";
+import { HANDLE_RE } from "../../../src/lib/validation/handle";
 import { linkDemoAccount } from "./connections";
 import { waitForLibrary } from "./library";
+import { projectLetter, runId } from "./run";
 import { signInWithEmail, uniqueEmail } from "./sign-in";
 
-// One letter per Playwright project (07 D154), the letters P22's run ids use: c chromium-desktop, w webkit-iphone,
-// i webkit-ipad, x chromium-xl.
-const PROJECT_LETTER: Readonly<Partial<Record<string, string>>> = {
-  "chromium-desktop": "c",
-  "webkit-iphone": "w",
-  "webkit-ipad": "i",
-  "chromium-xl": "x",
-};
-
-// This worker's run id, in base 36.
-const RUN_ID = Date.now().toString(36);
-
 /**
- * A run-unique dotted handle, `e2e.<run id><8 hex><project letter>` (21 characters, valid for HANDLE_RE). The random
- * part (four bytes: two repeated within a run) and the letter keep two tests, and the same test on two projects running
- * at once, apart.
+ * A run-unique dotted handle, `<prefix>.<run id><8 hex><project letter>` (P22; `prefix` e2e unless given: 23 characters
+ * with it), checked against HANDLE_RE. The random part (four bytes: two repeated within a run) and the letter keep two
+ * tests, and the same test on two projects running at once, apart.
  */
-export function uniqueHandle(testInfo: TestInfo): string {
-  const letter = PROJECT_LETTER[testInfo.project.name] ?? "z";
-  return `e2e.${RUN_ID}${randomBytes(4).toString("hex")}${letter}`;
+export function uniqueHandle(testInfo: TestInfo, prefix = "e2e"): string {
+  const handle = `${prefix}.${runId()}${randomBytes(4).toString("hex")}${projectLetter(testInfo)}`;
+  if (!HANDLE_RE.test(handle)) {
+    throw new Error(`uniqueHandle: ${handle} isn't a valid handle`);
+  }
+  return handle;
 }
 
 /**
@@ -48,9 +41,9 @@ export async function completeProfileStep(page: Page, handle: string) {
 }
 
 /**
- * Signs a run-unique email up as a creator: sign-in, the profile step (with `handle`, or a run-unique one), Connect
- * Demo on the connect step when `connectDemo` (P10b; M3's specs), the connect step's Continue, then payout setup
- * (`payouts: true`, the default; it lands on Settings with payouts on) or "Skip for now" (it lands on the Library).
+ * Signs an email (run-unique unless given) up as a creator: sign-in, the profile step (with `handle`, or a run-unique
+ * one), Connect Demo on the connect step when `connectDemo` (P10b; M3's specs), the connect step's Continue, then payout
+ * setup (`payouts: true`, the default; it lands on Settings with payouts on) or "Skip for now" (it lands on the Library).
  * Later prompts extend this helper rather than forking it.
  */
 export async function signUpCreator(
@@ -58,10 +51,15 @@ export async function signUpCreator(
   {
     payouts = true,
     handle = uniqueHandle(test.info()),
+    email = uniqueEmail(test.info()),
     connectDemo = false,
-  }: { payouts?: boolean; handle?: string; connectDemo?: boolean } = {},
+  }: {
+    payouts?: boolean;
+    handle?: string;
+    email?: string;
+    connectDemo?: boolean;
+  } = {},
 ): Promise<{ email: string; handle: string }> {
-  const email = uniqueEmail(test.info());
   await signInWithEmail(page, email, "/onboarding");
   await expect(page).toHaveURL("/onboarding?step=profile");
   await completeProfileStep(page, handle);

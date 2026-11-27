@@ -55,6 +55,10 @@ export async function chooseDemoSelection(page: Page) {
 /** The licensee every helper fills in unless given one. */
 export const E2E_LICENSEE = "Daily Laughs Media LLC";
 
+/** The /r link the buyer comes back to: the page's address without the Checkout return's session_id. */
+export const buyerStatusUrl = (page: Page) =>
+  page.url().replace(/&session_id=[^&]*$/, "");
+
 /** Fills "Your details" with a valid `licensee`, name and `email`; the terms stay unticked. */
 export async function fillDetails(
   page: Page,

@@ -46,9 +46,15 @@ export async function expectNoHorizontalScroll(page: Page) {
   expect(overflow).toBeLessThanOrEqual(0);
 }
 
-/** 07 D98: an amount in <main> always carries its currency's prefix. */
-export async function expectNoBareDollar(page: Page) {
-  expect(await page.locator("main").innerText()).not.toMatch(BARE_DOLLAR);
+/**
+ * 07 D98: an amount always carries its currency's prefix, in <main> unless `root` says otherwise ("body": the bars,
+ * toasts and sheets too).
+ */
+export async function expectNoBareDollar(
+  page: Page,
+  root: "main" | "body" = "main",
+) {
+  expect(await page.locator(root).innerText()).not.toMatch(BARE_DOLLAR);
 }
 
 /**

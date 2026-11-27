@@ -1,10 +1,14 @@
 import { expect, type Locator, type Page } from "@playwright/test";
+import { postingPlatformLabel } from "../../../src/lib/postings/labels";
 import { pressButton, pressLink } from "./press";
 
 // The Demo connect as a creator does it, for the Connections and onboarding specs. (P10b's signUpCreator option
 // connects the same way; this one starts from the page a test is on.)
 
 export const CONNECTIONS = "/dashboard/connections";
+/** The mock provider's account every e2e creator links (07 D53), and its platform's name. */
+export const DEMO_ACCOUNT = "@demo.creator";
+export const DEMO = postingPlatformLabel("mock", null);
 export const CONNECTED_TOAST = "Demo connected. Showing your latest videos.";
 /** The callback's first sync (07 D13); a slow run can read "1 min ago". */
 export const SYNC_LINE = /^Synced (just now|\d+ min ago) · 24 videos$/;
